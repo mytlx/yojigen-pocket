@@ -1,0 +1,171 @@
+/* 文件的预览区和属性区（搜索框和高级搜索共用）。 */
+.fp {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.fp-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.fp-media {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+.fp-media img,
+.fp-media video {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  object-fit: contain;
+}
+.fp-media video {
+  width: 100%;
+  background: #000;
+}
+.fp-media.is-audio {
+  flex-direction: column;
+  gap: 18px;
+}
+.fp-media.is-audio audio {
+  width: min(100%, 340px);
+}
+.fp-frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+.fp-text,
+.fp-doc,
+.fp-entries {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  font-size: 12.5px;
+  line-height: 1.55;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.fp-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+}
+.fp-text.is-code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.fp-doc h1,
+.fp-doc h2,
+.fp-doc h3 {
+  margin: 0.8em 0 0.4em;
+  font-size: 1.1em;
+}
+.fp-doc p {
+  margin: 0.5em 0;
+}
+.fp-doc pre,
+.fp-doc code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.fp-doc pre {
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--well);
+  overflow: auto;
+}
+.fp-entries {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.fp-entries > div {
+  padding: 1px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fp-entries > .is-dir {
+  color: var(--accent);
+}
+.fp-more,
+.fp-note {
+  color: var(--text-3);
+  font-family: var(--font-ui);
+}
+.fp-note {
+  flex: none;
+  padding: 4px 14px;
+  font-size: 11.5px;
+  border-top: 0.5px solid var(--line);
+}
+.fp-card {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 16px 14px;
+}
+.fp-card-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fp-card-text b {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.fp-card-text span {
+  font-size: 12px;
+  color: var(--text-2);
+}
+.fp-attrs {
+  flex: none;
+  max-height: 46%;
+  margin: 0;
+  padding: 8px 14px 10px;
+  overflow: auto;
+  border-top: 0.5px solid var(--line);
+  font-size: 12px;
+}
+/* 没有预览内容时属性不再挤在底下，占满剩下的地方。 */
+.fp.is-bare .fp-attrs {
+  flex: 1;
+  max-height: none;
+  font-size: 12.5px;
+}
+.fp.is-bare .fp-attrs > div {
+  padding: 5px 0;
+}
+.fp-attrs > div {
+  display: grid;
+  grid-template-columns: 68px 1fr;
+  gap: 10px;
+  padding: 2.5px 0;
+}
+.fp-attrs dt {
+  color: var(--text-2);
+}
+.fp-attrs dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}

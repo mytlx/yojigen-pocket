@@ -1,0 +1,169 @@
+/*
+ * 全局设计变量。主窗口和设置窗口共用一套，风格才统一。
+ * 玻璃的原则：材质由系统窗口提供（macOS 的 Liquid Glass / 毛玻璃，Windows 11 的 Acrylic / Mica），
+ * 页面只在上面铺一层可调浓度的底色，保证任何背景上文字都清晰。
+ */
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI Variable Text", "Segoe UI",
+    "Microsoft YaHei UI", "Noto Sans CJK SC", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, "PingFang SC", "Microsoft YaHei UI", monospace;
+
+  --accent-rgb: 47, 107, 255;
+  --accent: rgb(var(--accent-rgb));
+  --tint: 0.45;
+  --font-size: 14px;
+  --panel-width: 760px;
+  --row-h: 48px;
+  --rows: 8;
+
+  --radius-panel: 18px;
+  --radius-card: 14px;
+  --radius-control: 9px;
+  --row-radius: 11px;
+
+  --speed: 120ms;
+}
+
+:root[data-platform="windows"] {
+  --radius-panel: 8px; /* Windows 11 自己给无边框窗口圆角 */
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --surface-rgb: 250, 251, 253;
+  --text: rgba(16, 18, 24, 0.95);
+  --text-2: rgba(16, 18, 24, 0.64);
+  --text-3: rgba(16, 18, 24, 0.46);
+  --line: rgba(16, 18, 24, 0.09);
+  --line-strong: rgba(16, 18, 24, 0.16);
+  --hover: rgba(16, 18, 24, 0.05);
+  --well: rgba(16, 18, 24, 0.06);
+  --card: rgba(255, 255, 255, 0.66);
+  --card-solid: rgba(255, 255, 255, 0.97);
+  --sel: rgba(var(--accent-rgb), 0.15);
+  --sel-rim: rgba(var(--accent-rgb), 0.3);
+  --rim: rgba(255, 255, 255, 0.45);
+  --rim-top: rgba(255, 255, 255, 0.85);
+  --float-shadow: 0 10px 34px rgba(16, 24, 48, 0.2), 0 1px 3px rgba(16, 24, 48, 0.12);
+  --danger: #d4312b;
+  --ok: #18864b;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-rgb: 26, 28, 34;
+  --text: rgba(255, 255, 255, 0.95);
+  --text-2: rgba(255, 255, 255, 0.66);
+  --text-3: rgba(255, 255, 255, 0.46);
+  --line: rgba(255, 255, 255, 0.1);
+  --line-strong: rgba(255, 255, 255, 0.18);
+  --hover: rgba(255, 255, 255, 0.07);
+  --well: rgba(255, 255, 255, 0.09);
+  --card: rgba(255, 255, 255, 0.06);
+  --card-solid: rgba(44, 46, 54, 0.98);
+  --sel: rgba(var(--accent-rgb), 0.34);
+  --sel-rim: rgba(var(--accent-rgb), 0.6);
+  --rim: rgba(255, 255, 255, 0.09);
+  --rim-top: rgba(255, 255, 255, 0.24);
+  --float-shadow: 0 12px 38px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --danger: #ff7a70;
+  --ok: #4fd18b;
+}
+
+/* 系统没有窗口材质，或用户要求减少透明：底色不透明，清晰度优先。 */
+:root[data-glass="off"] {
+  --tint: 1 !important;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--font-size);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+  color: inherit;
+}
+
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+::selection {
+  background: rgba(var(--accent-rgb), 0.3);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 图标：svg 放在一个柔和的底块里，图片直接显示，整齐对齐。 */
+.pk-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon, 30px);
+  height: var(--icon, 30px);
+  border-radius: calc(var(--icon, 30px) * 0.27);
+  color: var(--text-2);
+  overflow: hidden;
+}
+.pk-icon.tile {
+  background: var(--well);
+  box-shadow: inset 0 0 0 0.5px var(--line);
+}
+.pk-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.pk-icon .glyph {
+  font-size: calc(var(--icon, 30px) * 0.6);
+  line-height: 1;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 5px;
+  background: var(--well);
+  box-shadow: inset 0 0 0 0.5px var(--line);
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1;
+}

@@ -1,0 +1,65 @@
+# 每次推送都测试，打 v* 标签时构建 macOS 和 Windows 的安装包。
+# macOS 必须在 macOS 上打包（签名和 dmg）；Windows 可以在 Ubuntu 上交叉编译，安装包用 NSIS 制作。
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Generate the TypeScript client
+        run: bunx mygo generate
+      - name: Typecheck the frontend
+        run: bunx tsc --noEmit
+      - name: Build the frontend
+        run: bun --bun vite build
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+
+  package:
+    name: Package (${{ matrix.name }})
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macOS, os: macos-latest, platform: "darwin/universal" }
+          - { name: Windows, os: ubuntu-latest, platform: "windows/amd64,windows/arm64" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Install NSIS
+        if: matrix.name == 'Windows'
+        run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Build
+        run: bunx mygo build -platform ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yojigen-pocket-${{ matrix.name }}
+          path: |
+            build/**/*.dmg
+            build/**/*-setup-*.exe

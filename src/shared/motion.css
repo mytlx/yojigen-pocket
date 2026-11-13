@@ -1,0 +1,96 @@
+/*
+ * 动画。Q 弹的感觉来自带回弹的缓动：先冲过头一点再落回来。
+ * 支持 linear() 的引擎用更真实的弹簧曲线，否则退回 back 缓动。
+ * 系统开启「减少动态效果」时全部关掉。
+ */
+:root {
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --spring-soft: cubic-bezier(0.25, 1.35, 0.5, 1);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 160ms;
+  --dur: 280ms;
+  --dur-slow: 420ms;
+}
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    --spring: linear(0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.723 12.9%, 0.938 16.7%, 1.017 19.4%, 1.067, 1.099 24.3%,
+        1.106 25.7%, 1.102 27.1%, 1.077 30.3%, 1.034 34.8%, 1.002 39.8%, 0.991 43.4%, 0.989 47.3%, 1.001 61.3%, 1);
+    --spring-soft: linear(0, 0.006, 0.025 2.8%, 0.101 6.1%, 0.539 18.9%, 0.721 25.3%, 0.849 31.5%, 0.937 38.1%,
+        0.968 41.8%, 0.991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001 85.8%, 1);
+  }
+}
+
+/* 弹出：卡片、面板、窗口内容出现 */
+@keyframes q-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.965);
+  }
+}
+/* 从上方落下：主窗口出现 */
+@keyframes q-drop-in {
+  from {
+    opacity: 0.4;
+    transform: translateY(-6px) scale(0.975);
+  }
+}
+/* 小元素蹦一下：选中的图标、复制成功的勾 */
+@keyframes q-bob {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.14);
+  }
+  65% {
+    transform: scale(0.95);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+/* 标签、提示弹出 */
+@keyframes q-chip {
+  from {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+}
+@keyframes q-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes q-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+
+/* 按钮：按下缩一下，松开弹回 */
+.q-press {
+  transition: transform var(--dur) var(--spring), background var(--dur-fast), box-shadow var(--dur-fast);
+}
+.q-press:active:not(:disabled) {
+  transform: scale(0.94);
+  transition-duration: 90ms;
+  transition-timing-function: ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}

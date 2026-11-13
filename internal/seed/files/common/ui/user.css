@@ -1,0 +1,6 @@
+/*
+ * 在这里覆盖任意样式，保存后立刻生效。
+ * 界面元素都有稳定的 class：.pk-panel .pk-input .pk-row .pk-row-title .pk-tile .pk-footer ……
+ * 例子：隐藏来源标记
+ *   .pk-row-badge { display: none; }
+ */

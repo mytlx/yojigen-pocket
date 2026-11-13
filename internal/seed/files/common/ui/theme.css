@@ -1,0 +1,14 @@
+/*
+ * 主题变量。保存后立刻生效，不需要重启。
+ * 把需要的行取消注释并修改即可；完整的变量列表见项目 README。
+ */
+:root {
+  /* --accent-rgb: 47, 107, 255; */
+  /* --font-ui: "LXGW WenKai", system-ui, sans-serif; */
+  /* --row-radius: 12px; */
+}
+
+/* 只改深色模式 */
+:root[data-theme="dark"] {
+  /* --text: rgba(255, 255, 255, 0.96); */
+}
