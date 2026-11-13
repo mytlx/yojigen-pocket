@@ -272,7 +272,7 @@ func (c *Clipboard) Flush() error {
 func (c *Clipboard) Recent(within time.Duration) *ClipEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.last == nil || time.Since(c.last.Time) > within {
+	if c.last == nil || within <= 0 || time.Since(c.last.Time) > within {
 		return nil
 	}
 	e := c.last
