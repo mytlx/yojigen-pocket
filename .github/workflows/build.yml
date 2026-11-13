@@ -92,6 +92,7 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           mapfile -d '' files < <(find release-assets -type f -print0 | sort -z)
           printf 'Uploading: %s\n' "${files[@]}"
