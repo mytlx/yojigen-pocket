@@ -237,6 +237,7 @@ export interface Config {
   speech: SpeechConfig;
   ocr: OCRConfig;
   reader: ReaderConfig;
+  pet: PetConfig;
   selection: SelectionConfig;
   panelPosition: string;
 }
@@ -571,6 +572,28 @@ export interface PayloadInfo {
   preview?: string;
 }
 
+export interface PetConfig {
+  enabled: boolean;
+  name: string;
+  scale: number;
+  alwaysOnTop: boolean;
+  reminders: boolean;
+  quiet: boolean;
+}
+
+/** PetInfo 是宠物页面打开时需要的东西。 */
+export interface PetInfo {
+  config: PetConfig;
+  /** 存档（JSON）；第一次是空的 */
+  state: string;
+  /** 宠物可以走动的范围（所在屏幕的工作区） */
+  area: Rectangle;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface PluginInfo {
   id: string;
   title: string;
@@ -603,6 +626,17 @@ export interface ReaderConfig {
   stealthOpacity: number;
   stealthLines: number;
   autoPageSecs: number;
+}
+
+/**
+ * Rectangle is a position and size in screen coordinates (DIPs, origin at
+ * the top-left corner of the primary display).
+ */
+export interface Rectangle {
+  X: number;
+  Y: number;
+  Width: number;
+  Height: number;
 }
 
 export interface Request {
@@ -1479,6 +1513,42 @@ export const Auto = {
   /** Stop 停掉正在运行的连点或宏。 */
   stop(): Promise<void> {
     return call("Auto.Stop");
+  },
+} as const;
+
+/** Pet 是宠物窗口的服务。 */
+export const Pet = {
+  /** Hide 关掉宠物。存档还在，下次打开接着养。 */
+  hide(): Promise<void> {
+    return call("Pet.Hide");
+  },
+  /** Info 返回设置、存档和窗口所在的屏幕范围。 */
+  info(): Promise<PetInfo> {
+    return call("Pet.Info");
+  },
+  /** Land 让宠物落到屏幕底部（被拖到半空松手之后）。返回离底部还有多远。 */
+  land(): Promise<number> {
+    return call("Pet.Land");
+  },
+  /** Move 把宠物窗口挪动一点（它自己走路时用），不会走出屏幕。返回新的位置，以及有没有碰到边。 */
+  move(dx: number, dy: number): Promise<number[]> {
+    return call("Pet.Move", dx, dy);
+  },
+  /** Save 保存存档。 */
+  save(state: string): Promise<void> {
+    return call("Pet.Save", state);
+  },
+  /** SetConfig 改宠物的设置（名字、大小、是否置顶）。 */
+  setConfig(c: PetConfig): Promise<void> {
+    return call("Pet.SetConfig", c);
+  },
+  /** SetEnabled 打开或关闭宠物（设置页用）。 */
+  setEnabled(on: boolean): Promise<void> {
+    return call("Pet.SetEnabled", on);
+  },
+  /** SetPanel 打开或收起菜单面板：窗口变大或变回去，脚底的位置不动。 */
+  setPanel(open: boolean): Promise<void> {
+    return call("Pet.SetPanel", open);
   },
 } as const;
 

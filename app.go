@@ -65,6 +65,7 @@ type App struct {
 
 	payloads          payloadStore
 	auto              *autoEngine
+	pet               *mygo.Window
 	media             *mediaServer
 	calcHistory       *calcHistory
 	wintools          *providers.WinTools
@@ -135,6 +136,7 @@ func (a *App) ready() {
 	a.applyTheme(cfg)
 	a.createPanel(cfg)
 	a.startMedia()
+	a.syncPet()
 	a.createTray()
 	a.applyHotkeys(cfg)
 	a.watchHome(ctx)
@@ -281,6 +283,12 @@ func (a *App) selfCommands() []*providers.SelfCommand {
 				r.Hide()
 				a.openCatalog()
 				return nil
+			}},
+		{ID: "pet", Title: "桌面宠物", Subtitle: "叫出来或收起来；它会在桌面上走动，可以喂食、玩耍、养成", Icon: "svg:paw",
+			Keywords: []string{"pet", "cw", "chongwu", "zmcw", "宠物", "团子"},
+			Run: func(_ context.Context, r *core.Run) error {
+				r.Hide()
+				return a.setPetEnabled(!a.config.Get().Pet.Enabled)
 			}},
 		{ID: "new-command", Title: "新建脚本命令", Subtitle: "选一种语言，用模板写一个自己的工具", Icon: "svg:plus",
 			Keywords: []string{"new command", "new script", "create"},
@@ -638,6 +646,7 @@ func (a *App) configApplied() {
 		a.panel.SetVibrancy(material(cfg))
 	}
 	a.applyHotkeys(cfg)
+	a.syncPet()
 	ConfigChanged.Broadcast(a.configView())
 }
 

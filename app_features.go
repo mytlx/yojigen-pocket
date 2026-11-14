@@ -505,6 +505,9 @@ func (a *App) trayMenu(list []WindowInfo) *mygo.Menu {
 	}
 	items = append(items,
 		mygo.Separator(),
+		&mygo.MenuItem{Label: "桌面宠物", Type: mygo.MenuItemCheckbox, Checked: a.config.Get().Pet.Enabled, Click: func(*mygo.MenuItem, *mygo.Window) {
+			_ = a.setPetEnabled(!a.config.Get().Pet.Enabled)
+		}},
 		&mygo.MenuItem{Label: "打开配置目录", Click: func(*mygo.MenuItem, *mygo.Window) { _ = openPath(a.paths.Home) }},
 		&mygo.MenuItem{Label: "重新加载", Click: func(*mygo.MenuItem, *mygo.Window) { a.reloadAll() }},
 		mygo.Separator(),

@@ -35,6 +35,7 @@ func main() {
 	mygo.Bind(&Notes{a: a})
 	mygo.Bind(&Scratch{a: a})
 	mygo.Bind(&Auto{a: a})
+	mygo.Bind(&Pet{a: a})
 	if bindExtra != nil {
 		bindExtra(a)
 	}

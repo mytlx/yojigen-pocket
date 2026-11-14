@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -116,6 +117,16 @@ func DefaultEdgeVoices() map[string]string {
 	}
 }
 
+// PetConfig 是桌面宠物的设置。默认关闭：关着的时候不建窗口，不占任何资源。
+type PetConfig struct {
+	Enabled     bool    `json:"enabled"`
+	Name        string  `json:"name"`
+	Scale       float64 `json:"scale"`       // 大小倍数，0.6 到 1.8
+	AlwaysOnTop bool    `json:"alwaysOnTop"` // 一直在别的窗口上面
+	Reminders   bool    `json:"reminders"`   // 隔一阵提醒喝水、起来活动
+	Quiet       bool    `json:"quiet"`       // 不自己走来走去、不主动说话
+}
+
 // OCRConfig 是截图识别设置。
 type OCRConfig struct {
 	Engine   string `json:"engine"`   // system | claude | openai（大模型接口复用翻译里的设置）
@@ -167,6 +178,7 @@ type Config struct {
 	Speech          SpeechConfig      `json:"speech"`
 	OCR             OCRConfig         `json:"ocr"`
 	Reader          ReaderConfig      `json:"reader"`
+	Pet             PetConfig         `json:"pet"`
 	Selection       SelectionConfig   `json:"selection"`
 	PanelPosition   string            `json:"panelPosition"` // remember：记住拖动后的位置；center：每次在鼠标所在屏幕居中
 }
@@ -257,6 +269,7 @@ func DefaultConfig() *Config {
 		OCR:           OCRConfig{Engine: "system", Language: "zh"},
 		Selection:     SelectionConfig{Mode: "auto"},
 		PanelPosition: "remember",
+		Pet:           PetConfig{Scale: 1, AlwaysOnTop: true, Name: "团子", Reminders: true},
 		Reader: ReaderConfig{
 			BossKey: "Alt+Shift+M", FontSize: 17, LineHeight: 1.85, Theme: "auto",
 			StealthOpacity: 18, StealthLines: 2,
@@ -356,6 +369,12 @@ func (c *Config) Normalize() {
 		default:
 			delete(c.HotkeyInput, id)
 		}
+	}
+	if c.Pet.Scale < 0.6 || c.Pet.Scale > 1.8 {
+		c.Pet.Scale = 1
+	}
+	if strings.TrimSpace(c.Pet.Name) == "" {
+		c.Pet.Name = "团子"
 	}
 	t := &c.Translate
 	switch t.Provider {
