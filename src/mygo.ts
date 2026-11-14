@@ -168,6 +168,7 @@ export interface Config {
   uriAllowlist: string[];
   keys: Keys;
   detachOnHotkey: Record<string, boolean>;
+  hotkeyInput: Record<string, string>;
   translate: TranslateConfig;
   speech: SpeechConfig;
   ocr: OCRConfig;
@@ -705,6 +706,10 @@ export const Launcher = {
   resize(width: number, height: number): Promise<void> {
     return call("Launcher.Resize", width, height);
   },
+  /** SetInTool 记录主窗口当前是否停留在工具页面或命令作用域中（隐藏后不自动重置）。 */
+  setInTool(active: boolean): Promise<void> {
+    return call("Launcher.SetInTool", active);
+  },
 } as const;
 
 /** Settings 是设置窗口调用的服务。 */
@@ -1021,8 +1026,8 @@ export const Catalog = {
     return call("Catalog.SetEnabled", id, enabled);
   },
   /** SetHotkey 给一项绑定直达热键，返回注册失败的原因（成功时为空）。 */
-  setHotkey(id: string, accel: string, detach: boolean): Promise<string> {
-    return call("Catalog.SetHotkey", id, accel, detach);
+  setHotkey(id: string, accel: string, detach: boolean, inputMode: string): Promise<string> {
+    return call("Catalog.SetHotkey", id, accel, detach, inputMode);
   },
 } as const;
 

@@ -124,6 +124,7 @@ export function App() {
 
   const enterScope = useCallback(
     (s: Scope) => {
+      setView(null);
       setScope(s);
       setText("");
       setActionsOpen(false);
@@ -360,6 +361,10 @@ export function App() {
   }, [setInput]);
 
   useEffect(() => {
+    void Launcher.setInTool(Boolean(view || scope));
+  }, [view, scope]);
+
+  useEffect(() => {
     const offs = [
       events.panelShown.on((shown) => {
         setConfirm(null);
@@ -388,6 +393,16 @@ export function App() {
           resetAll();
           setText(shown.query);
           runQuery(shown.query, null);
+        } else if (viewRef.current) {
+          // 停留在已打开的工具页面时，无论隐藏多久，再次唤出都原样回到这个工具。
+          return;
+        } else if (latest.current.scope) {
+          // 停留在命令作用域里时同样保留作用域；超过记忆时间只清掉作用域里的搜索文字。
+          const keepText = shown.keep ? latest.current.text : "";
+          setText(keepText);
+          setPayload(null);
+          runQuery(keepText, latest.current.scope);
+          if (shown.keep) setTimeout(() => input.current?.select());
         } else if (shown.keep) {
           runQuery(latest.current.text, latest.current.scope);
           setTimeout(() => input.current?.select());

@@ -8,6 +8,7 @@ import "../shared/controls.css";
 import "../settings/settings.css";
 import "./catalog.css";
 import { Icon } from "../shared/icons";
+import { hotkeyInputOptions, normalizeHotkeyInputMode, supportsHotkeyInput, type HotkeyInputMode } from "../shared/hotkey";
 import { applyAppearance, applyUserStyles, formatAccelerator } from "../shared/theme";
 import { Hotkey } from "../settings/ui";
 import { Toggle } from "../features/ui";
@@ -201,11 +202,15 @@ function App() {
 
 function HotkeyEditor({ item, platform, onDone }: { item: CatalogItem; platform: string; onDone: (msg: string, error?: boolean) => void }) {
   const [detach, setDetach] = useState(false);
+  const [inputMode, setInputMode] = useState<HotkeyInputMode>("selection");
   useEffect(() => {
-    void Settings.get().then((v) => setDetach(!!v.config.detachOnHotkey?.[item.id]));
+    void Settings.get().then((v) => {
+      setDetach(!!v.config.detachOnHotkey?.[item.id]);
+      setInputMode(normalizeHotkeyInputMode(v.config.hotkeyInput?.[item.id]));
+    });
   }, [item.id]);
-  const save = (accel: string, d = detach) =>
-    void Catalog.setHotkey(item.id, accel, d).then(
+  const save = (accel: string, d = detach, m: string = inputMode) =>
+    void Catalog.setHotkey(item.id, accel, d, m).then(
       (err) => onDone(err ? `快捷键被占用：${err}` : accel ? "已设置快捷键" : "已清除快捷键", !!err),
       (e: Error) => onDone(e.message, true),
     );
@@ -215,6 +220,25 @@ function HotkeyEditor({ item, platform, onDone }: { item: CatalogItem; platform:
       {item.canDetach && (
         <label class="ct-inline">
           以独立窗口打开 <Toggle checked={detach} onChange={(v) => { setDetach(v); if (item.hotkey) save(item.hotkey, v); }} />
+        </label>
+      )}
+      {supportsHotkeyInput(item.id) && (
+        <label class="ct-inline">
+          带入
+          <select
+            class="ui-select"
+            aria-label="按快捷键时带入的内容"
+            value={inputMode}
+            onChange={(e) => {
+              const m = normalizeHotkeyInputMode((e.target as HTMLSelectElement).value);
+              setInputMode(m);
+              if (item.hotkey) save(item.hotkey, detach, m);
+            }}
+          >
+            {hotkeyInputOptions.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
         </label>
       )}
     </div>

@@ -96,10 +96,11 @@ type App struct {
 	pendingURL string
 	isReady    bool
 
-	blurPaused atomic.Bool
-	quitting   atomic.Bool
-	lastHidden atomic.Int64
-	cancel     context.CancelFunc
+	blurPaused  atomic.Bool
+	quitting    atomic.Bool
+	lastHidden  atomic.Int64
+	panelInTool atomic.Bool
+	cancel      context.CancelFunc
 }
 
 // ready 在应用就绪后初始化一切。
@@ -449,7 +450,8 @@ func (a *App) showPanelWith(query string, activate bool) {
 
 	payload := a.pendingPayload.Swap(nil)
 	view := a.pendingView.Swap(nil)
-	if payload == nil && query == "" && view == nil && cfg.AutoFillSeconds > 0 && cfg.Modules["clipboard"].Enabled {
+	inTool := a.panelInTool.Load()
+	if payload == nil && query == "" && view == nil && !inTool && cfg.AutoFillSeconds > 0 && cfg.Modules["clipboard"].Enabled {
 		// 刚复制的内容（文字、图片、文件）自动带进来，每次复制只带一次。
 		if e := a.clipboard.Recent(time.Duration(cfg.AutoFillSeconds) * time.Second); e != nil {
 			payload = a.entryPayload(e)
@@ -506,6 +508,11 @@ func (a *App) togglePanel() {
 	}
 	go func() {
 		defer a.summoning.Store(false)
+		// 当前停留在工具页面或命令作用域时，唤出直接恢复原状态，不抓取外部选中文字。
+		if a.panelInTool.Load() {
+			a.showPanel("")
+			return
+		}
 		// 快的路：选中的文字能直接读到（或者根本不用读），几毫秒，读完就显示。
 		text, done := a.selectionFast()
 		if done {
@@ -700,8 +707,46 @@ func (a *App) applyHotkeys(cfg *store.Config) {
 	a.hotkeyErrors = errs
 }
 
+func normalizeHotkeyInputMode(v string) string {
+	switch v {
+	case "selection", "clipboard", "both", "none":
+		return v
+	default:
+		return "selection"
+	}
+}
+
+func resolveHotkeyInput(mode string, readSelection, readClipboard func() string) string {
+	clipboardText := func() string {
+		if text := readClipboard(); strings.TrimSpace(text) != "" {
+			return text
+		}
+		return ""
+	}
+	switch normalizeHotkeyInputMode(mode) {
+	case "none":
+		return ""
+	case "clipboard":
+		return clipboardText()
+	case "both":
+		if text := readSelection(); text != "" {
+			return text
+		}
+		return clipboardText()
+	default:
+		return readSelection()
+	}
+}
+
+func (a *App) captureHotkeyInput(mode string) string {
+	return resolveHotkeyInput(mode, a.captureSelection, mygo.Clipboard.ReadText)
+}
+
 func (a *App) runByHotkey(id string) {
 	go func() {
+		cfg := a.config.Get()
+		detach := cfg.DetachOnHotkey[id]
+		inputMode := cfg.HotkeyInput[id]
 		// 内置模块：有页面的开页面（计算器、剪贴板、文件搜索），其余的带着前缀打开搜索框。
 		if name, isModule := strings.CutPrefix(id, "module:"); isModule {
 			page, hasPage := modulePages[name]
@@ -709,36 +754,32 @@ func (a *App) runByHotkey(id string) {
 				a.openModule(name)
 				return
 			}
-			// 独立窗口的选择记在模块自己的 ID 上，这里换成页面的 ID 之前先读出来。
-			if a.config.Get().DetachOnHotkey[id] {
-				if it, ok := a.engine.Resolve(page); ok && len(it.Actions) > 0 && it.Actions[0].View != nil {
-					if _, err := a.detach(detachRequestFor(it.Actions[0].View)); err != nil {
-						a.host.Notify("打开失败", err.Error())
-					}
-					return
-				}
-			}
 			id = page
+			if !detach {
+				detach = cfg.DetachOnHotkey[id]
+			}
+			if inputMode == "" {
+				inputMode = cfg.HotkeyInput[id]
+			}
 		}
 		it, ok := a.engine.Resolve(id)
 		isView := ok && len(it.Actions) > 0 && it.Actions[0].Type == core.ActionView && it.Actions[0].View != nil
-		// 功能页和脚本：先读取选中的文字。功能页直接带进去（选中一段话按翻译的快捷键，就开始翻译），
-		// 脚本可以用 {selection} 和 POCKET_SELECTION 拿到。
-		selection := ""
+		// 功能页和脚本：按该快捷键的带入设置读取选中的文字或剪贴板文字。
+		// 功能页直接填进输入框；脚本可以用 {selection} 和 POCKET_SELECTION 拿到。
+		captured := ""
 		if ok && ((isView && it.Actions[0].View.Type == "feature") || it.Source == "scripts") {
-			if selection = a.captureSelection(); selection != "" {
-				c := a.engine.Context()
-				c.Selection = selection
-				a.engine.SetContext(c)
-			}
+			captured = a.captureHotkeyInput(inputMode)
+			c := a.engine.Context()
+			c.Selection = captured
+			a.engine.SetContext(c)
 		}
 		if isView {
 			view := *it.Actions[0].View
-			if selection != "" && view.Type == "feature" && view.Input == "" {
-				view.Input = selection
+			if captured != "" && view.Type == "feature" && view.Input == "" {
+				view.Input = captured
 			}
 			v := &view
-			if a.config.Get().DetachOnHotkey[id] && (v.Type == "feature" || v.URL != "") {
+			if (detach || cfg.DetachOnHotkey[id]) && (v.Type == "feature" || v.URL != "") {
 				if _, err := a.detach(detachRequestFor(v)); err != nil {
 					a.host.Notify("打开失败", err.Error())
 				}

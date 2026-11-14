@@ -162,6 +162,7 @@ type Config struct {
 	URIAllowlist    []string          `json:"uriAllowlist"` // 允许通过 URI 直接执行的命令 ID
 	Keys            Keys              `json:"keys"`
 	DetachOnHotkey  map[string]bool   `json:"detachOnHotkey"` // 这些命令按直达热键时直接以独立窗口打开
+	HotkeyInput     map[string]string `json:"hotkeyInput"`    // 这些命令按直达热键时带入的内容：selection（默认）| clipboard | both | none
 	Translate       TranslateConfig   `json:"translate"`
 	Speech          SpeechConfig      `json:"speech"`
 	OCR             OCRConfig         `json:"ocr"`
@@ -241,6 +242,7 @@ func DefaultConfig() *Config {
 		URIAllowlist:   []string{},
 		Keys:           Keys{Detach: "CmdOrCtrl+D"},
 		DetachOnHotkey: map[string]bool{},
+		HotkeyInput:    map[string]string{},
 		Speech: SpeechConfig{
 			Word: "youdao", Sentence: "edge", Accent: "us",
 			Edge:   EdgeTTS{Mode: "auto", Command: "edge-tts", Voices: DefaultEdgeVoices()},
@@ -344,6 +346,16 @@ func (c *Config) Normalize() {
 	}
 	if c.DetachOnHotkey == nil {
 		c.DetachOnHotkey = map[string]bool{}
+	}
+	if c.HotkeyInput == nil {
+		c.HotkeyInput = map[string]string{}
+	}
+	for id, mode := range c.HotkeyInput {
+		switch mode {
+		case "clipboard", "both", "none":
+		default:
+			delete(c.HotkeyInput, id)
+		}
 	}
 	t := &c.Translate
 	switch t.Provider {

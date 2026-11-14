@@ -98,3 +98,22 @@ func TestUsagePersists(t *testing.T) {
 		t.Errorf("再次切换应取消置顶")
 	}
 }
+
+func TestHotkeyInputNormalization(t *testing.T) {
+	c, err := ParseConfig([]byte(`{"hotkeyInput":{"features:translate":"clipboard","features:json":"both","features:md":"none","features:hash":"selection","features:bad":"invalid"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.HotkeyInput) != 3 {
+		t.Fatalf("HotkeyInput len = %d, got %+v", len(c.HotkeyInput), c.HotkeyInput)
+	}
+	if c.HotkeyInput["features:translate"] != "clipboard" || c.HotkeyInput["features:json"] != "both" || c.HotkeyInput["features:md"] != "none" {
+		t.Errorf("保留的有效值不正确：%+v", c.HotkeyInput)
+	}
+	if _, ok := c.HotkeyInput["features:hash"]; ok {
+		t.Errorf("默认值 selection 应被规范化移除")
+	}
+	if _, ok := c.HotkeyInput["features:bad"]; ok {
+		t.Errorf("非法值应被规范化移除")
+	}
+}

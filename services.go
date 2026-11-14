@@ -175,6 +175,9 @@ func (l *Launcher) Execute(ctx context.Context, req core.ExecRequest, out *mygo.
 // Hide 隐藏主窗口。
 func (l *Launcher) Hide() { l.a.hidePanel() }
 
+// SetInTool 记录主窗口当前是否停留在工具页面或命令作用域中（隐藏后不自动重置）。
+func (l *Launcher) SetInTool(active bool) { l.a.panelInTool.Store(active) }
+
 // ClipboardPayload 把剪贴板里的内容（文件、图片或文字）做成一块带进搜索框。剪贴板是空的时返回 null。
 func (l *Launcher) ClipboardPayload() *PayloadInfo {
 	return l.a.payloadInfo(l.a.clipboardPayload("paste"))

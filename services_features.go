@@ -413,7 +413,7 @@ func (c *Catalog) SetEnabled(id string, enabled bool) error {
 }
 
 // SetHotkey 给一项绑定直达热键，返回注册失败的原因（成功时为空）。
-func (c *Catalog) SetHotkey(id, accel string, detach bool) (string, error) {
+func (c *Catalog) SetHotkey(id, accel string, detach bool, inputMode string) (string, error) {
 	err := c.a.config.Update(func(cfg *store.Config) {
 		if accel == "" {
 			delete(cfg.Hotkeys, id)
@@ -424,6 +424,12 @@ func (c *Catalog) SetHotkey(id, accel string, detach bool) (string, error) {
 			cfg.DetachOnHotkey[id] = true
 		} else {
 			delete(cfg.DetachOnHotkey, id)
+		}
+		switch inputMode {
+		case "clipboard", "both", "none":
+			cfg.HotkeyInput[id] = inputMode
+		default:
+			delete(cfg.HotkeyInput, id)
 		}
 	})
 	if err != nil {
