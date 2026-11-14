@@ -712,6 +712,92 @@ click_text('.fx-scratch-main .fx-toolbar .ui-btn', '格式化'); wait(1.5)
 check('按语言格式化（JSON）', '"a": 1' in (cm_text(0) or ''), cm_text(0))
 press('Escape'); wait(0.3); typed('')
 
+# ================= 第七轮：连点器、键盘宏、按键测试 =================
+def key_event(kind, code, k='', win=None, **mods):
+    return js('(()=>{const e=new KeyboardEvent(%s,%s);window.dispatchEvent(e);return e.defaultPrevented})()' % (json.dumps(kind), json.dumps(dict(key=k or code, code=code, bubbles=True, cancelable=True, **mods))), win)
+
+# 先把输入换成只记录的假实现；没换上就不测，绝不发真实的点击和按键。
+fake=js('mygo.call("E2E.FakeInput")')
+check('连点器和宏在测试里用假输入', fake is True, fake)
+if fake is True:
+    # --- 鼠标连点器
+    show(); open_feature('连点器', 0.8)
+    check('打开连点器页面', wait_for('!!document.querySelector(".fx-auto")', 5))
+    st=js('mygo.call("Auto.State")') or {}
+    check('默认不占用任何全局快捷键', st.get('clicker',{}).get('hotkey','')=='' and st.get('clicker',{}).get('failsafe') is True, st.get('clicker'))
+    js('mygo.call("Auto.SaveClicker",%s)' % json.dumps(dict(st['clicker'], button='right', kind='double', intervalMs=3, intervalMaxMs=9, stopMode='count', count=6, position='fixed', x=200, y=300, jitter=4, startDelaySec=0, failsafe=True)))
+    press('Escape'); wait(0.3); open_feature('连点器', 0.8)
+    check('设置保存后重新打开还在', '右键' in text_of('.fx-auto .ui-seg .is-active, .fx-auto .ui-seg [aria-checked=true], .fx-auto .ui-seg [aria-pressed=true]') or js('mygo.call("Auto.State").then(s=>s.clicker.button)')=='right')
+    js('mygo.call("E2E.InputLog")')
+    click_text('.fx-auto-bar .ui-btn', '开始')
+    ok=wait_for('document.querySelector(".fx-auto-status").innerText.includes("点完了 6 次")', 6)
+    log=js('mygo.call("E2E.InputLog")') or []
+    check('点够次数后自动停下', ok, text_of('.fx-auto-status'))
+    check('双击 6 次：12 下按下、12 下松开，都先移到固定位置附近', sum(1 for x in log if x.startswith('right true'))==12 and sum(1 for x in log if x.startswith('right false'))==12 and sum(1 for x in log if x.startswith('move '))==6 and all(196<=int(x[5:].split(',')[0])<=204 for x in log if x.startswith('move ')), log[:6])
+    js('mygo.call("Auto.SaveClicker",%s)' % json.dumps(dict(st['clicker'], kind='single', intervalMs=20, stopMode='manual', startDelaySec=0, failsafe=False)))
+    js('mygo.call("Auto.StartClicker")'); wait(0.5)
+    check('运行时显示次数和停止按钮', wait_for('!!document.querySelector(".fx-auto-status.is-running")', 2) and '停止' in text_of('.fx-auto-bar .ui-btn'), text_of('.fx-auto-bar'))
+    shot('feature-clicker')
+    click_text('.fx-auto-bar .ui-btn', '停止'); wait(0.5)
+    st2=js('mygo.call("Auto.State")') or {}
+    log=js('mygo.call("E2E.InputLog")') or []
+    check('手动停止，按下和松开成对', not st2['status']['running'] and st2['status'].get('note')=='已停止' and len(log)>4 and sum(1 for x in log if 'true' in x)==sum(1 for x in log if 'false' in x), st2.get('status'))
+    press('Escape'); wait(0.3)
+
+    # --- 键盘宏
+    typed(''); open_feature('键盘宏', 0.8)
+    check('打开键盘宏页面', wait_for('!!document.querySelector(".fx-macro")', 5))
+    click('.fx-scratch-empty .ui-btn'); wait(0.9)
+    check('新建宏', js('(document.querySelector(".fx-notes-title")||{}).value')=='新的宏', text_of('.fx-macro')[:60])
+    click_text('.fx-macro .fx-toolbar .ui-btn', '按键 / 组合键'); wait(0.4)
+    click('.fx-keycap'); wait(0.4)
+    key_event('keydown','ControlLeft','Control',ctrlKey=True); key_event('keydown','KeyK','k',ctrlKey=True); wait(0.5)
+    check('选按键：按着 Ctrl 再按 K 就是组合键', text_of('.fx-keycap')=='Ctrl + K', text_of('.fx-keycap'))
+    click_text('.fx-macro .fx-toolbar .ui-btn', '录制'); wait(0.4)
+    for c in ['KeyH','KeyI']:
+        key_event('keydown',c,c[-1].lower()); wait(0.06); key_event('keyup',c,c[-1].lower()); wait(0.08)
+    click_text('.fx-macro .fx-toolbar .ui-btn', '结束录制'); wait(0.9)
+    kinds=texts('.fx-step-type'); caps=texts('.fx-keycap')
+    check('录制：按过的键变成步骤，中间的停顿变成等待', caps[:3]==['Ctrl + K','H','I'] and '等待' in kinds, (kinds, caps))
+    click_text('.fx-macro .fx-toolbar .ui-btn', '文字'); wait(0.3)
+    fill('.fx-step-text', '你好 pocket'); wait(0.6)
+    mid=js('mygo.call("Auto.State").then(s=>s.macros[0])') or {}
+    check('宏自动保存', mid.get('id') and [s['type'] for s in mid.get('steps',[])][0]=='key' and mid['steps'][0]['keys']==['ControlLeft','KeyK'] and mid['steps'][-1].get('text')=='你好 pocket', mid.get('steps'))
+    js('mygo.call("Auto.SaveMacro",%s)' % json.dumps(dict(mid, loops=2, startDelaySec=0, speed=10))); wait(0.3)
+    js('mygo.call("E2E.InputLog")')
+    js('mygo.call("Auto.RunMacro",%s)' % json.dumps(mid.get('id')))
+    done=wait_for('mygo.call("Auto.State").then(s=>!s.status.running&&(s.status.note||"").includes("执行完了 2 遍"))', 8)
+    log=js('mygo.call("E2E.InputLog")') or []
+    check('运行宏：组合键按顺序按下、倒序松开，文字原样输入，跑两遍', done and log[:4]==['key ControlLeft true','key KeyK true','key KeyK false','key ControlLeft false'] and log.count('text 你好 pocket')==2 and log.count('key KeyH true')==2, log[:8])
+    shot('feature-macro')
+    bad=None
+    try: js('mygo.call("Auto.SaveMacro",{"name":"坏的","steps":[{"type":"key","keys":[]}]})')
+    except RuntimeError as e: bad=str(e)
+    check('没选按键的步骤保存不了', bad is not None and '还没有选按键' in bad, bad)
+    press('Escape'); wait(0.3)
+
+# --- 按键测试
+typed(''); open_feature('按键测试', 0.8)
+check('打开按键测试页面', wait_for('document.querySelectorAll(".fx-key").length>=100', 5), js('document.querySelectorAll(".fx-key").length'))
+p=key_event('keydown','KeyA','a'); p2=key_event('keydown','ShiftLeft','Shift',shiftKey=True); wait(0.3)
+check('按下时图上对应的键亮起来', p and p2 and js('document.querySelectorAll(".fx-key.is-down").length')==2 and js('[...document.querySelectorAll(".fx-key.is-down span")].map(s=>s.innerText).sort().join()')=='A,Shift')
+shot('feature-keytest')
+key_event('keyup','KeyA','a'); key_event('keyup','ShiftLeft','Shift'); wait(0.2)
+key_event('keydown','KeyA','a'); key_event('keyup','KeyA','a'); wait(0.3)
+stats=texts('.fx-test-stats b')
+check('松开后保留“测过”的标记，并统计次数', js('document.querySelectorAll(".fx-key.is-down").length')==0 and js('document.querySelectorAll(".fx-key.is-tested").length')==2 and stats[0]=='3' and stats[1].startswith('2 /') and stats[3]=='2', stats)
+esc=key_event('keydown','Escape','Escape'); key_event('keyup','Escape','Escape'); wait(0.3)
+check('测试时 Esc 也算按键，不会把页面关掉', esc and js('!!document.querySelector(".fx-inputtest")') and js('document.querySelectorAll(".fx-key.is-tested").length')==3)
+click_text('.fx-inputtest .ui-seg button, .fx-inputtest .ui-seg *', '鼠标'); wait(0.5)
+js('(()=>{const p=document.querySelector(".fx-mouse-pad");for(const b of [0,2]){p.dispatchEvent(new MouseEvent("mousedown",{button:b,bubbles:true,cancelable:true}));p.dispatchEvent(new MouseEvent("mouseup",{button:b,bubbles:true,cancelable:true}))}p.dispatchEvent(new MouseEvent("mousedown",{button:0,bubbles:true,cancelable:true}));p.dispatchEvent(new WheelEvent("wheel",{deltaY:-120,bubbles:true,cancelable:true}));return 1})()'); wait(0.4)
+stats=texts('.fx-test-stats b')
+check('鼠标：按键次数、滚轮和图上的按下状态', stats[0]=='2' and stats[2]=='1' and stats[5].startswith('1 /') and js('document.querySelectorAll(".fx-mouse-part.is-down").length')==1, stats)
+check('两次按下间隔太短会提示疑似连击', '疑似连击' in text_of('.fx-test-notes'), text_of('.fx-test-notes'))
+shot('feature-mousetest')
+press('Escape'); wait(0.4)
+check('切到鼠标页后 Esc 恢复正常', js('!document.querySelector(".fx-inputtest")'))
+typed('')
+
 # ================= 道具库 =================
 js('mygo.call("Settings.OpenCatalog")', panel_id()); wait(1.6)
 cw=window_by('catalog.html'); check('打开道具库窗口', cw is not None)

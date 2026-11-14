@@ -46,6 +46,38 @@ export interface Appearance {
   showMeta: boolean;
 }
 
+/** AutoState 是页面打开时需要的全部内容。 */
+export interface AutoState {
+  clicker: ClickerConfig;
+  macros: Macro[];
+  status: AutoStatus;
+  /** 系统允许模拟输入（macOS 的辅助功能权限） */
+  allowed: boolean;
+  /** 这个系统上能模拟的按键 */
+  keys: string[];
+  /** 快捷键注册失败的原因 */
+  errors?: Record<string, string>;
+}
+
+/** AutoStatus 是运行状态，变化时发给页面。 */
+export interface AutoStatus {
+  running: boolean;
+  /** clicker | macro */
+  kind?: string;
+  /** 宏的 ID */
+  id?: string;
+  name?: string;
+  /** 已经点了多少次 / 跑完了几遍 */
+  count: number;
+  /** 宏：正在执行第几步（从 1 开始） */
+  step: number;
+  /** 倒计时还剩几秒 */
+  countdown: number;
+  elapsedMs: number;
+  /** 结束的原因，或出了什么错 */
+  note?: string;
+}
+
 export interface Batch {
   mode: string;
   items: Item[];
@@ -105,6 +137,38 @@ export interface ChapterText {
   total: number;
   title: string;
   text: string;
+}
+
+/** ClickerConfig 是连点器的设置。 */
+export interface ClickerConfig {
+  /** left | right | middle */
+  button: string;
+  /** single 单击 | double 双击 | triple 三击 | hold 长按 */
+  kind: string;
+  /** 长按时按住多久 */
+  holdMs: number;
+  /** 两次点击之间的间隔 */
+  intervalMs: number;
+  /** 大于 IntervalMs 时，每次在两者之间随机取 */
+  intervalMaxMs: number;
+  /** manual 手动停 | count 点够次数 | duration 到时间 */
+  stopMode: string;
+  /** 点多少次 */
+  count: number;
+  /** 持续多少秒 */
+  durationSec: number;
+  /** cursor 跟着鼠标 | fixed 固定位置 */
+  position: string;
+  x: number;
+  y: number;
+  /** 固定位置时，每次在这个半径（像素）里随机偏一点 */
+  jitter: number;
+  /** 开始前倒计时，来得及把鼠标移过去 */
+  startDelaySec: number;
+  /** 把鼠标甩到屏幕左上角立刻停止 */
+  failsafe: boolean;
+  /** 开始 / 停止的全局快捷键 */
+  hotkey: string;
 }
 
 export interface ClipView {
@@ -386,6 +450,52 @@ export interface LLMConfig {
 export interface Language {
   code: string;
   name: string;
+}
+
+/** Macro 是一个键盘宏。 */
+export interface Macro {
+  id: string;
+  name: string;
+  steps: MacroStep[];
+  /** 执行几遍；0 表示一直到手动停止 */
+  loops: number;
+  /** 每遍之间的间隔 */
+  loopDelayMs: number;
+  /** 速度倍数，2 是两倍速 */
+  speed: number;
+  /** 开始前倒计时 */
+  startDelaySec: number;
+  /** 运行 / 停止的全局快捷键 */
+  hotkey: string;
+}
+
+/** MacroStep 是宏里的一步。 */
+export interface MacroStep {
+  /**
+   * Type：key 按一下（Keys 多于一个就是组合键）| down 按住不放 | up 松开 | text 输入文字 |
+   * delay 等待 | click 鼠标点击 | scroll 滚轮
+   */
+  type: string;
+  /** Keys 是按键名（KeyboardEvent.code）。组合键按顺序按下、倒序松开。 */
+  keys?: string[];
+  /** key：按住多久再松开（长按） */
+  holdMs?: number;
+  /** key / click：连续几次 */
+  repeat?: number;
+  /** 连续多次时每次之间的间隔 */
+  intervalMs?: number;
+  text?: string;
+  /** delay：等多久 */
+  ms?: number;
+  /** delay：大于 Ms 时在两者之间随机 */
+  msMax?: number;
+  button?: string;
+  /** click：先把鼠标移到 X, Y */
+  move?: boolean;
+  x?: number;
+  y?: number;
+  /** scroll：滚几行，正数向上 */
+  lines?: number;
 }
 
 export interface Module {
@@ -1328,10 +1438,56 @@ export const Scratch = {
   },
 } as const;
 
+/** Auto 是连点器和键盘宏页面的服务。 */
+export const Auto = {
+  /** DeleteMacro 删除一个宏。 */
+  deleteMacro(id: string): Promise<void> {
+    return call("Auto.DeleteMacro", id);
+  },
+  /** MousePos 返回鼠标现在的位置。 */
+  mousePos(): Promise<number[]> {
+    return call("Auto.MousePos");
+  },
+  /** OpenAccessibility 打开系统的辅助功能授权页。 */
+  openAccessibility(): Promise<void> {
+    return call("Auto.OpenAccessibility");
+  },
+  /** PickPosition 等几秒再读鼠标的位置：点了“拾取”之后把鼠标移到目标上等着就行。 */
+  pickPosition(seconds: number): Promise<number[]> {
+    return call("Auto.PickPosition", seconds);
+  },
+  /** RunMacro 运行一个宏。 */
+  runMacro(id: string): Promise<void> {
+    return call("Auto.RunMacro", id);
+  },
+  /** SaveClicker 保存连点器的设置。 */
+  saveClicker(c: ClickerConfig): Promise<ClickerConfig> {
+    return call("Auto.SaveClicker", c);
+  },
+  /** SaveMacro 新建或保存一个宏。 */
+  saveMacro(m: Macro): Promise<Macro> {
+    return call("Auto.SaveMacro", m);
+  },
+  /** StartClicker 开始连点。 */
+  startClicker(): Promise<void> {
+    return call("Auto.StartClicker");
+  },
+  /** State 返回设置、宏和运行状态。 */
+  state(): Promise<AutoState> {
+    return call("Auto.State");
+  },
+  /** Stop 停掉正在运行的连点或宏。 */
+  stop(): Promise<void> {
+    return call("Auto.Stop");
+  },
+} as const;
+
 // ---- Events ----
 
 /** Events sent by the Go side. Subscribe with `events.name.on(listener)`. */
 export const events = {
+  /** AutoChanged 在连点器或宏的运行状态变化时发送。 */
+  autoStatus: event<AutoStatus>("auto:status"),
   /** PanelShown 在主窗口显示时发送。 */
   panelShown: event<PanelShownEvent>("panel:shown"),
   /** ConfigChanged 在配置变化后发送给所有窗口。 */

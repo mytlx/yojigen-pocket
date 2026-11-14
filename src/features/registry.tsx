@@ -17,6 +17,9 @@ import { CalcTool } from "./calc";
 import { ClipboardTool } from "./clipboard";
 import { FindTool } from "./find";
 import { WinToolsPage } from "./wintools";
+import { ClickerTool } from "./clicker";
+import { MacroTool } from "./macro";
+import { InputTest } from "./inputtest";
 import { lazyFeature } from "./lazy";
 import "./features.css";
 
@@ -41,6 +44,9 @@ export const features: Record<string, { component: FunctionComponent<FeatureProp
   regex: { component: RegexTool, height: 520 },
   jwt: { component: JwtTool, height: 480 },
   diff: { component: DiffTool, height: 560 },
+  clicker: { component: ClickerTool, height: 520 },
+  macro: { component: MacroTool, height: 580 },
+  inputtest: { component: InputTest, height: 470 },
   notes: { component: NotesTool, height: 580 },
   scratch: { component: ScratchTool, height: 580 },
   random: { component: RandomTool, height: 440 },

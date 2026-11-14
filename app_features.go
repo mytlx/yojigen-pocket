@@ -85,7 +85,7 @@ func (r DetachRequest) key() string {
 
 // detach 把功能页分离成独立窗口。同一个功能已经有窗口时，切过去并换上新的输入。
 // featureWidths 是需要更宽窗口的功能页分离出来时的宽度。
-var featureWidths = map[string]int{"find": 1080, "clipboard": 880, "calc": 760, "wintools": 820, "notes": 1040, "scratch": 1040, "diff": 1040}
+var featureWidths = map[string]int{"find": 1080, "clipboard": 880, "calc": 760, "wintools": 820, "notes": 1040, "scratch": 1040, "diff": 1040, "macro": 980, "clicker": 820, "inputtest": 1000}
 
 // modulePages 是有独立页面的内置模块：模块 ID → 功能页的 ID。
 var modulePages = map[string]string{"calc": "features:calc", "clipboard": "features:clipboard", "files": "features:find"}

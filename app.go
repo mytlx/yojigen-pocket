@@ -64,6 +64,7 @@ type App struct {
 	pendingView atomic.Pointer[core.View]
 
 	payloads          payloadStore
+	auto              *autoEngine
 	media             *mediaServer
 	calcHistory       *calcHistory
 	wintools          *providers.WinTools
@@ -219,6 +220,9 @@ func (a *App) buildEngine(ctx context.Context) {
 	a.plugins.Reload()
 
 	a.files = &providers.Files{Config: get}
+	a.auto = newAutoEngine(filepath.Join(a.paths.Data, "auto.json"))
+	a.auto.onStatus = func(st AutoStatus) { AutoChanged.Broadcast(st) }
+	a.auto.onHotkeys = func() { a.applyHotkeys(a.config.Get()) }
 	a.calcHistory = &calcHistory{file: filepath.Join(a.paths.Data, "calc-history.json")}
 	a.calcHistory.load()
 	a.wintools = providers.NewWinTools()
@@ -699,6 +703,10 @@ func (a *App) applyHotkeys(cfg *store.Config) {
 	}
 	for id, accel := range all {
 		register(id, accel, func() { a.runByHotkey(id) })
+	}
+	// 连点器和键盘宏的开始 / 停止键。
+	for id, accel := range a.auto.hotkeys() {
+		register(id, accel, func() { a.auto.toggle(id, a.host.Notify) })
 	}
 	r := cfg.Reader
 	register("reader-boss", r.BossKey, a.toggleReader)
