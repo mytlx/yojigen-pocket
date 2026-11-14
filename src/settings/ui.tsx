@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { Settings } from "../mygo";
+import { Settings, events } from "../mygo";
 import { formatAccelerator } from "../shared/theme";
 
 /** 设置页的基础控件。所有分区都用这几个，风格才统一。 */
@@ -191,6 +191,13 @@ export function Hotkey({ value, platform, onChange, clearable, placeholder = "�
   useEffect(() => {
     if (!recording) return;
     void Settings.suspendHotkeys(true);
+    let recorded = false;
+    const finish = (accel: string) => {
+      if (recorded) return;
+      recorded = true;
+      onChange(accel);
+      setRecording(false);
+    };
     const onKey = (e: KeyboardEvent) => {
       // 按下和松开都拦住：单按 Alt 松开时，系统会去激活窗口菜单。
       e.preventDefault();
@@ -201,14 +208,13 @@ export function Hotkey({ value, platform, onChange, clearable, placeholder = "�
         return;
       }
       const accel = toAccelerator(e, mac);
-      if (accel) {
-        onChange(accel);
-        setRecording(false);
-      }
+      if (accel) finish(accel);
     };
+    const offCaptured = events.hotkeyCaptured.on((accel) => finish(accel));
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("keyup", onKey, true);
     return () => {
+      offCaptured();
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("keyup", onKey, true);
       void Settings.suspendHotkeys(false);

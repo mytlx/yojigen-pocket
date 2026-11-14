@@ -541,12 +541,14 @@ func (a *App) openCatalog() {
 	win := mygo.NewWindow(opts)
 	a.catalog = win
 	win.OnReadyToShow(func() {
+		a.registerHotkeyCapture(win)
 		win.Show()
 		win.Focus()
 		mygo.App.Focus()
 	})
 	win.OnClosed(func() {
 		a.catalog = nil
+		a.suspendHotkeys(false) // 录到一半就关了窗口：把热键恢复回来
 		a.updatePolicy()
 	})
 	a.updatePolicy()

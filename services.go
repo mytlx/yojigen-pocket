@@ -47,6 +47,8 @@ var (
 	PayloadArrived = mygo.NewEvent[PayloadInfo]("panel:payload")
 	// ClipboardChanged 在剪贴板历史有变化时发送（剪贴板页据此刷新）。
 	ClipboardChanged = mygo.NewEvent[struct{}]("clipboard:changed")
+	// HotkeyCaptured 在系统保留按键（如 Windows 的 Alt+Space）被窗口快捷键录制拦截时发送。
+	HotkeyCaptured = mygo.NewEvent[string]("hotkey:captured")
 )
 
 // PanelShownEvent 描述这次唤出。

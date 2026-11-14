@@ -90,6 +90,7 @@ type App struct {
 	registered   []string
 	// hotkeysSuspended 为真时不注册任何全局热键：设置里正在录快捷键，按下的组合要交给页面，而不是触发它。
 	hotkeysSuspended bool
+	hotkeyCapture    atomic.Bool
 
 	urlMu      sync.Mutex
 	pendingURL string
@@ -570,6 +571,7 @@ func (a *App) openSettings(section, arg string) {
 	win := mygo.NewWindow(opts)
 	a.settings = win
 	win.OnReadyToShow(func() {
+		a.registerHotkeyCapture(win)
 		win.Show()
 		win.Focus()
 		mygo.App.Focus()
@@ -635,9 +637,16 @@ func (a *App) suspendHotkeys(suspend bool) {
 	changed := a.hotkeysSuspended != suspend
 	a.hotkeysSuspended = suspend
 	a.hotkeyMu.Unlock()
+	a.hotkeyCapture.Store(suspend)
 	if changed {
 		a.applyHotkeys(a.config.Get())
 	}
+}
+
+func (a *App) registerHotkeyCapture(win *mygo.Window) {
+	platform.RegisterHotkeyCapture(win.NativeHandle(), &a.hotkeyCapture, func(accel string) {
+		_ = HotkeyCaptured.Emit(win, accel)
+	})
 }
 
 func (a *App) applyHotkeys(cfg *store.Config) {

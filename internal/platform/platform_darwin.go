@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf16"
@@ -411,3 +412,6 @@ func CaptureRegion(ctx context.Context, path string) (bool, error) {
 	}
 	return false, nil
 }
+
+// RegisterHotkeyCapture macOS 无需拦截 Windows 系统窗口菜单。
+func RegisterHotkeyCapture(uintptr, *atomic.Bool, func(string)) {}

@@ -5,6 +5,7 @@ package platform
 import (
 	"context"
 	"os/exec"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -76,3 +77,6 @@ func RequestScreenCapture() {}
 
 // CaptureRegion 其他系统不支持。
 func CaptureRegion(context.Context, string) (bool, error) { return false, ErrUnsupported }
+
+// RegisterHotkeyCapture 非 Windows 平台无需拦截系统窗口菜单。
+func RegisterHotkeyCapture(uintptr, *atomic.Bool, func(string)) {}

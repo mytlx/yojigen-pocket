@@ -1225,4 +1225,6 @@ export const events = {
   panelPayload: event<PayloadInfo>("panel:payload"),
   /** ClipboardChanged 在剪贴板历史有变化时发送（剪贴板页据此刷新）。 */
   clipboardChanged: event<{}>("clipboard:changed"),
+  /** HotkeyCaptured 在系统保留按键（如 Windows 的 Alt+Space）被窗口快捷键录制拦截时发送。 */
+  hotkeyCaptured: event<string>("hotkey:captured"),
 } as const;

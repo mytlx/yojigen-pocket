@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -23,6 +24,7 @@ var (
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
 	shell32  = syscall.NewLazyDLL("shell32.dll")
 	ole32    = syscall.NewLazyDLL("ole32.dll")
+	comctl32 = syscall.NewLazyDLL("comctl32.dll")
 
 	procSendInput                  = user32.NewProc("SendInput")
 	procGetForegroundWindow        = user32.NewProc("GetForegroundWindow")
@@ -32,12 +34,16 @@ var (
 	procGetClipboardSequenceNumber = user32.NewProc("GetClipboardSequenceNumber")
 	procRegisterClipboardFormatW   = user32.NewProc("RegisterClipboardFormatW")
 	procIsClipboardFormatAvailable = user32.NewProc("IsClipboardFormatAvailable")
+	procGetKeyState                = user32.NewProc("GetKeyState")
 	procOpenProcess                = kernel32.NewProc("OpenProcess")
 	procCloseHandle                = kernel32.NewProc("CloseHandle")
 	procQueryFullProcessImageNameW = kernel32.NewProc("QueryFullProcessImageNameW")
 	procShellExecuteW              = shell32.NewProc("ShellExecuteW")
 	procCoInitializeEx             = ole32.NewProc("CoInitializeEx")
 	procCoUninitialize             = ole32.NewProc("CoUninitialize")
+	procSetWindowSubclass          = comctl32.NewProc("SetWindowSubclass")
+	procRemoveWindowSubclass       = comctl32.NewProc("RemoveWindowSubclass")
+	procDefSubclassProc            = comctl32.NewProc("DefSubclassProc")
 )
 
 const (
@@ -46,6 +52,10 @@ const (
 	keyEventUnicode = 0x0004
 	vkControl       = 0x11
 	vkV             = 0x56
+
+	wmNCDestroy  = 0x0082
+	wmSysCommand = 0x0112
+	scKeyMenu    = 0xF100
 
 	createNoWindow          = 0x08000000
 	createNewProcessGroup   = 0x00000200
@@ -370,3 +380,95 @@ func RequestScreenCapture() {}
 
 // CaptureRegion 在 Windows 上由应用层调用系统的截图工具（ms-screenclip），这里不处理。
 func CaptureRegion(context.Context, string) (bool, error) { return false, ErrUnsupported }
+
+type hotkeyHookEntry struct {
+	active        *atomic.Bool
+	onAccel       func(string)
+	suppressUntil atomic.Int64
+}
+
+var (
+	hotkeyHooksMu       sync.Mutex
+	hotkeyHooks         = map[uintptr]*hotkeyHookEntry{}
+	sysMenuSubclassOnce sync.Once
+	sysMenuSubclassProc uintptr
+)
+
+// RegisterHotkeyCapture 在录制快捷键期间拦截窗口的系统菜单触发（SC_KEYMENU），
+// 防止 Alt+Space / 单按 Alt 弹出原生窗口菜单，并在拦截到 Alt+Space 时回调通知前端。
+// 必须在拥有 hwnd 的 UI 线程上调用。
+func RegisterHotkeyCapture(hwnd uintptr, active *atomic.Bool, onAccel func(string)) {
+	if hwnd == 0 || active == nil {
+		return
+	}
+	sysMenuSubclassOnce.Do(func() {
+		sysMenuSubclassProc = syscall.NewCallback(sysMenuSubclassCallback)
+	})
+	hotkeyHooksMu.Lock()
+	_, exists := hotkeyHooks[hwnd]
+	hotkeyHooks[hwnd] = &hotkeyHookEntry{active: active, onAccel: onAccel}
+	hotkeyHooksMu.Unlock()
+	if !exists {
+		procSetWindowSubclass.Call(hwnd, sysMenuSubclassProc, 1, 0)
+	}
+}
+
+func sysMenuSubclassCallback(hwnd, msg, wp, lp, id, _ uintptr) uintptr {
+	switch msg {
+	case wmNCDestroy:
+		hotkeyHooksMu.Lock()
+		delete(hotkeyHooks, hwnd)
+		hotkeyHooksMu.Unlock()
+		procRemoveWindowSubclass.Call(hwnd, sysMenuSubclassProc, id)
+	case wmSysCommand:
+		if wp&0xFFF0 == scKeyMenu {
+			hotkeyHooksMu.Lock()
+			entry := hotkeyHooks[hwnd]
+			hotkeyHooksMu.Unlock()
+			if entry != nil {
+				if entry.active != nil && entry.active.Load() {
+					if lp == ' ' && entry.onAccel != nil {
+						entry.suppressUntil.Store(time.Now().Add(400 * time.Millisecond).UnixMilli())
+						entry.onAccel(altSpaceAccelerator())
+					}
+					return 0
+				}
+				// 录完 Alt+Space 后用户才松开 Alt：吞掉紧随其后的无参 SC_KEYMENU，避免菜单延迟弹出。
+				if lp == 0 && time.Now().UnixMilli() < entry.suppressUntil.Load() {
+					return 0
+				}
+			}
+		}
+	}
+	r, _, _ := procDefSubclassProc.Call(hwnd, msg, wp, lp)
+	return r
+}
+
+func isVKDown(vk uintptr) bool {
+	r, _, _ := procGetKeyState.Call(vk)
+	return int16(r) < 0
+}
+
+func altSpaceAccelerator() string {
+	return formatAltSpaceAccelerator(
+		isVKDown(vkLWin) || isVKDown(vkRWin),
+		isVKDown(vkControl),
+		isVKDown(vkShift),
+	)
+}
+
+func formatAltSpaceAccelerator(winDown, ctrlDown, shiftDown bool) string {
+	var parts []string
+	if winDown {
+		parts = append(parts, "Win")
+	}
+	if ctrlDown {
+		parts = append(parts, "Ctrl")
+	}
+	parts = append(parts, "Alt")
+	if shiftDown {
+		parts = append(parts, "Shift")
+	}
+	parts = append(parts, "Space")
+	return strings.Join(parts, "+")
+}
