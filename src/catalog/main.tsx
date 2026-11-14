@@ -145,7 +145,11 @@ function App() {
                     key={it.id}
                     class={`ct-card${it.enabled ? "" : " is-off"}`}
                     style={{ animationDelay: `${Math.min(index++, 24) * 18}ms` }}
-                    onDblClick={() => void act(Catalog.open(it.id))}
+                    onDblClick={(e) => {
+                      if (!it.enabled) return;
+                      if ((e.target as HTMLElement | null)?.closest("button, input, select, textarea, label, a, .ct-actions, .ct-hotkey")) return;
+                      void act(Catalog.open(it.id));
+                    }}
                   >
                     <div class="ct-card-head">
                       <Icon icon={it.icon} size={34} />
@@ -187,7 +191,7 @@ function App() {
                       )}
                     </div>
                     {editing === it.id && (
-                      <HotkeyEditor item={it} platform={platform} onDone={(msg, err) => { setEditing(null); flash(msg, err); refresh(); }} />
+                      <HotkeyEditor item={it} platform={platform} onDone={(msg, err) => { flash(msg, err); refresh(); }} />
                     )}
                   </article>
                 ))}
@@ -209,17 +213,23 @@ function HotkeyEditor({ item, platform, onDone }: { item: CatalogItem; platform:
       setInputMode(normalizeHotkeyInputMode(v.config.hotkeyInput?.[item.id]));
     });
   }, [item.id]);
-  const save = (accel: string, d = detach, m: string = inputMode) =>
+  const save = (accel: string, d: boolean, m: string, okText: string) =>
     void Catalog.setHotkey(item.id, accel, d, m).then(
-      (err) => onDone(err ? `快捷键被占用：${err}` : accel ? "已设置快捷键" : "已清除快捷键", !!err),
+      (err) => onDone(err ? `快捷键被占用：${err}` : okText, !!err),
       (e: Error) => onDone(e.message, true),
     );
   return (
     <div class="ct-hotkey">
-      <Hotkey value={item.hotkey ?? ""} platform={platform} clearable onChange={(v) => save(v)} placeholder="点击后按下快捷键" />
+      <Hotkey
+        value={item.hotkey ?? ""}
+        platform={platform}
+        clearable
+        onChange={(v) => save(v, detach, inputMode, v ? "已设置快捷键" : "已清除快捷键")}
+        placeholder="点击后按下快捷键"
+      />
       {item.canDetach && (
         <label class="ct-inline">
-          以独立窗口打开 <Toggle checked={detach} onChange={(v) => { setDetach(v); if (item.hotkey) save(item.hotkey, v); }} />
+          以独立窗口打开 <Toggle checked={detach} onChange={(v) => { setDetach(v); save(item.hotkey ?? "", v, inputMode, "已保存"); }} />
         </label>
       )}
       {supportsHotkeyInput(item.id) && (
@@ -232,7 +242,7 @@ function HotkeyEditor({ item, platform, onDone }: { item: CatalogItem; platform:
             onChange={(e) => {
               const m = normalizeHotkeyInputMode((e.target as HTMLSelectElement).value);
               setInputMode(m);
-              if (item.hotkey) save(item.hotkey, detach, m);
+              save(item.hotkey ?? "", detach, m, "已保存");
             }}
           >
             {hotkeyInputOptions.map((o) => (
