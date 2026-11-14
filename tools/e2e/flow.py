@@ -35,6 +35,10 @@ def show():
 def visible():
     return [w for w in windows() if w['id']==panel_id()][0]['visible']
 def typed(text):
+    # 停在功能页或命令输出里时，再次唤出会原样回到那里（没有搜索框）；先按 Esc 回到搜索。
+    for _ in range(3):
+        if js('!!document.querySelector(".pk-input")'): break
+        js('(()=>{const t=document.activeElement&&document.activeElement!==document.body?document.activeElement:document.querySelector(".pk-panel");t.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",code:"Escape",bubbles:true,cancelable:true}));return 1})()'); time.sleep(0.3)
     js('''(()=>{const i=document.querySelector(".pk-input");const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set;s.call(i,%s);i.dispatchEvent(new Event("input",{bubbles:true}));return 1})()''' % json.dumps(text)); wait()
 def press(key, code=None, **mods):
     init=dict(key=key,code=code or ('Key'+key.upper() if len(key)==1 and key.isalpha() else key),bubbles=True,cancelable=True,**mods)

@@ -738,10 +738,6 @@ func resolveHotkeyInput(mode string, readSelection, readClipboard func() string)
 	}
 }
 
-func (a *App) captureHotkeyInput(mode string) string {
-	return resolveHotkeyInput(mode, a.captureSelection, mygo.Clipboard.ReadText)
-}
-
 func (a *App) runByHotkey(id string) {
 	go func() {
 		cfg := a.config.Get()
@@ -768,9 +764,15 @@ func (a *App) runByHotkey(id string) {
 		// 功能页直接填进输入框；脚本可以用 {selection} 和 POCKET_SELECTION 拿到。
 		captured := ""
 		if ok && ((isView && it.Actions[0].View.Type == "feature") || it.Source == "scripts") {
-			captured = a.captureHotkeyInput(inputMode)
+			// 带入的内容可能来自剪贴板；上下文里的“选中文字”只记真正选中的，
+			// 免得脚本的 {selection} / POCKET_SELECTION 拿到的其实是剪贴板。
+			selected := ""
+			captured = resolveHotkeyInput(inputMode, func() string {
+				selected = a.captureSelection()
+				return selected
+			}, mygo.Clipboard.ReadText)
 			c := a.engine.Context()
-			c.Selection = captured
+			c.Selection = selected
 			a.engine.SetContext(c)
 		}
 		if isView {

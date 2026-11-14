@@ -213,9 +213,11 @@ func prepareCommand(cmd *exec.Cmd) {
 	cmd.WaitDelay = 2 * time.Second
 }
 
+// prepareDetachedCommand 用来启动编辑器这类要显示出来的程序，所以不能设 HideWindow：
+// 它会把 STARTUPINFO 的显示方式设成 SW_HIDE，记事本、Notepad++ 这些窗口程序会照着它把主窗口藏起来，
+// 看上去就是“点了没反应”。CREATE_NO_WINDOW 只影响控制台程序（code.cmd 这种批处理不会闪黑框），对窗口程序没有影响。
 func prepareDetachedCommand(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
 		CreationFlags: createNoWindow | createNewProcessGroup,
 	}
 }

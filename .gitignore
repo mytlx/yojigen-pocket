@@ -7,4 +7,3 @@ mygo_windows_*.syso
 .DS_Store
 *.log
 .idea/
-.idea/*
