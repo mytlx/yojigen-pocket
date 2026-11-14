@@ -597,6 +597,10 @@ func (a *App) createTray() {
 		log.Printf("创建托盘图标失败：%v", err)
 		return
 	}
+	// Windows 托盘左键触发 OnClick、右键弹出 Menu；macOS/Linux 有 Menu 时左键直接展开菜单（Linux 注册 OnClick 还会拖慢菜单响应）。
+	if runtime.GOOS == "windows" {
+		tray.OnClick(func() { a.showPanel("") })
+	}
 	a.tray = tray
 }
 
