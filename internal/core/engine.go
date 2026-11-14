@@ -717,6 +717,9 @@ func (e *Engine) perform(ctx context.Context, r *Run) error {
 		}
 		cmd := platform.ShellCommand(context.WithoutCancel(ctx), a.Command)
 		cmd.Dir = platform.ExpandHome(a.Cwd)
+		if cmd.Dir == "" {
+			cmd.Dir = platform.DefaultWorkDir()
+		}
 		r.Hide()
 		go func() {
 			if out, err := cmd.CombinedOutput(); err != nil {

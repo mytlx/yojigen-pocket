@@ -4,9 +4,11 @@ package platform
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -19,6 +21,8 @@ import (
 var (
 	user32   = syscall.NewLazyDLL("user32.dll")
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
+	shell32  = syscall.NewLazyDLL("shell32.dll")
+	ole32    = syscall.NewLazyDLL("ole32.dll")
 
 	procSendInput                  = user32.NewProc("SendInput")
 	procGetForegroundWindow        = user32.NewProc("GetForegroundWindow")
@@ -31,6 +35,9 @@ var (
 	procOpenProcess                = kernel32.NewProc("OpenProcess")
 	procCloseHandle                = kernel32.NewProc("CloseHandle")
 	procQueryFullProcessImageNameW = kernel32.NewProc("QueryFullProcessImageNameW")
+	procShellExecuteW              = shell32.NewProc("ShellExecuteW")
+	procCoInitializeEx             = ole32.NewProc("CoInitializeEx")
+	procCoUninitialize             = ole32.NewProc("CoUninitialize")
 )
 
 const (
@@ -41,7 +48,11 @@ const (
 	vkV             = 0x56
 
 	createNoWindow          = 0x08000000
+	createNewProcessGroup   = 0x00000200
 	processQueryLimitedInfo = 0x1000
+	swShowNormal            = 1
+	coinitApartmentThreaded = 0x2
+	coinitDisableOle1Dde    = 0x4
 )
 
 // keybdInput 对应 Win32 的 KEYBDINPUT。
@@ -192,6 +203,63 @@ func prepareCommand(cmd *exec.Cmd) {
 	cmd.WaitDelay = 2 * time.Second
 }
 
+func prepareDetachedCommand(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: createNoWindow | createNewProcessGroup,
+	}
+}
+
+func utf16PtrOpt(s string) (*uint16, error) {
+	if s == "" {
+		return nil, nil
+	}
+	return syscall.UTF16PtrFromString(s)
+}
+
+// ShellOpen 通过 ShellExecuteW 打开应用、文件或链接，并显式指定工作目录。
+// 避免 lpDirectory 为 NULL 时子进程继承启动器所在目录而造成目录锁定。
+func ShellOpen(verb, target string) error {
+	if target == "" {
+		return fmt.Errorf("打开目标不能为空")
+	}
+	dir := WorkDir(target)
+	vPtr, err := utf16PtrOpt(verb)
+	if err != nil {
+		return err
+	}
+	tPtr, err := syscall.UTF16PtrFromString(target)
+	if err != nil {
+		return err
+	}
+	dPtr, err := utf16PtrOpt(dir)
+	if err != nil {
+		return err
+	}
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if hr, _, _ := procCoInitializeEx.Call(0, coinitApartmentThreaded|coinitDisableOle1Dde); int32(hr) >= 0 {
+		defer procCoUninitialize.Call()
+	}
+
+	r, _, _ := procShellExecuteW.Call(
+		0,
+		uintptr(unsafe.Pointer(vPtr)),
+		uintptr(unsafe.Pointer(tPtr)),
+		0,
+		uintptr(unsafe.Pointer(dPtr)),
+		swShowNormal,
+	)
+	runtime.KeepAlive(vPtr)
+	runtime.KeepAlive(tPtr)
+	runtime.KeepAlive(dPtr)
+	if r <= 32 {
+		return fmt.Errorf("打开 %s 失败（错误码 %d）", target, r)
+	}
+	return nil
+}
+
 func powershell() string {
 	if p := LookFirst("pwsh.exe"); p != "" {
 		return p
@@ -261,12 +329,17 @@ func Interpreter(ext string) []string {
 
 // OpenInEditor 用默认编辑器打开文件。
 func OpenInEditor(path string) error {
+	dir := WorkDir(path)
 	for _, editor := range []string{"code.cmd", "notepad++.exe"} {
 		if p := LookFirst(editor); p != "" {
-			return Command(context.Background(), p, path).Start()
+			cmd := DetachedCommand(p, path)
+			cmd.Dir = dir
+			return cmd.Start()
 		}
 	}
-	return Command(context.Background(), "notepad.exe", path).Start()
+	cmd := DetachedCommand("notepad.exe", path)
+	cmd.Dir = dir
+	return cmd.Start()
 }
 
 // FixPath 在 Windows 上不需要处理。

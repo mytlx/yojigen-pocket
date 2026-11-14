@@ -440,14 +440,14 @@ func (a *App) payloadCommands() []*providers.PayloadCommand {
 			Keywords: []string{"open", "dk", "打开", "预览"}, Accept: func(p *core.Payload) bool { return p.Kind == core.PayloadImage },
 			Run: func(_ context.Context, r *core.Run, p *core.Payload) error {
 				r.Hide()
-				return mygo.Shell.OpenPath(p.ImagePath())
+				return openPath(p.ImagePath())
 			}},
 		{ID: "file-open", Title: "打开", Desc: "用默认应用打开", Icon: "svg:external", Score: 0.62,
 			Keywords: []string{"open", "dk"}, Accept: isFiles,
 			Run: func(_ context.Context, r *core.Run, p *core.Payload) error {
 				r.Hide()
 				for _, f := range p.Files {
-					if err := mygo.Shell.OpenPath(f); err != nil {
+					if err := openPath(f); err != nil {
 						return err
 					}
 				}
@@ -487,7 +487,7 @@ func (a *App) payloadCommands() []*providers.PayloadCommand {
 				}
 				r.Hide()
 				a.host.Notify("图片已复制", "在打开的"+s.name+"页面里按 "+pasteKey+" 粘贴")
-				return mygo.Shell.OpenExternal(s.url)
+				return openExternal(s.url)
 			}})
 	}
 	return cmds

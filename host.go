@@ -24,14 +24,38 @@ import (
 	"yojigen-pocket/internal/store"
 )
 
+func launchApp(path string) error {
+	if path == "" {
+		return errors.New("应用路径为空")
+	}
+	if runtime.GOOS == "windows" {
+		return platform.ShellOpen("", path)
+	}
+	return mygo.Shell.LaunchApp(mygo.InstalledApp{Path: path})
+}
+
+func openPath(p string) error {
+	if runtime.GOOS == "windows" {
+		return platform.ShellOpen("open", p)
+	}
+	return mygo.Shell.OpenPath(p)
+}
+
+func openExternal(rawURL string) error {
+	if runtime.GOOS == "windows" {
+		return platform.ShellOpen("open", rawURL)
+	}
+	return mygo.Shell.OpenExternal(rawURL)
+}
+
 // host 实现 core.Host：引擎需要的系统能力。
 type host struct{ a *App }
 
 func (h *host) OpenTarget(t string) error {
 	if strings.Contains(t, "://") || strings.HasPrefix(t, "mailto:") {
-		return mygo.Shell.OpenExternal(t)
+		return openExternal(t)
 	}
-	return mygo.Shell.OpenPath(platform.ExpandHome(t))
+	return openPath(platform.ExpandHome(t))
 }
 func (h *host) Reveal(p string)   { mygo.Shell.ShowItemInFolder(platform.ExpandHome(p)) }
 func (h *host) CopyText(t string) { mygo.Clipboard.WriteText(t) }
@@ -63,7 +87,8 @@ func (h *host) Notify(title, body string) {
 func (h *host) EditFile(p string) error {
 	if editor := h.a.config.Get().Editor; editor != "" {
 		parts := strings.Fields(editor)
-		cmd := platform.Command(ctxBackground(), parts[0], append(parts[1:], p)...)
+		cmd := platform.DetachedCommand(parts[0], append(parts[1:], p)...)
+		cmd.Dir = platform.WorkDir(p)
 		return cmd.Start()
 	}
 	return platform.OpenInEditor(p)

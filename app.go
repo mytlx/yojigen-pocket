@@ -184,7 +184,7 @@ func (a *App) buildEngine(ctx context.Context) {
 			return out, nil
 		},
 		Launch: func(e providers.AppEntry) error {
-			return mygo.Shell.LaunchApp(mygo.InstalledApp{ID: e.ID, Name: e.Name, Path: e.Path})
+			return launchApp(e.Path)
 		},
 	}
 	go func() {
@@ -287,7 +287,7 @@ func (a *App) selfCommands() []*providers.SelfCommand {
 			Keywords: []string{"config folder", "home", "data"},
 			Run: func(_ context.Context, r *core.Run) error {
 				r.Hide()
-				return mygo.Shell.OpenPath(a.paths.Home)
+				return openPath(a.paths.Home)
 			}},
 		{ID: "reload", Title: "重新加载", Subtitle: "重新读取配置、脚本和插件", Icon: "svg:refresh",
 			Keywords: []string{"reload", "refresh"}, KeepOpen: true,

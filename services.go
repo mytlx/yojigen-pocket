@@ -198,7 +198,7 @@ func (l *Launcher) OpenExternal(target string) error {
 		return errors.New("只能打开 http / https 链接")
 	}
 	l.a.hidePanel()
-	return mygo.Shell.OpenExternal(target)
+	return openExternal(target)
 }
 
 // OpenSettings 打开设置窗口。
@@ -249,7 +249,7 @@ func (l *Launcher) PluginCall(plugin, method string, args []any) (any, error) {
 		if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
 			return nil, errors.New("只能打开 http / https 链接")
 		}
-		return nil, mygo.Shell.OpenExternal(target)
+		return nil, openExternal(target)
 	case "notify":
 		a.host.Notify(str(0), str(1))
 	case "hide":
@@ -428,7 +428,7 @@ func (s *Settings) OpenFolder(which string) error {
 	if target == "" {
 		return fmt.Errorf("未知的目录：%s", which)
 	}
-	return mygo.Shell.OpenPath(target)
+	return openPath(target)
 }
 
 // EditFile 用编辑器打开文件。只能打开用户目录里的文件。

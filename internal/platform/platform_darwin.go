@@ -271,6 +271,13 @@ func prepareCommand(cmd *exec.Cmd) {
 	cmd.WaitDelay = 2 * time.Second
 }
 
+func prepareDetachedCommand(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+}
+
+// ShellOpen 在非 Windows 平台由上层交由 mygo.Shell 处理。
+func ShellOpen(_, _ string) error { return ErrUnsupported }
+
 // ShellCommand 用用户的 shell 执行一行命令。
 func ShellCommand(ctx context.Context, line string) *exec.Cmd {
 	shell := LookFirst("zsh", "bash", "sh")

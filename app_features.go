@@ -505,7 +505,7 @@ func (a *App) trayMenu(list []WindowInfo) *mygo.Menu {
 	}
 	items = append(items,
 		mygo.Separator(),
-		&mygo.MenuItem{Label: "打开配置目录", Click: func(*mygo.MenuItem, *mygo.Window) { _ = mygo.Shell.OpenPath(a.paths.Home) }},
+		&mygo.MenuItem{Label: "打开配置目录", Click: func(*mygo.MenuItem, *mygo.Window) { _ = openPath(a.paths.Home) }},
 		&mygo.MenuItem{Label: "重新加载", Click: func(*mygo.MenuItem, *mygo.Window) { a.reloadAll() }},
 		mygo.Separator(),
 		&mygo.MenuItem{Label: "退出", Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }},
