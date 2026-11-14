@@ -5,8 +5,7 @@ import {
   RotateCw, Search, Settings, SlidersHorizontal, Terminal, Trash2, Volume2, Wifi, Wrench, Info,
   Languages, ScanText, BookOpen, Braces, Binary, Fingerprint, Clock, Regex, KeyRound, Diff, Dices, Link,
   CaseSensitive, AppWindow, Sparkles, EyeOff, Play, Download, ExternalLink,
-  type LucideIcon,
-} from "lucide-preact";
+  type LucideIcon, NotebookPen, MousePointerClick, Keyboard as KeyboardIcon, Gamepad2, PawPrint } from "lucide-preact";
 
 /** 口袋：应用自己的标志。 */
 /**
@@ -55,6 +54,7 @@ const svgIcons: Record<string, LucideIcon> = {
   languages: Languages, "scan-text": ScanText, "book-open": BookOpen, braces: Braces, binary: Binary,
   fingerprint: Fingerprint, clock: Clock, regex: Regex, "key-round": KeyRound, diff: Diff, dices: Dices, link: Link,
   "case-sensitive": CaseSensitive, "app-window": AppWindow, sparkles: Sparkles, "eye-off": EyeOff, play: Play,
+  notebook: NotebookPen, "mouse-click": MousePointerClick, "keyboard-macro": KeyboardIcon, gamepad: Gamepad2, paw: PawPrint,
   "layout-grid": LayoutGrid, download: Download, external: ExternalLink,
 };
 

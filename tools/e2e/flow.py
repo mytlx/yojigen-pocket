@@ -65,6 +65,20 @@ def check(name, ok, detail=""):
     print(('ok  ' if ok else 'FAIL'), name, '' if ok else detail)
     if not ok: fails.append(name)
 
+def soft(name, ok, detail=""):
+    """依赖联网或本机环境的检查：不通过只提示，不算失败。"""
+    print(('ok  ' if ok else 'WARN'), name, '' if ok else detail)
+def click(sel, win=None):
+    return js('(()=>{const el=document.querySelector(%s);if(!el)return false;el.click();return true})()' % json.dumps(sel), win)
+def wait_for(expr, timeout=4.0, win=None):
+    t=time.time()
+    while time.time()-t<timeout:
+        if js(expr, win): return True
+        time.sleep(0.15)
+    return False
+def close_window(w):
+    js('setTimeout(()=>mygo.call("Windows.Control","close",0),30);1', w['id']); wait(0.8)
+
 show()
 # --- 计算器
 typed('1+2*3'); r=rows(); check('计算器', r[:1]==['7'], r)
@@ -218,9 +232,6 @@ press('Escape'); wait(0.2)
 open_feature('jwt'); fill('.pk-feature textarea', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMiLCJleHAiOjEwMDAwMDAwMDB9.x'); wait(0.3)
 check('JWT 解码并提示已过期', '已过期' in js('document.querySelector(".fx-jwt")?.innerText||""'))
 press('Escape'); wait(0.2)
-open_feature('diff'); fill('.pk-feature textarea', 'a\nb\nc'); js('''(()=>{const el=document.querySelectorAll(".pk-feature textarea")[1];Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value").set.call(el,"a\\nB\\nc");el.dispatchEvent(new Event("input",{bubbles:true}));return 1})()'''); wait(0.5)
-check('文本对比', js('document.querySelectorAll(".fx-diff-line.is-add").length')==1 and js('document.querySelectorAll(".fx-diff-line.is-del").length')==1)
-shot('feature-diff'); press('Escape'); wait(0.2)
 open_feature('uuid'); wait(0.2)
 vals=texts('.pk-feature .fx-kv-val'); check('批量生成 UUID', len(vals)==5 and all(len(v)==36 for v in vals), vals[:1])
 press('Escape'); wait(0.2)
@@ -395,20 +406,6 @@ js('mygo.call("E2E.SetSelection","")')
 ax=js('mygo.call("E2E.Selection")'); print('    辅助功能读取（只读，结果取决于当前前台应用和授权）:', {k:(v if k!='text' else len(v)) for k,v in (ax or {}).items()})
 
 # ================= 第四轮：右键菜单、排序、新页面、预览、发音 =================
-def soft(name, ok, detail=""):
-    """依赖联网或本机环境的检查：不通过只提示，不算失败。"""
-    print(('ok  ' if ok else 'WARN'), name, '' if ok else detail)
-def click(sel, win=None):
-    return js('(()=>{const el=document.querySelector(%s);if(!el)return false;el.click();return true})()' % json.dumps(sel), win)
-def wait_for(expr, timeout=4.0, win=None):
-    t=time.time()
-    while time.time()-t<timeout:
-        if js(expr, win): return True
-        time.sleep(0.15)
-    return False
-def close_window(w):
-    js('setTimeout(()=>mygo.call("Windows.Control","close",0),30);1', w['id']); wait(0.8)
-
 # --- 右键菜单：打开后鼠标划过别的图标，菜单不变
 js('mygo.call("E2E.Resume")'); wait(0.3); show(); typed(''); wait(0.4)
 tiles=texts('.pk-tile-title')
@@ -624,6 +621,96 @@ if 'python3' in r:
     check('命令行那一条排在对得上名字的结果后面', r.index('python3')>0 or len(r)==1, r[:4])
 cfg['modules']['shell']['global']=False; json.dump(cfg, open(cfgp,'w'), ensure_ascii=False, indent=2); wait(1.0)
 typed('')
+
+# ================= 第六轮：笔记、对比、草稿 =================
+def cm_type(index, text, win=None, replace=True):
+    """往第 index 个代码编辑器里输入文字（走浏览器的 insertText，不发真实按键）。"""
+    return js('(()=>{const el=document.querySelectorAll(".cm-content")[%d];if(!el)return false;el.focus();%sreturn document.execCommand("insertText",false,%s)})()' % (index, 'document.execCommand("selectAll");' if replace else '', json.dumps(text)), win)
+def cm_text(index, win=None):
+    return js('(()=>{const el=document.querySelectorAll(".cm-content")[%d];return el?[...el.querySelectorAll(".cm-line")].map(l=>l.innerText.replace(/\\n$/,"")).join("\\n"):null})()' % index, win)
+def click_text(sel, text, win=None):
+    return js('(()=>{const el=[...document.querySelectorAll(%s)].find(b=>b.innerText.trim()==%s);if(!el)return false;el.click();return true})()' % (json.dumps(sel), json.dumps(text)), win)
+
+# --- Markdown 笔记
+import datetime
+today=datetime.date.today().isoformat()
+show(); open_feature('md', 1.0)
+check('md 打开笔记页', wait_for('!!document.querySelector(".fx-notes")', 6))
+check('没有笔记时给出新建入口', wait_for('!!document.querySelector(".fx-scratch-empty .ui-btn")', 3))
+click('.fx-scratch-empty .ui-btn'); wait(0.9)
+note=os.path.join(HOME,'notes',today+' 笔记.md')
+check('新建的笔记文件名带日期', os.path.exists(note) and js('document.querySelector(".fx-notes-title").value')==today+' 笔记', os.listdir(os.path.join(HOME,'notes')) if os.path.isdir(os.path.join(HOME,'notes')) else None)
+check('所见即所得编辑器加载出来', wait_for('!!document.querySelector(".fx-notes-rich .ProseMirror")', 10), text_of('.fx-notes-body')[:120])
+shot('feature-notes-rich')
+click_text('.fx-notes-head .ui-seg button, .fx-notes-head [role=radio], .fx-notes-head .ui-seg *', '源码'); wait(0.6)
+check('切到源码模式', wait_for('!!document.querySelector(".fx-notes-body .cm-content")', 4))
+cm_type(0, '# 周会记录\n\n- 讨论 hello world 计划\n- [ ] 写文档\n'); wait(1.3)
+body=open(note,encoding='utf-8').read() if os.path.exists(note) else ''
+check('源码模式里写的内容自动保存到文件', '# 周会记录' in body and '- [ ] 写文档' in body, body[:80])
+st=text_of('.fx-notes-status'); check('底部有字数统计和保存状态', '字' in st and '行' in st and ('已保存' in st or '自动保存' in st), st)
+click_text('.fx-notes-head .ui-seg button, .fx-notes-head .ui-seg *', '所见即所得'); wait(0.4)
+check('切回所见即所得，内容渲染成标题和待办', wait_for('(()=>{const p=document.querySelector(".fx-notes-rich .ProseMirror");return !!p&&!!p.querySelector("h1")&&p.innerText.includes("周会记录")})()', 8), text_of('.fx-notes-rich')[:100])
+shot('feature-notes')
+fill('.fx-notes-title', '周会记录'); js('document.querySelector(".fx-notes-title").dispatchEvent(new FocusEvent("blur"));1'); wait(0.9)
+check('点标题改名，文件跟着改', os.path.exists(os.path.join(HOME,'notes','周会记录.md')) and not os.path.exists(note), os.listdir(os.path.join(HOME,'notes')))
+click('.fx-side-head .ui-btn[title="新建文件夹"]'); wait(0.8)
+js('(()=>{const i=document.querySelector(".fx-side-rename");if(i){i.value="工作";i.dispatchEvent(new FocusEvent("blur"))}return 1})()'); wait(0.8)
+check('新建文件夹并改名', os.path.isdir(os.path.join(HOME,'notes','工作')), os.listdir(os.path.join(HOME,'notes')))
+moved=js('mygo.call("Notes.Move","周会记录.md","工作")'); wait(0.3)
+check('笔记可以移进文件夹', moved=='工作/周会记录.md' and os.path.exists(os.path.join(HOME,'notes','工作','周会记录.md')), moved)
+bad=None
+try: js('mygo.call("Notes.Write","../逃出去.md","x")')
+except RuntimeError as e: bad=str(e)
+check('笔记接口拒绝目录外的路径', bad is not None and not os.path.exists(os.path.join(HOME,'逃出去.md')), bad)
+press('Escape'); wait(0.3)
+
+# --- 文本对比
+typed(''); open_feature('diff', 1.0)
+check('对比页是左右两个编辑器', wait_for('document.querySelectorAll(".fx-diff-merge .cm-content").length==2', 8))
+cm_type(0, '{"name":"pocket","tags":["a","b"],"n":1}'); cm_type(1, '{"name":"pocket","tags":["a","c"],"n":2}'); wait(0.6)
+st=text_of('.fx-diff-status'); check('实时标出差异并统计', '处差异' in st and js('document.querySelectorAll(".fx-diff-merge .cm-changedText").length')>0, st)
+check('粘进内容后自动认出语言', text_of('.fx-diff2 .lang-pick-btn')=='JSON', text_of('.fx-diff2 .lang-pick-btn'))
+click_text('.fx-diff2 .fx-toolbar .ui-btn', '格式化'); wait(1.5)
+a=cm_text(0); b=cm_text(1)
+check('格式化两边后逐行对比', a and '"name": "pocket"' in a and b and '"n": 2' in b and '2 处差异' in text_of('.fx-diff-status'), (a, text_of('.fx-diff-status')))
+shot('feature-diff')
+js('(()=>{const s=document.querySelector(".fx-diff2 select.ui-select");s.value="upper";s.dispatchEvent(new Event("change",{bubbles:true}));return 1})()'); wait(0.5)
+check('文本处理：转大写', '"NAME": "POCKET"' in (cm_text(0) or ''), cm_text(0))
+cm_type(1, cm_text(0) or ''); wait(0.6)
+check('两边一样时提示完全相同', '完全相同' in text_of('.fx-diff-status'), text_of('.fx-diff-status'))
+press('Escape'); wait(0.3)
+
+# --- 代码草稿
+typed(''); open_feature('scratch', 1.0)
+check('scratch 打开代码草稿页', wait_for('!!document.querySelector(".fx-scratch")', 6))
+langs={l['id']:l for l in (js('mygo.call("Scratch.Languages")') or [])}
+check('列出语言和本机能运行的环境', 'python' in langs and 'go' in langs and langs['sql'].get('tool','')=='' and langs['go'].get('formatter')=='gofmt', {k:v.get('tool') for k,v in langs.items()})
+click_text('.fx-scratch-quick .ui-btn', 'Python'); wait(1.0)
+check('新建草稿带示例代码', os.path.exists(os.path.join(HOME,'scratches','scratch.py')) and '你好，Pocket' in (cm_text(0) or ''), cm_text(0))
+if langs.get('python',{}).get('tool'):
+    click_text('.fx-scratch-main .fx-toolbar .ui-btn', '运行')
+    ok=wait_for('!!document.querySelector(".fx-scratch-exit")', 15)
+    check('直接运行并显示输出', ok and '你好，Pocket' in text_of('.fx-scratch-log') and '运行完成' in text_of('.fx-scratch-exit'), (text_of('.fx-scratch-log'), text_of('.fx-scratch-exit')))
+    cm_type(0, 'import sys\nprint("in:", sys.stdin.readline().strip())\nsys.exit(3)\n'); wait(0.3)
+    click_text('.fx-scratch-out .ui-btn', '输入'); wait(0.3); fill('.fx-scratch-stdin', 'abc\n')
+    click_text('.fx-scratch-main .fx-toolbar .ui-btn', '运行')
+    ok=wait_for('(document.querySelector(".fx-scratch-exit")||{}).innerText?.includes("退出码")', 15)
+    check('标准输入和退出码', ok and 'in: abc' in text_of('.fx-scratch-log') and '退出码 3' in text_of('.fx-scratch-exit'), (text_of('.fx-scratch-log'), text_of('.fx-scratch-exit')))
+    shot('feature-scratch')
+else:
+    soft('这台电脑上没有 Python，跳过运行检查', False)
+p=js('mygo.call("Scratch.New","go")'); js('mygo.call("Scratch.Write",%s,%s)' % (json.dumps(p), json.dumps('package main\nfunc main(){\nprintln( 1 )}\n')))
+r=js('mygo.call("Scratch.Format","go",%s)' % json.dumps('package main\nfunc main(){\nprintln( 1 )}\n'))
+check('后端格式化 Go', r and '\tprintln(1)' in r, r)
+cm_type(0, '{"a":1,"b":[1,2]}'); wait(0.2)
+js('mygo.call("Scratch.Rename","scratch.py","data.json")'); wait(0.2)
+press('Escape'); wait(0.3); typed(''); open_feature('scratch', 1.2)
+files=texts('.fx-scratch .fx-side-name'); check('草稿一直留着，重新打开还在', 'data.json' in files and 'scratch.go' in files, files)
+click_text('.fx-scratch .fx-side-name', 'data.json'); wait(0.8)
+cm_type(0, '{"a":1,"b":[1,2]}'); wait(0.3)
+click_text('.fx-scratch-main .fx-toolbar .ui-btn', '格式化'); wait(1.5)
+check('按语言格式化（JSON）', '"a": 1' in (cm_text(0) or ''), cm_text(0))
+press('Escape'); wait(0.3); typed('')
 
 # ================= 道具库 =================
 js('mygo.call("Settings.OpenCatalog")', panel_id()); wait(1.6)
