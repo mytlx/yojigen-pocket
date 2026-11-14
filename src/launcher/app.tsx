@@ -175,13 +175,14 @@ export function App() {
     setToast(null);
   }, [setPayload]);
 
-  /** 把块变回普通文字放进输入框，可以接着编辑；图片和文件的块直接去掉。 */
+  /** 把块变回普通文字放进输入框并默认全选（方便继续编辑或直接按退格/输入清空替换）；图片和文件的块直接去掉。 */
   const editPayload = useCallback(() => {
     const p = payloadRef.current;
     if (!p) return;
     setPayload(null);
     if (p.kind !== "text") {
       runQuery(latest.current.text, null);
+      setTimeout(() => input.current?.focus());
       return;
     }
     void Launcher.payloadText(p.id).then((full) => {
@@ -190,7 +191,10 @@ export function App() {
       runQuery(value, null);
       setTimeout(() => {
         const el = input.current;
-        if (el) el.setSelectionRange(value.length, value.length);
+        if (el) {
+          el.focus();
+          el.select();
+        }
       });
     });
   }, [runQuery, setPayload]);
