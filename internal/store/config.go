@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"runtime"
-	"strings"
 	"sync"
 )
 
@@ -117,16 +116,6 @@ func DefaultEdgeVoices() map[string]string {
 	}
 }
 
-// PetConfig 是桌面宠物的设置。默认关闭：关着的时候不建窗口，不占任何资源。
-type PetConfig struct {
-	Enabled     bool    `json:"enabled"`
-	Name        string  `json:"name"`
-	Scale       float64 `json:"scale"`       // 大小倍数，0.6 到 1.8
-	AlwaysOnTop bool    `json:"alwaysOnTop"` // 一直在别的窗口上面
-	Reminders   bool    `json:"reminders"`   // 隔一阵提醒喝水、起来活动
-	Quiet       bool    `json:"quiet"`       // 不自己走来走去、不主动说话
-}
-
 // OCRConfig 是截图识别设置。
 type OCRConfig struct {
 	Engine   string `json:"engine"`   // system | claude | openai（大模型接口复用翻译里的设置）
@@ -172,13 +161,13 @@ type Config struct {
 	Interpreters    map[string]string `json:"interpreters"` // 扩展名 → 解释器
 	URIAllowlist    []string          `json:"uriAllowlist"` // 允许通过 URI 直接执行的命令 ID
 	Keys            Keys              `json:"keys"`
-	DetachOnHotkey  map[string]bool   `json:"detachOnHotkey"` // 这些命令按直达热键时直接以独立窗口打开
-	HotkeyInput     map[string]string `json:"hotkeyInput"`    // 这些命令按直达热键时带入的内容：selection（默认）| clipboard | both | none
+	DisabledPlugins []string          `json:"disabledPlugins"` // 停用的扩展：不加载、不占快捷键、窗口和后端进程都关掉
+	DetachOnHotkey  map[string]bool   `json:"detachOnHotkey"`  // 这些命令按直达热键时直接以独立窗口打开
+	HotkeyInput     map[string]string `json:"hotkeyInput"`     // 这些命令按直达热键时带入的内容：selection（默认）| clipboard | both | none
 	Translate       TranslateConfig   `json:"translate"`
 	Speech          SpeechConfig      `json:"speech"`
 	OCR             OCRConfig         `json:"ocr"`
 	Reader          ReaderConfig      `json:"reader"`
-	Pet             PetConfig         `json:"pet"`
 	Selection       SelectionConfig   `json:"selection"`
 	PanelPosition   string            `json:"panelPosition"` // remember：记住拖动后的位置；center：每次在鼠标所在屏幕居中
 }
@@ -246,15 +235,16 @@ func DefaultConfig() *Config {
 			{Key: "zh", Title: "知乎", URL: "https://www.zhihu.com/search?q={q}", Icon: "svg:globe"},
 			{Key: "bili", Title: "哔哩哔哩", URL: "https://search.bilibili.com/all?keyword={q}", Icon: "svg:globe"},
 		},
-		Hotkeys:        map[string]string{},
-		Disabled:       []string{},
-		Clipboard:      ClipboardConfig{MaxItems: 1000, MaxDays: 30, Images: true, IgnoreApps: ignore},
-		Files:          FilesConfig{Roots: []string{"~/Desktop", "~/Documents", "~/Downloads"}, FindPreview: true, FindMeta: true, FindScope: "home"},
-		Interpreters:   map[string]string{},
-		URIAllowlist:   []string{},
-		Keys:           Keys{Detach: "CmdOrCtrl+D"},
-		DetachOnHotkey: map[string]bool{},
-		HotkeyInput:    map[string]string{},
+		Hotkeys:         map[string]string{},
+		Disabled:        []string{},
+		Clipboard:       ClipboardConfig{MaxItems: 1000, MaxDays: 30, Images: true, IgnoreApps: ignore},
+		Files:           FilesConfig{Roots: []string{"~/Desktop", "~/Documents", "~/Downloads"}, FindPreview: true, FindMeta: true, FindScope: "home"},
+		Interpreters:    map[string]string{},
+		URIAllowlist:    []string{},
+		Keys:            Keys{Detach: "CmdOrCtrl+D"},
+		DisabledPlugins: []string{},
+		DetachOnHotkey:  map[string]bool{},
+		HotkeyInput:     map[string]string{},
 		Speech: SpeechConfig{
 			Word: "youdao", Sentence: "edge", Accent: "us",
 			Edge:   EdgeTTS{Mode: "auto", Command: "edge-tts", Voices: DefaultEdgeVoices()},
@@ -269,7 +259,6 @@ func DefaultConfig() *Config {
 		OCR:           OCRConfig{Engine: "system", Language: "zh"},
 		Selection:     SelectionConfig{Mode: "auto"},
 		PanelPosition: "remember",
-		Pet:           PetConfig{Scale: 1, AlwaysOnTop: true, Name: "团子", Reminders: true},
 		Reader: ReaderConfig{
 			BossKey: "Alt+Shift+M", FontSize: 17, LineHeight: 1.85, Theme: "auto",
 			StealthOpacity: 18, StealthLines: 2,
@@ -357,6 +346,9 @@ func (c *Config) Normalize() {
 	if c.Keys.Detach == "" {
 		c.Keys.Detach = d.Keys.Detach
 	}
+	if c.DisabledPlugins == nil {
+		c.DisabledPlugins = []string{}
+	}
 	if c.DetachOnHotkey == nil {
 		c.DetachOnHotkey = map[string]bool{}
 	}
@@ -369,12 +361,6 @@ func (c *Config) Normalize() {
 		default:
 			delete(c.HotkeyInput, id)
 		}
-	}
-	if c.Pet.Scale < 0.6 || c.Pet.Scale > 1.8 {
-		c.Pet.Scale = 1
-	}
-	if strings.TrimSpace(c.Pet.Name) == "" {
-		c.Pet.Name = "团子"
 	}
 	t := &c.Translate
 	switch t.Provider {

@@ -35,7 +35,7 @@ func main() {
 	mygo.Bind(&Notes{a: a})
 	mygo.Bind(&Scratch{a: a})
 	mygo.Bind(&Auto{a: a})
-	mygo.Bind(&Pet{a: a})
+	mygo.Bind(&Extensions{a: a})
 	if bindExtra != nil {
 		bindExtra(a)
 	}
@@ -50,7 +50,12 @@ func main() {
 	mygo.App.OnSecondInstance(func([]string, string) { a.showPanel("") })
 	mygo.App.OnOpenURL(a.handleURL)
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { a.quitting.Store(true) })
-	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { a.flush() })
+	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
+		a.flush()
+		if a.pluginHost != nil {
+			a.pluginHost.stopAll() // 扩展的后端进程不能留在后台
+		}
+	})
 	mygo.App.WhenReady(a.ready)
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)

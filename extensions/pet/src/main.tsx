@@ -1,11 +1,22 @@
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import * as THREE from "three";
-import { Pet, Windows, events, type PetConfig } from "../mygo";
+import { pocket } from "../../sdk/pocket";
 import { animate, type Action, type Pose } from "./anim";
 import { buy, checkin, clamp, feed, foods, goods, greeting, lines, load, need, needExp, pick, play, settle, stage, toggleWear, type PetState, type Play } from "./game";
 import { buildPet, spawn, stepParticles, type Particle, type Rig } from "./model";
 import "./pet.css";
+
+/** 宠物自己的设置，存在扩展的存储里。 */
+interface PetConfig {
+  name: string;
+  scale: number; // 大小倍数，0.6 到 1.8
+  alwaysOnTop: boolean;
+  reminders: boolean; // 隔一阵提醒喝水、起来活动
+  quiet: boolean; // 不自己走来走去、不主动说话
+}
+const defaultConfig: PetConfig = { name: "团子", scale: 1, alwaysOnTop: true, reminders: true, quiet: false };
+const PANEL_H = 210; // 面板打开时窗口多出来的高度
 
 const BASE_W = 230;
 const BASE_H = 260;
@@ -30,13 +41,19 @@ function App() {
   const panelRef = useRef<Tab | null>(null);
   panelRef.current = panel;
   const refresh = () => setVersion((v) => v + 1);
+  const applyConfig = useRef<() => void>(() => undefined);
 
   const say = (text: string, ms = 3200) => {
     setBubble(text);
     clearTimeout(bubbleTimer.current);
     bubbleTimer.current = setTimeout(() => setBubble(""), ms);
   };
-  const save = () => game.current && void Pet.save(JSON.stringify(game.current)).catch(() => undefined);
+  const save = () => game.current && void pocket.storage.set("state", game.current).catch(() => undefined);
+  /** 窗口大小跟着宠物的大小和面板开没开走；底边中点不动。 */
+  const fitWindow = (open: boolean) => {
+    const sc = cfg.current?.scale || 1;
+    return pocket.window.resize(Math.round(open ? Math.max(BASE_W * sc, 320) : BASE_W * sc), Math.round(BASE_H * sc + (open ? PANEL_H : 0)));
+  };
   const act = (action: Action, item?: string) => {
     const rig = rigRef.current;
     pose.current.action = action;
@@ -111,14 +128,16 @@ function App() {
   };
   const openPanel = (tab: Tab | null) => {
     setPanel(tab);
-    void Pet.setPanel(tab !== null);
+    void fitWindow(tab !== null);
   };
 
   useEffect(() => {
     let disposed = false;
     let raf = 0;
     const offs: (() => void)[] = [];
-    void Pet.info().then((info) => {
+    void Promise.all([pocket.ready, pocket.storage.get<object>("state"), pocket.storage.get<Partial<PetConfig>>("config")]).then(([, saved, savedConfig]) => {
+      const info = { state: saved ? JSON.stringify(saved) : "", config: { ...defaultConfig, ...(savedConfig ?? {}) } };
+      info.config.scale = Math.min(1.8, Math.max(0.6, Number(info.config.scale) || 1));
       if (disposed || !canvas.current) return;
       const now = Date.now();
       const g = load(info.state, now);
@@ -199,8 +218,8 @@ function App() {
           stepTimer += step;
           if (stepTimer >= 0.05) {
             stepTimer = 0;
-            void Pet.move(Math.round(p.dir * 3 * (conf.scale || 1)), 0).then((r) => {
-              if (r && r[2] && pose.current.action === "walk") pose.current.dir = -pose.current.dir;
+            void pocket.window.move(Math.round(p.dir * 3 * (conf.scale || 1)), 0).then((r) => {
+              if (r?.hit && pose.current.action === "walk") pose.current.dir = -pose.current.dir;
             });
           }
         }
@@ -208,7 +227,7 @@ function App() {
         if (p.action === "fall") {
           falling += step * 2600;
           const dy = Math.max(1, Math.round(falling * step));
-          void Pet.land().then((left) => {
+          void pocket.window.ground().then((left) => {
             if (pose.current.action !== "fall") return;
             if (left <= 2) {
               falling = 0;
@@ -218,7 +237,7 @@ function App() {
                 fx("✶", "#ffd166", 6);
               }
               shaken.current = 0;
-            } else void Pet.move(0, Math.min(dy, left));
+            } else void pocket.window.move(0, Math.min(dy, left));
           });
         }
 
@@ -288,14 +307,13 @@ function App() {
       };
       raf = requestAnimationFrame(loop);
 
-      offs.push(
-        events.configChanged.on((v) => {
-          cfg.current = v.config.pet;
-          setScale(v.config.pet.scale || 1);
-          setName(v.config.pet.name || "团子");
-          fit();
-        }),
-      );
+      applyConfig.current = () => {
+        setScale(cfg.current?.scale || 1);
+        setName(cfg.current?.name || "团子");
+        fit();
+      };
+      void fitWindow(false);
+      void pocket.window.setAlwaysOnTop(info.config.alwaysOnTop);
       offs.push(() => {
         renderer.dispose();
       });
@@ -339,7 +357,7 @@ function App() {
       if (!d.moved && Math.hypot(dx, dy) > 5) {
         d.moved = true;
         shaken.current = 0;
-        void Windows.dragStart();
+        void pocket.window.dragStart();
         act("held");
         if (game.current?.asleep) {
           game.current.asleep = false;
@@ -351,7 +369,7 @@ function App() {
         shaken.current += Math.hypot(e.screenX - d.lastX, e.screenY - d.lastY);
         d.lastX = e.screenX;
         d.lastY = e.screenY;
-        void Windows.dragMove(Math.round(dx), Math.round(dy));
+        void pocket.window.dragMove(Math.round(dx), Math.round(dy));
       }
       return;
     }
@@ -405,7 +423,10 @@ function App() {
   const patchConfig = (p: Partial<PetConfig>) => {
     if (!cfg.current) return;
     cfg.current = { ...cfg.current, ...p };
-    void Pet.setConfig(cfg.current);
+    void pocket.storage.set("config", cfg.current);
+    if (p.alwaysOnTop !== undefined) void pocket.window.setAlwaysOnTop(p.alwaysOnTop);
+    applyConfig.current();
+    if (p.scale !== undefined) void fitWindow(panelRef.current !== null);
     refresh();
   };
   const bar = (label: string, value: number, color: string) => (
@@ -497,12 +518,12 @@ function App() {
             )}
             {panel === "settings" && (
               <div class="pet-settings">
-                <label>大小 <input type="range" min={0.6} max={1.8} step={0.1} value={cfg.current.scale} onChange={(e) => { patchConfig({ scale: Number((e.target as HTMLInputElement).value) }); setTimeout(() => void Pet.setPanel(true), 200); }} /> {Math.round(cfg.current.scale * 100)}%</label>
+                <label>大小 <input type="range" min={0.6} max={1.8} step={0.1} value={cfg.current.scale} onChange={(e) => patchConfig({ scale: Number((e.target as HTMLInputElement).value) })} /> {Math.round(cfg.current.scale * 100)}%</label>
                 <label><input type="checkbox" checked={cfg.current.alwaysOnTop} onChange={(e) => patchConfig({ alwaysOnTop: (e.target as HTMLInputElement).checked })} /> 一直在别的窗口上面</label>
                 <label><input type="checkbox" checked={cfg.current.reminders} onChange={(e) => patchConfig({ reminders: (e.target as HTMLInputElement).checked })} /> 每 45 分钟提醒喝水、活动一下</label>
                 <label><input type="checkbox" checked={cfg.current.quiet} onChange={(e) => patchConfig({ quiet: (e.target as HTMLInputElement).checked })} /> 安静模式：不乱走，不主动说话</label>
-                <button type="button" class="pet-hide" onClick={() => { save(); void Pet.hide(); }}>把{name}收起来</button>
-                <p>收起来之后不占任何资源，存档还在。在搜索框里输入“宠物”，或用托盘菜单，可以再叫出来。</p>
+                <button type="button" class="pet-hide" onClick={() => { save(); void pocket.window.close(); }}>把{name}收起来</button>
+                <p>收起来之后不占任何资源，存档还在。在搜索框里输入“宠物”可以再叫出来；不想要了，在道具库的“扩展管理”里停用或卸载。</p>
               </div>
             )}
           </div>

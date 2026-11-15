@@ -12,16 +12,19 @@ import { hotkeyInputOptions, normalizeHotkeyInputMode, supportsHotkeyInput, type
 import { applyAppearance, applyUserStyles, formatAccelerator } from "../shared/theme";
 import { Hotkey } from "../settings/ui";
 import { Toggle } from "../features/ui";
+import { ExtensionsPanel } from "./extensions";
+
+const MANAGE = "扩展管理";
 
 const categoryIcons: Record<string, string> = {
-  效率工具: "svg:sparkles", 开发工具: "svg:code", 内置模块: "svg:app", 网页插件: "svg:puzzle", 脚本命令: "svg:terminal",
+  效率工具: "svg:sparkles", 开发工具: "svg:code", 内置模块: "svg:app", 扩展: "svg:puzzle", 脚本命令: "svg:terminal",
   系统指令: "svg:power", 网页搜索: "svg:globe", 文本片段: "svg:snippet", Pocket: "svg:pocket",
 };
 const categoryDesc: Record<string, string> = {
   效率工具: "翻译、截图识别文字、摸鱼阅读",
   开发工具: "写代码时常用的小工具。输入关键词回车打开，关键词加内容回车直接复制结果",
   内置模块: "通过前缀或全局搜索使用",
-  网页插件: "plugins 目录里的网页插件",
+  扩展: "单独安装的功能包，可以在“扩展管理”里停用和卸载",
   脚本命令: "commands 目录里的脚本，保存后马上生效",
   系统指令: "锁屏、睡眠、系统设置页……",
   网页搜索: "关键词加空格加内容，打开对应的搜索",
@@ -118,6 +121,10 @@ function App() {
               <em>{count}</em>
             </button>
           ))}
+          <button class={`st-nav${category === MANAGE ? " is-active" : ""}`} onClick={() => setCategory(MANAGE)}>
+            <Icon icon="svg:download" size={22} />
+            <span>{MANAGE}</span>
+          </button>
         </nav>
         <div class={`st-status${message?.error ? " is-error" : ""}`}>{message?.text}</div>
       </aside>
@@ -130,8 +137,9 @@ function App() {
           </label>
         </div>
         <div class="st-content" key={category}>
-          {grouped.length === 0 && <div class="st-empty">没有找到匹配的功能</div>}
-          {grouped.map(([cat, list]) => (
+          {category === MANAGE && <ExtensionsPanel flash={flash} />}
+          {category !== MANAGE && grouped.length === 0 && <div class="st-empty">没有找到匹配的功能</div>}
+          {category !== MANAGE && grouped.map(([cat, list]) => (
             <section class="ct-section" key={cat}>
               <div class="st-section-head">
                 <div>

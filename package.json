@@ -9,7 +9,8 @@
     "generate": "mygo generate",
     "dev:web": "bun --bun vite",
     "build:web": "tsc --noEmit && bun --bun vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:ext": "bun tools/build-extensions.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

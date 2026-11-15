@@ -65,7 +65,7 @@ type App struct {
 
 	payloads          payloadStore
 	auto              *autoEngine
-	pet               *mygo.Window
+	pluginHost        *pluginHost
 	media             *mediaServer
 	calcHistory       *calcHistory
 	wintools          *providers.WinTools
@@ -136,8 +136,8 @@ func (a *App) ready() {
 	a.applyTheme(cfg)
 	a.createPanel(cfg)
 	a.startMedia()
-	a.syncPet()
 	a.createTray()
+	a.pluginHost.restoreFloats()
 	a.applyHotkeys(cfg)
 	a.watchHome(ctx)
 	mygo.Theme.OnUpdated(func() { ThemeChanged.Broadcast(mygo.Theme.IsDark()) })
@@ -218,7 +218,16 @@ func (a *App) buildEngine(ctx context.Context) {
 	}
 	a.commands.Reload()
 
-	a.plugins = &providers.Plugins{Dir: a.paths.Plugins, URL: pluginURL}
+	a.pluginHost = newPluginHost(a)
+	a.plugins = &providers.Plugins{
+		Dir: a.paths.Plugins, URL: pluginURL,
+		Disabled:  func(id string) bool { return slices.Contains(a.config.Get().DisabledPlugins, id) },
+		OpenFloat: a.pluginHost.toggleFloat,
+		Detach: func(v *core.View) error {
+			_, err := a.detach(detachRequestFor(v))
+			return err
+		},
+	}
 	a.plugins.Reload()
 
 	a.files = &providers.Files{Config: get}
@@ -283,12 +292,6 @@ func (a *App) selfCommands() []*providers.SelfCommand {
 				r.Hide()
 				a.openCatalog()
 				return nil
-			}},
-		{ID: "pet", Title: "桌面宠物", Subtitle: "叫出来或收起来；它会在桌面上走动，可以喂食、玩耍、养成", Icon: "svg:paw",
-			Keywords: []string{"pet", "cw", "chongwu", "zmcw", "宠物", "团子"},
-			Run: func(_ context.Context, r *core.Run) error {
-				r.Hide()
-				return a.setPetEnabled(!a.config.Get().Pet.Enabled)
 			}},
 		{ID: "new-command", Title: "新建脚本命令", Subtitle: "选一种语言，用模板写一个自己的工具", Icon: "svg:plus",
 			Keywords: []string{"new command", "new script", "create"},
@@ -646,7 +649,6 @@ func (a *App) configApplied() {
 		a.panel.SetVibrancy(material(cfg))
 	}
 	a.applyHotkeys(cfg)
-	a.syncPet()
 	ConfigChanged.Broadcast(a.configView())
 }
 

@@ -24,6 +24,8 @@ export type ActionType = string;
 
 /** AppInfo 是页面启动时需要的信息。 */
 export interface AppInfo {
+  /** 测试构建：允许端到端测试查看扩展页面内部 */
+  e2e?: boolean;
   /** darwin | windows | linux */
   platform: string;
   version: string;
@@ -231,13 +233,13 @@ export interface Config {
   interpreters: Record<string, string>;
   uriAllowlist: string[];
   keys: Keys;
+  disabledPlugins: string[];
   detachOnHotkey: Record<string, boolean>;
   hotkeyInput: Record<string, string>;
   translate: TranslateConfig;
   speech: SpeechConfig;
   ocr: OCRConfig;
   reader: ReaderConfig;
-  pet: PetConfig;
   selection: SelectionConfig;
   panelPosition: string;
 }
@@ -263,6 +265,7 @@ export interface DetachRequest {
   title: string;
   icon?: string;
   height?: number;
+  width?: number;
   /** stealth：摸鱼小窗 */
   mode?: string;
 }
@@ -572,35 +575,33 @@ export interface PayloadInfo {
   preview?: string;
 }
 
-export interface PetConfig {
-  enabled: boolean;
-  name: string;
-  scale: number;
-  alwaysOnTop: boolean;
-  reminders: boolean;
-  quiet: boolean;
+export interface Permissions {
+  dirs?: string[];
+  fetch?: string[];
+  runner?: boolean;
+  files?: boolean;
 }
 
-/** PetInfo 是宠物页面打开时需要的东西。 */
-export interface PetInfo {
-  config: PetConfig;
-  /** 存档（JSON）；第一次是空的 */
-  state: string;
-  /** 宠物可以走动的范围（所在屏幕的工作区） */
-  area: Rectangle;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+/** PluginEventData 是一条事件。Plugin 用来让页面只收自己的。 */
+export interface PluginEventData {
+  plugin: string;
+  name: string;
+  data: unknown;
 }
 
 export interface PluginInfo {
   id: string;
   title: string;
   description?: string;
+  version?: string;
+  author?: string;
   icon?: string;
   dir: string;
   problem?: string;
+  enabled: boolean;
+  tools: string[];
+  permissions: Permissions;
+  backend: boolean;
 }
 
 export interface Preview {
@@ -626,17 +627,6 @@ export interface ReaderConfig {
   stealthOpacity: number;
   stealthLines: number;
   autoPageSecs: number;
-}
-
-/**
- * Rectangle is a position and size in screen coordinates (DIPs, origin at
- * the top-left corner of the primary display).
- */
-export interface Rectangle {
-  X: number;
-  Y: number;
-  Width: number;
-  Height: number;
 }
 
 export interface Request {
@@ -777,6 +767,7 @@ export interface View {
   html?: string;
   url?: string;
   height?: number;
+  width?: number;
   stream?: boolean;
   plugin?: string;
   feature?: string;
@@ -875,10 +866,10 @@ export const Launcher = {
   },
   /**
    * PluginCall 转发插件的请求。主页面只把来自当前插件 iframe 的消息转过来，
-   * 插件 ID 由主页面根据视图给出，插件自己无法冒充。
+   * PluginCall 是扩展页面里 window.pocket 的调用入口：tool 是页面属于哪个工具，按清单里声明的权限放行。
    */
-  pluginCall(plugin: string, method: string, args: unknown[]): Promise<unknown> {
-    return call("Launcher.PluginCall", plugin, method, args);
+  pluginCall(plugin: string, tool: string, method: string, args: unknown[]): Promise<unknown> {
+    return call("Launcher.PluginCall", plugin, tool, method, args);
   },
   /** Query 执行一次查询，结果分批推送。新查询会取消上一次。 */
   query(req: QueryRequest, out: Channel<Batch>): Promise<void> {
@@ -1516,39 +1507,34 @@ export const Auto = {
   },
 } as const;
 
-/** Pet 是宠物窗口的服务。 */
-export const Pet = {
-  /** Hide 关掉宠物。存档还在，下次打开接着养。 */
-  hide(): Promise<void> {
-    return call("Pet.Hide");
+/** Extensions 是道具库里管理扩展的服务。 */
+export const Extensions = {
+  /** Install 安装一个扩展包：zip 文件，或者已经解开的文件夹。同名的扩展会被替换（升级），它的数据保留。 */
+  install(source: string): Promise<PluginInfo | null> {
+    return call("Extensions.Install", source);
   },
-  /** Info 返回设置、存档和窗口所在的屏幕范围。 */
-  info(): Promise<PetInfo> {
-    return call("Pet.Info");
+  /** InstallDialog 让用户选一个扩展包（.zip）并安装。取消时返回 null。 */
+  installDialog(): Promise<PluginInfo | null> {
+    return call("Extensions.InstallDialog");
   },
-  /** Land 让宠物落到屏幕底部（被拖到半空松手之后）。返回离底部还有多远。 */
-  land(): Promise<number> {
-    return call("Pet.Land");
+  /** List 返回全部扩展。 */
+  list(): Promise<PluginInfo[]> {
+    return call("Extensions.List");
   },
-  /** Move 把宠物窗口挪动一点（它自己走路时用），不会走出屏幕。返回新的位置，以及有没有碰到边。 */
-  move(dx: number, dy: number): Promise<number[]> {
-    return call("Pet.Move", dx, dy);
+  /** Reveal 在文件管理器里打开扩展的文件夹；id 为空时打开放扩展的总目录。 */
+  reveal(id: string): Promise<void> {
+    return call("Extensions.Reveal", id);
   },
-  /** Save 保存存档。 */
-  save(state: string): Promise<void> {
-    return call("Pet.Save", state);
+  /** SetEnabled 启用或停用一个扩展。停用后它不出现在搜索里，快捷键注销，窗口和后端进程都关掉。 */
+  setEnabled(id: string, enabled: boolean): Promise<void> {
+    return call("Extensions.SetEnabled", id, enabled);
   },
-  /** SetConfig 改宠物的设置（名字、大小、是否置顶）。 */
-  setConfig(c: PetConfig): Promise<void> {
-    return call("Pet.SetConfig", c);
-  },
-  /** SetEnabled 打开或关闭宠物（设置页用）。 */
-  setEnabled(on: boolean): Promise<void> {
-    return call("Pet.SetEnabled", on);
-  },
-  /** SetPanel 打开或收起菜单面板：窗口变大或变回去，脚底的位置不动。 */
-  setPanel(open: boolean): Promise<void> {
-    return call("Pet.SetPanel", open);
+  /**
+   * Uninstall 卸载一个扩展：关掉它的窗口和进程，删掉它的文件夹。removeData 为真时连它存的设置和私有文件一起删；
+   * 它在用户目录里声明的文件夹（比如笔记）不会动。
+   */
+  uninstall(id: string, removeData: boolean): Promise<void> {
+    return call("Extensions.Uninstall", id, removeData);
   },
 } as const;
 
@@ -1558,6 +1544,8 @@ export const Pet = {
 export const events = {
   /** AutoChanged 在连点器或宏的运行状态变化时发送。 */
   autoStatus: event<AutoStatus>("auto:status"),
+  /** PluginEvent 是宿主发给扩展页面的事件（代码运行的输出、后端程序的消息）。 */
+  pluginEvent: event<PluginEventData>("plugin:event"),
   /** PanelShown 在主窗口显示时发送。 */
   panelShown: event<PanelShownEvent>("panel:shown"),
   /** ConfigChanged 在配置变化后发送给所有窗口。 */

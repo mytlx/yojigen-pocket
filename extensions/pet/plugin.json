@@ -1,0 +1,20 @@
+{
+  "id": "pet",
+  "name": "桌面宠物",
+  "version": "1.0.0",
+  "api": 1,
+  "description": "一只会在桌面上走动的小狸猫，可以喂食、玩耍、养成",
+  "icon": "svg:paw",
+  "tools": [
+    {
+      "id": "pet",
+      "title": "桌面宠物",
+      "description": "叫出来或收起来；右键点它打开状态、商店和设置",
+      "category": "效率工具",
+      "keywords": ["pet", "cw", "chongwu", "zmcw", "宠物", "团子"],
+      "window": "float",
+      "width": 230,
+      "height": 260
+    }
+  ]
+}

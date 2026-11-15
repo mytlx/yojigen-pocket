@@ -6,6 +6,10 @@ set -u
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
 
+# 官方扩展单独构建成 zip，测试里像用户一样安装它们。
+bun tools/build-extensions.ts | tail -3
+export POCKET_E2E_EXT="$ROOT/build/extensions"
+
 GOFLAGS=-tags=e2e bunx mygo build -debug -skip-dmg -skip-installer -o "$ROOT/build/e2e" | grep -v 'web │' | tail -2
 APP=$(find "$ROOT/build/e2e" -path '*.app/Contents/MacOS/*' -type f | head -1)
 

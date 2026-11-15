@@ -99,6 +99,7 @@ type View struct {
 	HTML    string `json:"html,omitempty"` // panel：内联 HTML
 	URL     string `json:"url,omitempty"`  // panel：页面地址
 	Height  int    `json:"height,omitempty"`
+	Width   int    `json:"width,omitempty"`   // 分离成独立窗口时的宽度
 	Stream  bool   `json:"stream,omitempty"`  // 后续还有内容
 	Plugin  string `json:"plugin,omitempty"`  // panel：插件 ID，用于受限的 window.pocket 调用
 	Feature string `json:"feature,omitempty"` // feature：内置功能页的 ID

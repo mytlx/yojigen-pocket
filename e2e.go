@@ -161,3 +161,6 @@ func (e *E2E) InputLog() []string {
 	r.log = nil
 	return out
 }
+
+// BackendRunning 报告一个扩展的后端进程是不是开着。
+func (e *E2E) BackendRunning(id string) bool { return e.a.pluginHost.backendRunning(id) }

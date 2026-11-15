@@ -798,54 +798,141 @@ press('Escape'); wait(0.4)
 check('切到鼠标页后 Esc 恢复正常', js('!document.querySelector(".fx-inputtest")'))
 typed('')
 
-# ================= 第八轮：桌面宠物 =================
-check('宠物默认是关着的：没有窗口', window_by('pet.html') is None and js('mygo.call("Settings.Get").then(v=>v.config.pet.enabled)') is False)
-js('mygo.call("Pet.SetEnabled",true)'); wait(2.5)
-pw=window_by('pet.html'); check('打开后出现宠物窗口', pw is not None)
-if pw:
-    pid=pw['id']
-    ok=wait_for('!!(window.__pet&&window.__pet.game())', 10, pid)
-    check('3D 场景和存档加载出来', ok and js('document.querySelector("canvas").width>100', pid))
-    g=js('window.__pet.game()', pid) or {}
-    check('新领养：四项状态、等级、金币，当天签到领了见面礼', g.get('level')==1 and g.get('days')==1 and g.get('coins',0)>=45 and all(0<g.get(k,0)<=100 for k in ['hunger','mood','energy','clean']), g)
-    wait(1.2); shot('pet', pid)
-    h0=g['hunger']; js('window.__pet.feed("riceball");1', pid); wait(0.6)
-    g=js('window.__pet.game()', pid); p=js('window.__pet.pose().action', pid)
-    check('喂食：饱腹上升、背包减少、做出吃东西的动作', g['hunger']>h0 and g['food'].get('riceball')==0 and p=='eat' and g['stats']['fed']==1, (g['hunger'], p))
-    js('window.__pet.play("pet");1', pid); wait(0.4)
-    check('抚摸：心情上升并开心地跳', js('window.__pet.pose().action', pid)=='happy' and js('window.__pet.game().stats.petted', pid)==1)
-    js('window.__pet.play("ball");1', pid); wait(0.3)
-    check('没买皮球时不能玩球', js('window.__pet.game().stats.played', pid)==0 and '皮球' in (js('(document.querySelector(".pet-bubble")||{}).innerText||""', pid) or ''))
-    js('document.querySelector(".pet-root").dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true}));1', pid); wait(0.9)
-    size=js('[innerWidth,innerHeight]', pid)
-    check('右键打开面板，窗口变大', js('!!document.querySelector(".pet-panel")', pid) and size and size[1]>400, size)
-    bars=js('[...document.querySelectorAll(".pet-bar span")].map(s=>s.innerText)', pid)
-    check('状态页有经验和四项数值', bars==['经验','饱腹','心情','精力','清洁'], bars)
-    shot('pet-panel', pid)
-    js('[...document.querySelectorAll(".pet-tabs button")].find(b=>b.innerText=="商店").click();1', pid); wait(0.4)
-    c0=js('window.__pet.game().coins', pid)
-    js('[...document.querySelectorAll(".pet-shop > div")].find(d=>d.innerText.includes("苹果")).querySelector("button").click();1', pid); wait(0.4)
-    g=js('window.__pet.game()', pid)
-    check('商店：买苹果扣金币、进背包', g['coins']==c0-3 and g['food']['apple']==3, (c0, g['coins'], g['food']))
-    locked=js('[...document.querySelectorAll(".pet-shop > div")].find(d=>d.innerText.includes("皇冠")).querySelector("button").innerText', pid)
-    check('饰品按等级解锁', 'Lv.10' in (locked or ''), locked)
-    shot('pet-shop', pid)
-    js('document.querySelector(".pet-close").click();1', pid); wait(0.8)
-    size2=js('[innerWidth,innerHeight]', pid); check('收起面板，窗口变回去', size2 and size2[1]<size[1], size2)
-    pos=js('mygo.call("Pet.Move",40,0)', pid); pos2=js('mygo.call("Pet.Move",-40,0)', pid)
-    check('可以在屏幕范围里走动', pos and pos2 and pos[0]-pos2[0]==40, (pos, pos2))
-    wait(0.5)
-    saved=os.path.join(HOME,'data','pet.json')
-    check('存档写进文件', os.path.exists(saved) and json.load(open(saved)).get('stats',{}).get('fed')==1)
-    js('mygo.call("Pet.Hide")', panel_id()); wait(1.0)
-    check('收起后窗口关闭，设置变回关闭', window_by('pet.html') is None and js('mygo.call("Settings.Get").then(v=>v.config.pet.enabled)') is False)
-    js('mygo.call("Pet.SetEnabled",true)'); wait(2.5)
-    pw=window_by('pet.html')
-    ok=pw and wait_for('!!(window.__pet&&window.__pet.game())', 10, pw['id'])
-    g=js('window.__pet.game()', pw['id']) if ok else {}
-    check('再叫出来接着养：存档还在，当天不重复签到', ok and g.get('stats',{}).get('fed')==1 and g.get('days')==1 and g['food'].get('apple')==3, g)
-    js('mygo.call("Pet.SetEnabled",false)'); wait(0.8)
-show(); typed('宠物'); wait(0.4); r=rows(); check('搜索框里能找到宠物开关', '桌面宠物' in r[:3], r[:4]); typed('')
+# ================= 第八轮：扩展平台 =================
+EXT=os.environ.get('POCKET_E2E_EXT','')
+def ext_eval(code, win=None, timeout=8):
+    """在扩展页面里面执行一段代码（只有测试构建允许）。"""
+    return js('window.__pluginEval(%s)' % json.dumps(code), win)
+def ext_error(code, win=None):
+    try:
+        ext_eval(code, win); return None
+    except RuntimeError as e:
+        return str(e)
+def installed(): return {p['id']:p for p in (js('mygo.call("Extensions.List")') or [])}
+
+# --- 自己写一个最小的扩展：一个页面、一份清单、一个后端脚本
+demo=os.path.join(HOME,'ext-src','demo'); os.makedirs(demo, exist_ok=True)
+json.dump({"id":"demo","name":"演示扩展","version":"0.3.0","api":1,
+  "tools":[{"id":"demo","title":"演示工具","keywords":["demo"],"height":240,"matches":[{"type":"text","regex":"^ORD-\\d+$","label":"查这个订单"}]},
+           {"id":"second","title":"第二个工具","keywords":["demo2"],"entry":"index.html#second"}],
+  "permissions":{"dirs":["demo-notes"],"fetch":["example.com"]},
+  "backend":{"command":["python3","backend.py"],"mode":"on-demand","idle":1}}, open(os.path.join(demo,'plugin.json'),'w'), ensure_ascii=False)
+open(os.path.join(demo,'index.html'),'w').write('<!doctype html><meta charset="utf-8"><script src="/__pocket.js"></script><body><h1 id="t">demo</h1><script>pocket.onEnter(c=>{document.getElementById("t").textContent=c.tool+":"+c.input})</script>')
+open(os.path.join(demo,'backend.py'),'w').write('import sys, json, os\nfor line in sys.stdin:\n    req = json.loads(line)\n    if req["method"] == "fail":\n        print(json.dumps({"id": req["id"], "error": "故意失败"}), flush=True)\n    else:\n        print(json.dumps({"id": req["id"], "result": {"echo": req["params"], "pid": os.getpid(), "plugin": os.environ.get("POCKET_PLUGIN_ID")}}), flush=True)\n')
+import shutil, zipfile
+zpath=os.path.join(HOME,'demo-0.3.0.zip')
+with zipfile.ZipFile(zpath,'w') as z:
+    for n in os.listdir(demo): z.write(os.path.join(demo,n), 'demo/'+n)   # 包里多套一层文件夹，也要能装
+
+check('一开始没有装任何扩展包', 'demo' not in installed() and 'pet' not in installed())
+info=js('mygo.call("Extensions.Install",%s)' % json.dumps(zpath)) or {}
+check('从 zip 安装扩展', info.get('id')=='demo' and info.get('version')=='0.3.0' and info.get('tools')==['演示工具','第二个工具'] and info.get('backend') is True and os.path.exists(os.path.join(HOME,'plugins','demo','plugin.json')), info)
+bad=os.path.join(HOME,'evil.zip')
+with zipfile.ZipFile(bad,'w') as z: z.writestr('../../escaped.txt','x'); z.writestr('plugin.json','{}')
+err=None
+try: js('mygo.call("Extensions.Install",%s)' % json.dumps(bad))
+except RuntimeError as e: err=str(e)
+check('路径不安全的包装不上', err is not None and '不安全' in err and not os.path.exists(os.path.join(HOME,'escaped.txt')), err)
+
+show(); typed('demo 带进来的字'); wait(0.4); r=rows(); check('扩展的工具出现在搜索里', r[:1]==['演示工具'], r[:3])
+press('Enter'); wait(0.8)
+ok=wait_for('!!window.__pluginEval', 5) and wait_for('window.__pluginEval("!!(window.pocket&&pocket.context)")', 8)
+check('打开扩展页面，宿主接口就绪', ok)
+c=ext_eval('pocket.context') or {}
+check('进入时带上了工具名和输入的内容', c.get('tool')=='demo' and c.get('input')=='带进来的字' and c.get('plugin')=='demo' and c.get('platform')=='darwin', c)
+check('页面的进入回调被调用', ext_eval('document.getElementById("t").textContent')=='demo:带进来的字')
+check('外观属性传给了扩展页面', ext_eval('document.documentElement.getAttribute("data-theme")') in ('light','dark'))
+# 文件：私有目录不用声明，声明过的用户目录可以用，其余的拒绝
+p=ext_eval('pocket.fs.createFile("", "", "a.txt", "你好")')
+check('私有目录读写', p=='a.txt' and ext_eval('pocket.fs.read("", "a.txt")')=='你好' and os.path.exists(os.path.join(HOME,'data','plugins','demo-files','a.txt')), p)
+ext_eval('pocket.fs.write("demo-notes", "x.md", "# hi")')
+check('声明过的用户目录可以读写', open(os.path.join(HOME,'demo-notes','x.md')).read()=='# hi')
+e1=ext_error('pocket.fs.tree("notes")'); e2=ext_error('pocket.fs.read("", "../../config.json")'); e3=ext_error('pocket.fs.write("commands", "x.sh", "rm -rf")')
+check('没声明的目录、跳出目录的路径、应用自己的目录都被拒绝', all(x is not None for x in (e1,e2,e3)) and '没有声明' in e1, (e1,e2,e3))
+e4=ext_error('pocket.fetch("https://not-declared.example.org/")'); e5=ext_error('pocket.fetch("http://127.0.0.1:1/")'); e6=ext_error('pocket.runner.languages()')
+check('没声明的域名、本机地址、没声明的代码运行权限都被拒绝', all(x is not None and '没有声明' in x for x in (e4,e5,e6)), (e4,e5,e6))
+ext_eval('pocket.storage.set("k", {"n": 1})'); check('扩展自己的存储', ext_eval('pocket.storage.get("k")')=={'n':1})
+# 后端进程：按需拉起、闲置自动关、再调用重新拉起
+check('没调用过后端时进程没有启动', js('mygo.call("E2E.BackendRunning","demo")') is False)
+b1=ext_eval('pocket.backend.call("echo", "hi", 2)') or {}
+check('调用后端程序', b1.get('echo')==['hi',2] and b1.get('plugin')=='demo' and js('mygo.call("E2E.BackendRunning","demo")') is True, b1)
+b2=ext_eval('pocket.backend.call("echo")') or {}
+check('接着调用用的是同一个进程', b2.get('pid')==b1.get('pid'), (b1.get('pid'), b2.get('pid')))
+check('后端报的错原样传回页面', '故意失败' in (ext_error('pocket.backend.call("fail")') or ''))
+wait(2.4)
+check('闲置后进程自动关掉，不占资源', js('mygo.call("E2E.BackendRunning","demo")') is False)
+b3=ext_eval('pocket.backend.call("echo")') or {}
+check('再调用时重新拉起', b3.get('pid') and b3.get('pid')!=b1.get('pid') and js('mygo.call("E2E.BackendRunning","demo")') is True, b3)
+press('Escape'); wait(0.3)
+# 带入内容匹配
+js('mygo.call("E2E.Summon","ORD-12345")'); wait(0.9)
+r=rows(); subs=js('[...document.querySelectorAll(".pk-row")].map(r=>(r.querySelector(".pk-row-subtitle")||{}).innerText||"")') or []
+check('选中的文字符合规则时，扩展出现在候选里', '演示工具' in r and '查这个订单' in subs, (r[:5], subs[:5]))
+press('Backspace'); wait(0.3); typed('')
+# 停用：搜不到，后端被结束；卸载：文件夹没了
+js('mygo.call("Extensions.SetEnabled","demo",false)'); wait(0.6)
+typed('demo'); wait(0.4); r=rows()
+check('停用后搜不到，后端进程被结束', '演示工具' not in r and js('mygo.call("E2E.BackendRunning","demo")') is False and installed()['demo']['enabled'] is False, r[:3])
+js('mygo.call("Extensions.SetEnabled","demo",true)'); wait(0.6); typed('demo2'); wait(0.4); r=rows()
+check('启用后回来了，一个扩展可以有多个工具', r[:1]==['第二个工具'], r[:3])
+js('mygo.call("Extensions.Uninstall","demo",false)'); wait(0.6); typed('demo'); wait(0.4); r=rows()
+check('卸载后文件夹删掉，存的设置按选择保留', '演示工具' not in r and not os.path.exists(os.path.join(HOME,'plugins','demo')) and os.path.exists(os.path.join(HOME,'data','plugins','demo.json')) and os.path.exists(os.path.join(HOME,'demo-notes','x.md')), r[:3])
+typed('')
+
+# --- 桌面宠物：现在是一个扩展包
+petzip=os.path.join(EXT,'pet-1.0.0.zip')
+if not os.path.exists(petzip):
+    check('找到宠物扩展包', False, petzip)
+else:
+    info=js('mygo.call("Extensions.Install",%s)' % json.dumps(petzip)) or {}
+    check('安装宠物扩展', info.get('id')=='pet' and info.get('backend') is False and window_by('float.html') is None, info)
+    typed('宠物'); wait(0.4); r=rows(); check('搜索框里能找到它', '桌面宠物' in r[:2], r[:3])
+    press('Enter'); wait(2.5)
+    pw=window_by('float.html'); check('回车后出现悬浮窗', pw is not None and not visible())
+    if pw:
+        pid=pw['id']
+        ok=wait_for('!!window.__pluginEval', 6, pid) and wait_for('window.__pluginEval("!!(window.__pet&&window.__pet.game())")', 12, pid)
+        check('3D 场景和存档加载出来', ok)
+        g=ext_eval('window.__pet.game()', pid) or {}
+        check('新领养：四项状态、等级、金币，当天签到领了见面礼', g.get('level')==1 and g.get('days')==1 and g.get('coins',0)>=45 and all(0<g.get(k,0)<=100 for k in ['hunger','mood','energy','clean']), g)
+        wait(1.0); shot('pet', pid)
+        h0=g['hunger']; ext_eval('window.__pet.feed("riceball");1', pid); wait(0.6)
+        g=ext_eval('window.__pet.game()', pid); act=ext_eval('window.__pet.pose().action', pid)
+        check('喂食：饱腹上升、背包减少、做出吃东西的动作', g['hunger']>h0 and g['food'].get('riceball')==0 and act=='eat', (g['hunger'], act))
+        ext_eval('window.__pet.play("pet");1', pid); wait(0.4)
+        check('抚摸：开心地跳', ext_eval('window.__pet.pose().action', pid)=='happy')
+        s0=js('[innerWidth,innerHeight]', pid)
+        ext_eval('document.querySelector(".pet-root").dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true}));1', pid); wait(0.9)
+        s1=js('[innerWidth,innerHeight]', pid)
+        check('右键打开面板，窗口变大', ext_eval('!!document.querySelector(".pet-panel")', pid) and s1[1]>s0[1]+150, (s0,s1))
+        shot('pet-panel', pid)
+        ext_eval('[...document.querySelectorAll(".pet-tabs button")].find(b=>b.innerText=="商店").click();1', pid); wait(0.4)
+        c0=ext_eval('window.__pet.game().coins', pid)
+        ext_eval('[...document.querySelectorAll(".pet-shop > div")].find(d=>d.innerText.includes("苹果")).querySelector("button").click();1', pid); wait(0.4)
+        g=ext_eval('window.__pet.game()', pid)
+        check('商店：买苹果扣金币、进背包', g['coins']==c0-3 and g['food']['apple']==3, (c0, g['coins']))
+        ext_eval('document.querySelector(".pet-close").click();1', pid); wait(0.8)
+        check('收起面板，窗口变回去', js('[innerWidth,innerHeight]', pid)[1]<s1[1])
+        m1=ext_eval('pocket.window.move(40,0)', pid); m2=ext_eval('pocket.window.move(-40,0)', pid)
+        check('可以在屏幕范围里走动', m1 and m2 and m1['x']-m2['x']==40, (m1,m2))
+        wait(0.4)
+        saved=os.path.join(HOME,'data','plugins','pet.json')
+        check('存档在扩展自己的存储里', os.path.exists(saved) and json.load(open(saved)).get('state',{}).get('stats',{}).get('fed')==1)
+        ext_eval('pocket.window.close();1', pid); wait(1.0)
+        check('收起来：窗口关闭', window_by('float.html') is None)
+        show(); typed('宠物'); press('Enter'); wait(2.5)
+        pw=window_by('float.html')
+        ok=pw and wait_for('!!window.__pluginEval', 6, pw['id']) and wait_for('window.__pluginEval("!!(window.__pet&&window.__pet.game())")', 12, pw['id'])
+        g=ext_eval('window.__pet.game()', pw['id']) if ok else {}
+        check('再叫出来接着养：存档还在，当天不重复签到', ok and g.get('stats',{}).get('fed')==1 and g.get('days')==1 and g['food'].get('apple')==3, g)
+        js('mygo.call("Extensions.SetEnabled","pet",false)'); wait(1.0)
+        check('停用扩展：悬浮窗跟着关掉', window_by('float.html') is None)
+        js('mygo.call("Extensions.SetEnabled","pet",true)'); wait(2.2)
+        check('重新启用：上次开着的悬浮窗回来了', window_by('float.html') is not None)
+        js('mygo.call("Extensions.Uninstall","pet",true)'); wait(1.0)
+        show(); typed('宠物'); wait(0.4); r=rows()
+        check('卸载：窗口、文件夹、存档都没了，搜索里也没有', window_by('float.html') is None and not os.path.exists(os.path.join(HOME,'plugins','pet')) and not os.path.exists(saved) and '桌面宠物' not in r, r[:3])
+        typed('')
 
 # ================= 道具库 =================
 js('mygo.call("Settings.OpenCatalog")', panel_id()); wait(1.6)

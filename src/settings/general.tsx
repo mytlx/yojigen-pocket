@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import { Settings, Pet } from "../mygo";
+import { Settings } from "../mygo";
 import type { SectionProps } from "./app";
 import { Button, Hotkey, NumberInput, Row, Section, Segmented, Slider, Text, Toggle } from "./ui";
 
@@ -112,11 +112,6 @@ export function General({ view, info, config, update }: SectionProps) {
       <Section title="编辑器">
         <Row label="打开脚本用的编辑器" description="命令行写法，例如 code 或 subl；留空用系统默认">
           <Text value={config.editor ?? ""} width={200} placeholder="系统默认" mono onChange={(v) => update((c) => (c.editor = v))} />
-        </Row>
-      </Section>
-      <Section title="桌面宠物" description="一只会在桌面上走动的小狸猫，可以喂食、玩耍、养成。默认关闭；关着的时候不建窗口，不占任何资源。">
-        <Row label="显示桌面宠物" description="也可以在搜索框里输入“宠物”，或用托盘菜单开关。右键点它打开状态、商店和设置">
-          <Toggle label="显示桌面宠物" checked={!!config.pet?.enabled} onChange={(v) => void Pet.setEnabled(v)} />
         </Row>
       </Section>
     </>

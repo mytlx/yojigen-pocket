@@ -48,6 +48,23 @@ func openExternal(rawURL string) error {
 	return mygo.Shell.OpenExternal(rawURL)
 }
 
+func platformPaste() error { return platform.SendPaste() }
+
+// openWith 让用户选一个应用来打开文件。
+func openWith(p string) error {
+	switch runtime.GOOS {
+	case "windows":
+		return platform.DetachedCommand("rundll32.exe", "shell32.dll,OpenAs_RunDLL", p).Start()
+	case "darwin":
+		apps, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "选择用来打开的应用", DefaultPath: "/Applications", Filters: []mygo.FileFilter{{Name: "应用", Extensions: []string{"app"}}}})
+		if err != nil || len(apps) == 0 {
+			return err
+		}
+		return platform.DetachedCommand("open", "-a", apps[0], p).Start()
+	}
+	return openPath(p)
+}
+
 // host 实现 core.Host：引擎需要的系统能力。
 type host struct{ a *App }
 
@@ -203,27 +220,71 @@ func (a *App) fileIcon(p string) ([]byte, error) {
 	return data, nil
 }
 
-// pluginRuntime 是插件页面里的 window.pocket。插件跑在 iframe 里，只能用这里列出的能力，
-// 请求经由主页面转发给后端，后端按插件 ID 隔离存储。
+// pluginRuntime 是扩展页面里的 window.pocket。扩展跑在 iframe 里，只能用这里列出的能力：
+// 请求经由宿主页面转发给后端，后端按清单里声明的权限放行。
 const pluginRuntime = `(() => {
   let seq = 0;
+  let context = null;
+  let resolveReady;
   const pending = new Map();
+  const listeners = {};
+  const ready = new Promise((r) => (resolveReady = r));
+  const post = (msg) => window.parent.postMessage(msg, "*");
+  const emit = (name, data) => (listeners[name] || []).slice().forEach((fn) => { try { fn(data); } catch (e) { console.error(e); } });
+  const on = (name, fn) => {
+    (listeners[name] = listeners[name] || []).push(fn);
+    return () => { listeners[name] = (listeners[name] || []).filter((f) => f !== fn); };
+  };
+  // 外观跟着宿主走：把宿主页面上的主题属性和 CSS 变量原样搬过来。
+  const applyTheme = (t) => {
+    if (!t) return;
+    const el = document.documentElement;
+    for (const [k, v] of Object.entries(t.attrs || {})) el.setAttribute(k, v);
+    if (typeof t.style === "string") el.style.cssText = t.style;
+  };
   window.addEventListener("message", (e) => {
-    if (e.source !== window.parent || !e.data || e.data.__pocketReply !== true) return;
-    const p = pending.get(e.data.id);
-    if (!p) return;
-    pending.delete(e.data.id);
-    e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.result);
+    if (e.source !== window.parent || !e.data) return;
+    const d = e.data;
+    if (d.__pocketReply === true) {
+      const p = pending.get(d.id);
+      if (!p) return;
+      pending.delete(d.id);
+      d.error ? p.reject(new Error(d.error)) : p.resolve(d.result);
+    } else if (d.__pocketEvent) {
+      if (d.__pocketEvent === "theme") applyTheme(d.data);
+      if (d.__pocketEvent === "enter") { context = Object.assign({}, context, d.data); pocket.context = context; }
+      emit(d.__pocketEvent, d.data);
+    } else if (d.__pocketEval && context && context.e2e) {
+      // 只在测试构建里：让端到端测试能看到页面里面。
+      Promise.resolve().then(() => (0, eval)(d.code)).then(
+        (result) => post({ __pocketEvalReply: true, id: d.id, result }),
+        (err) => post({ __pocketEvalReply: true, id: d.id, error: String(err) }),
+      );
+    }
   });
   const call = (method, ...args) => new Promise((resolve, reject) => {
     const id = ++seq;
     pending.set(id, { resolve, reject });
-    window.parent.postMessage({ __pocket: true, id, method, args }, "*");
+    post({ __pocket: true, id, method, args });
   });
+  // Esc 返回、分离窗口的快捷键：页面自己没处理（没有 preventDefault）时才交给宿主。
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { e.preventDefault(); window.parent.postMessage({ __pocket: true, method: "back" }, "*"); }
+    if (e.defaultPrevented || e.isComposing) return;
+    if (e.key === "Escape") { e.preventDefault(); post({ __pocket: true, method: "back" }); return; }
+    const k = context && context.detachKey;
+    if (k && e.key.toLowerCase() === k.key && !!k.mod === (e.metaKey || e.ctrlKey) && !!k.shift === e.shiftKey && !!k.alt === e.altKey) {
+      e.preventDefault();
+      post({ __pocket: true, method: "ui.detach" });
+    }
   });
-  window.pocket = {
+  const pocket = (window.pocket = {
+    api: 1,
+    context: null,
+    ready,
+    call,
+    on,
+    onEnter(fn) { const off = on("enter", fn); if (context) fn(context); return off; },
+    // 老接口，保留。
     copyText: (text) => call("copyText", String(text)),
     readClipboard: () => call("readClipboard"),
     pasteText: (text) => call("pasteText", String(text)),
@@ -232,7 +293,62 @@ const pluginRuntime = `(() => {
     hide: () => call("hide"),
     getStorage: (key) => call("getStorage", String(key)),
     setStorage: (key, value) => call("setStorage", String(key), value),
-  };
+    ui: {
+      toast: (text, error) => call("ui.toast", String(text), !!error),
+      copy: (text, label) => call("ui.copy", String(text), label),
+      close: () => call("ui.close"),
+      detach: () => call("ui.detach"),
+      remember: (value) => call("ui.remember", String(value ?? "")),
+    },
+    storage: { get: (key) => call("getStorage", String(key)), set: (key, value) => call("setStorage", String(key), value) },
+    fs: {
+      tree: (root = "") => call("fs.tree", root),
+      read: (root, path) => call("fs.read", root, path),
+      write: (root, path, content) => call("fs.write", root, path, content),
+      createFile: (root, dir, name, content = "") => call("fs.createFile", root, dir, name, content),
+      createFolder: (root, dir, name) => call("fs.createFolder", root, dir, name),
+      rename: (root, path, name) => call("fs.rename", root, path, name),
+      move: (root, path, dir) => call("fs.move", root, path, dir),
+      delete: (root, path) => call("fs.delete", root, path),
+      reveal: (root, path = "") => call("fs.reveal", root, path),
+      open: (root, path) => call("fs.open", root, path),
+      openWith: (root, path) => call("fs.openWith", root, path),
+      pick: (exts = []) => call("fs.pick", exts),
+      saveAs: (name, content) => call("fs.saveAs", name, content),
+    },
+    fetch: (url, options = {}) => call("fetch", String(url), options),
+    runner: {
+      languages: () => call("runner.languages"),
+      format: (lang, code) => call("runner.format", lang, code),
+      stop: () => call("runner.stop"),
+      run(request, onEvent) {
+        const id = Date.now() + "-" + ++seq;
+        const off = on("run", (d) => { if (d && d.id === id && onEvent) onEvent(d.event); });
+        return call("runner.run", request, id).finally(off);
+      },
+    },
+    window: {
+      info: () => call("window.info"),
+      move: (dx, dy) => call("window.move", dx, dy),
+      ground: () => call("window.ground"),
+      resize: (width, height) => call("window.resize", width, height),
+      dragStart: () => call("window.dragStart"),
+      dragMove: (dx, dy) => call("window.dragMove", dx, dy),
+      setAlwaysOnTop: (on) => call("window.setAlwaysOnTop", !!on),
+      close: () => call("window.close"),
+    },
+    backend: {
+      call: (method, ...params) => call("backend.call", method, ...params),
+      on: (fn) => on("backend", fn),
+    },
+  });
+  call("init").then((c) => {
+    context = c;
+    pocket.context = c;
+    applyTheme(c.theme);
+    resolveReady(c);
+    emit("enter", c);
+  });
 })();`
 
 // servePlugin 提供插件的文件。地址的 host 部分是插件 ID。
@@ -276,6 +392,7 @@ func (a *App) servePlugin(w http.ResponseWriter, r *http.Request) {
 	// 不用 mygo.FileServer：它和 http.FileServer 一样会把 /index.html 重定向到 /，
 	// 而自定义协议的 iframe 不跟随重定向，页面会是空白。
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Access-Control-Allow-Origin", "*") // 构建工具给脚本加的 crossorigin 属性需要它
 	http.ServeContent(w, r, name, info.ModTime(), f)
 }
 

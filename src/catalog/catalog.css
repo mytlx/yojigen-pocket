@@ -159,3 +159,41 @@
   font-size: 12.5px;
   color: var(--text-2);
 }
+
+/* 扩展管理 */
+.ct-ext-actions {
+  display: flex;
+  gap: 8px;
+}
+.ct-ext-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ct-ext {
+  padding: 14px;
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: inset 0 0 0 0.5px var(--line);
+  animation: q-fade-up var(--dur) var(--ease-out) both;
+}
+.ct-ext.is-off {
+  opacity: 0.6;
+}
+.ct-ext-version {
+  font-style: normal;
+  font-weight: 400;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.ct-ext-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 10px 0;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.ct-ext-warn {
+  color: var(--danger);
+}

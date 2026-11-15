@@ -641,6 +641,7 @@ export function App() {
       setView({ type: "feature", feature, title: featureTitles[feature] ?? feature, icon: featureIcons[feature], input: featureInput ?? "", args: args ?? {}, content: "" }),
     close: closeView,
     detach: detachView,
+    detachKey,
     remember: (value) => {
       featureInput.current = value;
     },

@@ -75,7 +75,8 @@ type UserAssets struct {
 
 // AppInfo 是页面启动时需要的信息。
 type AppInfo struct {
-	Platform       string      `json:"platform"` // darwin | windows | linux
+	E2E            bool        `json:"e2e,omitempty"` // 测试构建：允许端到端测试查看扩展页面内部
+	Platform       string      `json:"platform"`      // darwin | windows | linux
 	Version        string      `json:"version"`
 	GlassSupported bool        `json:"glassSupported"`
 	Dark           bool        `json:"dark"`
@@ -129,6 +130,7 @@ func (l *Launcher) Info() AppInfo {
 		GlassSupported: platform.GlassSupported(),
 		Dark:           mygo.Theme.IsDark(),
 		Paths:          l.a.paths,
+		E2E:            allowSecondInstance, // 只有测试构建里为真
 	}
 }
 
@@ -230,47 +232,9 @@ func (l *Launcher) PickFile(ctx context.Context) (string, error) {
 }
 
 // PluginCall 转发插件的请求。主页面只把来自当前插件 iframe 的消息转过来，
-// 插件 ID 由主页面根据视图给出，插件自己无法冒充。
-func (l *Launcher) PluginCall(plugin, method string, args []any) (any, error) {
-	a := l.a
-	str := func(i int) string {
-		if i < len(args) {
-			s, _ := args[i].(string)
-			return s
-		}
-		return ""
-	}
-	switch method {
-	case "copyText":
-		mygo.Clipboard.WriteText(str(0))
-	case "readClipboard":
-		return mygo.Clipboard.ReadText(), nil
-	case "pasteText":
-		mygo.Clipboard.WriteText(str(0))
-		a.hidePanel()
-		return nil, platform.SendPaste()
-	case "openExternal":
-		target := str(0)
-		if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
-			return nil, errors.New("只能打开 http / https 链接")
-		}
-		return nil, openExternal(target)
-	case "notify":
-		a.host.Notify(str(0), str(1))
-	case "hide":
-		a.hidePanel()
-	case "getStorage":
-		return a.pluginStorageGet(plugin, str(0))
-	case "setStorage":
-		var value any
-		if len(args) > 1 {
-			value = args[1]
-		}
-		return nil, a.pluginStorageSet(plugin, str(0), value)
-	default:
-		return nil, fmt.Errorf("不支持的调用：%s", method)
-	}
-	return nil, nil
+// PluginCall 是扩展页面里 window.pocket 的调用入口：tool 是页面属于哪个工具，按清单里声明的权限放行。
+func (l *Launcher) PluginCall(ctx context.Context, plugin, tool, method string, args []any) (any, error) {
+	return l.a.pluginHost.call(ctx, plugin, tool, method, args)
 }
 
 // Settings 是设置窗口调用的服务。

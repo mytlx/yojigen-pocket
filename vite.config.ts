@@ -16,8 +16,8 @@ export default defineConfig({
         settings: resolve(import.meta.dirname, "settings.html"),
         feature: resolve(import.meta.dirname, "feature.html"),
         catalog: resolve(import.meta.dirname, "catalog.html"),
-        // 桌面宠物单独一个入口：three.js 只打进这一页，别的窗口不会加载它。
-        pet: resolve(import.meta.dirname, "pet.html"),
+        // 扩展的悬浮窗（桌面宠物这类）用的宿主页面
+        float: resolve(import.meta.dirname, "float.html"),
       },
     },
   },

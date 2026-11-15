@@ -274,6 +274,8 @@ type appState struct {
 	PanelX   int  `json:"panelX"`
 	PanelY   int  `json:"panelY"`
 	PanelSet bool `json:"panelSet"`
+	// Floats 是上次退出时开着的悬浮窗工具（扩展/工具），启动时恢复。
+	Floats []string `json:"floats,omitempty"`
 }
 
 func (a *App) statePath() string { return filepath.Join(a.paths.Data, "state.json") }

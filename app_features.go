@@ -48,6 +48,7 @@ type DetachRequest struct {
 	Title   string            `json:"title"`
 	Icon    string            `json:"icon,omitempty"`
 	Height  int               `json:"height,omitempty"`
+	Width   int               `json:"width,omitempty"`
 	Mode    string            `json:"mode,omitempty"` // stealth：摸鱼小窗
 }
 
@@ -78,6 +79,10 @@ func (r DetachRequest) key() string {
 	case r.Mode == "stealth":
 		return "reader-stealth"
 	case r.Plugin != "":
+		// 一个扩展可以有几个工具，各开各的窗口。
+		if tool := r.Args["tool"]; tool != "" && tool != r.Plugin {
+			return "plugin-" + r.Plugin + "-" + tool
+		}
 		return "plugin-" + r.Plugin
 	}
 	return "feature-" + r.Feature
@@ -153,7 +158,7 @@ func (a *App) detach(req DetachRequest) (int, error) {
 		opts.Frameless, opts.Transparent, opts.AlwaysOnTop, opts.SkipTaskbar, opts.DisableShadow = true, true, true, true, true
 		opts.Width, opts.Height, opts.MinWidth, opts.MinHeight = 560, 84, 200, 32
 	} else {
-		width := max(cfg.Appearance.Width, 640, featureWidths[req.Feature])
+		width := max(cfg.Appearance.Width, 640, featureWidths[req.Feature], req.Width)
 		height := 600
 		if req.Height > 0 {
 			height = req.Height + 56
@@ -505,9 +510,6 @@ func (a *App) trayMenu(list []WindowInfo) *mygo.Menu {
 	}
 	items = append(items,
 		mygo.Separator(),
-		&mygo.MenuItem{Label: "桌面宠物", Type: mygo.MenuItemCheckbox, Checked: a.config.Get().Pet.Enabled, Click: func(*mygo.MenuItem, *mygo.Window) {
-			_ = a.setPetEnabled(!a.config.Get().Pet.Enabled)
-		}},
 		&mygo.MenuItem{Label: "打开配置目录", Click: func(*mygo.MenuItem, *mygo.Window) { _ = openPath(a.paths.Home) }},
 		&mygo.MenuItem{Label: "重新加载", Click: func(*mygo.MenuItem, *mygo.Window) { a.reloadAll() }},
 		mygo.Separator(),
@@ -705,7 +707,7 @@ type CatalogItem struct {
 }
 
 // 道具库的分类顺序。
-var catalogOrder = []string{"效率工具", "开发工具", "内置模块", "网页插件", "脚本命令", "系统指令", "网页搜索", "文本片段", "Pocket"}
+var catalogOrder = []string{"效率工具", "开发工具", "内置模块", "扩展", "脚本命令", "系统指令", "网页搜索", "文本片段", "Pocket"}
 
 func (a *App) catalogItems() []CatalogItem {
 	cfg := a.config.Get()
@@ -747,7 +749,12 @@ func (a *App) catalogItems() []CatalogItem {
 		})
 	}
 	for _, it := range a.plugins.CatalogItems() {
-		add(it, "网页插件", nil)
+		// 扩展里的工具可以声明自己归到哪一类（效率工具、开发工具），没写的归到“扩展”。
+		category := "扩展"
+		if slices.Contains(catalogOrder, it.SourceLabel) {
+			category = it.SourceLabel
+		}
+		add(it, category, a.plugins.KeywordsOf(it.ID))
 	}
 	for _, it := range a.commands.CatalogItems() {
 		add(it, "脚本命令", a.commands.KeywordsOf(it.ID))
@@ -800,5 +807,5 @@ func (a *App) openItem(id string, detached bool) error {
 }
 
 func detachRequestFor(v *core.View) DetachRequest {
-	return DetachRequest{Feature: v.Feature, Input: v.Input, Args: v.Args, URL: v.URL, Plugin: v.Plugin, Title: v.Title, Icon: v.Icon, Height: v.Height}
+	return DetachRequest{Feature: v.Feature, Input: v.Input, Args: v.Args, URL: v.URL, Plugin: v.Plugin, Title: v.Title, Icon: v.Icon, Height: v.Height, Width: v.Width}
 }

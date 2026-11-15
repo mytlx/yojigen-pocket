@@ -14,6 +14,8 @@ export interface FeatureCtx {
   /** 分离成独立窗口（已经是独立窗口时什么都不做）。 */
   detach(): void;
   openSettings(section: string): void;
+  /** 分离窗口的快捷键（accelerator 写法）；扩展页面里按下时由宿主处理。 */
+  detachKey?: string;
   /** 记下功能页当前的主要内容：分离成独立窗口时带过去。 */
   remember(value: string): void;
 }
