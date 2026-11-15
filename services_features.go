@@ -413,7 +413,9 @@ func (c *Catalog) SetEnabled(id string, enabled bool) error {
 }
 
 // SetKeywords 改一项的关键词（内置模块就是它的前缀），可以有多个。空列表表示不要关键词。
-func (c *Catalog) SetKeywords(id string, words []string) error { return c.a.setKeywords(id, words, false) }
+func (c *Catalog) SetKeywords(id string, words []string) error {
+	return c.a.setKeywords(id, words, false)
+}
 
 // ResetKeywords 把一项的关键词恢复成自带的。
 func (c *Catalog) ResetKeywords(id string) error { return c.a.setKeywords(id, nil, true) }
