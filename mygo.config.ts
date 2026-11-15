@@ -27,6 +27,10 @@ export default defineConfig({
       CFBundleAllowMixedLocalizations: true,
     },
     minimumSystemVersion: "13.0",
+    // 签名。不设置就是 ad-hoc：每次构建的签名都不一样，系统会把新版本当成另一个应用，
+    // 辅助功能、屏幕录制这些权限每次更新后都要重新授权。设置了固定的证书就不会
+    //（做法见 docs/guide.md 的“macOS 的权限和签名”）。
+    signingIdentity: process.env.POCKET_SIGN_IDENTITY || undefined,
   },
   windows: {
     displayName: "Yojigen Pocket",

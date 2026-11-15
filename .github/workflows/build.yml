@@ -41,6 +41,8 @@ jobs:
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
+    env:
+      MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
     strategy:
       fail-fast: false
       matrix:
@@ -57,6 +59,25 @@ jobs:
       - name: Install NSIS
         if: matrix.name == 'Windows'
         run: sudo apt-get update && sudo apt-get install -y nsis zip
+      # 可选：用固定的证书给 macOS 版签名，用户更新后不用重新授权系统权限。
+      # 需要三个仓库密钥：MACOS_SIGN_P12（证书导出的 .p12，base64）、MACOS_SIGN_PASSWORD、MACOS_SIGN_IDENTITY（证书的名字）。
+      # 没配就是 ad-hoc 签名，和以前一样。
+      - name: Import the macOS signing certificate
+        if: matrix.name == 'macOS' && env.MACOS_SIGN_P12 != ''
+        env:
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          keychain="$RUNNER_TEMP/sign.keychain-db"
+          echo "$MACOS_SIGN_P12" | base64 --decode > "$RUNNER_TEMP/sign.p12"
+          security create-keychain -p ci "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p ci "$keychain"
+          security import "$RUNNER_TEMP/sign.p12" -P "$MACOS_SIGN_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k ci "$keychain" >/dev/null
+          security list-keychain -d user -s "$keychain"
+          rm -f "$RUNNER_TEMP/sign.p12"
+          echo "POCKET_SIGN_IDENTITY=$MACOS_SIGN_IDENTITY" >> "$GITHUB_ENV"
       - name: Build
         run: bunx mygo build -platform ${{ matrix.platform }}
       - name: Package portable Windows archives

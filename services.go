@@ -454,9 +454,9 @@ func (s *Settings) Doctor() []DoctorItem {
 	}
 	if runtime.GOOS == "darwin" {
 		trusted := platform.AccessibilityTrusted()
-		item := DoctorItem{Title: "辅助功能权限", OK: trusted, Detail: "已授权，可以自动粘贴"}
+		item := DoctorItem{Title: "辅助功能权限", OK: trusted, Detail: "已授权，可以自动粘贴、模拟按键"}
 		if !trusted {
-			item.Detail = "未授权：回车只会复制，不会自动粘贴到当前窗口"
+			item.Detail = "未授权：回车只会复制，不会自动粘贴；连点器和键盘宏用不了。" + staleGrantHint
 			item.Action = "accessibility"
 		}
 		out = append(out, item)
@@ -465,10 +465,20 @@ func (s *Settings) Doctor() []DoctorItem {
 		ok := platform.ScreenCaptureAllowed()
 		item := DoctorItem{Title: "屏幕录制权限", OK: ok, Detail: "已授权，可以截图识别文字"}
 		if !ok {
-			item.Detail = "未授权：截图识别只能截到桌面背景"
+			item.Detail = "未授权：截图识别只能截到桌面背景。授权后要重启本应用才生效。" + staleGrantHint
 			item.Action = "screen"
 		}
 		out = append(out, item)
+		disk := platform.FullDiskAccess()
+		item = DoctorItem{Title: "完全磁盘访问权限（可选）", OK: disk, Detail: "已授权，文件搜索能搜到其他应用数据目录里的文件"}
+		if !disk {
+			item.Detail = "未授权：其他应用数据目录里的文件（比如微信收到的文件）搜不到，系统会把这部分结果去掉。不需要的话可以不管。授权后要重启本应用"
+			item.Action = "disk"
+		}
+		out = append(out, item)
+		if platform.AdHocSigned() {
+			out = append(out, DoctorItem{Title: "应用签名", OK: true, Detail: "这个版本没有固定的开发者签名。每次更新后，系统会把它当成一个新应用：上面的权限要点“重置”后重新授权"})
+		}
 	}
 	if runtime.GOOS == "windows" {
 		if p, ok := providers.EverythingStatus(s.a.config.Get()); ok {
@@ -499,10 +509,37 @@ func (s *Settings) Doctor() []DoctorItem {
 // ResetPanelPosition 让主窗口回到屏幕中间，忘掉拖动过的位置。
 func (s *Settings) ResetPanelPosition() { s.a.resetPanelPosition() }
 
-// Permissions 报告系统权限的状态。
+// staleGrantHint 解释 macOS 上最让人困惑的一种情况：系统设置里的开关开着，应用却没有权限。
+const staleGrantHint = "系统设置里已经打开了还是这样？更新或重装之后，系统认的是旧版本的授权：点“重置”清掉旧记录，再重新打开开关"
+
+// Permissions 报告系统权限的状态。disk 是“完全磁盘访问”，adhoc 表示应用没有固定的签名（更新后要重新授权）。
 func (s *Settings) Permissions() map[string]bool {
-	return map[string]bool{"accessibility": platform.AccessibilityTrusted(), "screen": platform.ScreenCaptureAllowed()}
+	return map[string]bool{
+		"accessibility": platform.AccessibilityTrusted(),
+		"screen":        platform.ScreenCaptureAllowed(),
+		"disk":          platform.FullDiskAccess(),
+		"adhoc":         platform.AdHocSigned(),
+	}
 }
+
+// ResetPermission 清掉系统里旧的授权记录，再把授权流程重新走一遍（kind：accessibility | screen）。
+// 用来处理“系统设置里明明开着、应用却说没有权限”：更新或重装之后系统认的是旧版本。
+func (s *Settings) ResetPermission(kind string) error {
+	if err := platform.ResetPermission(kind); err != nil {
+		return err
+	}
+	switch kind {
+	case "accessibility":
+		platform.PromptAccessibility() // 把应用重新加进列表，用户只需要打开开关
+		platform.OpenAccessibilitySettings()
+	case "screen":
+		platform.RequestScreenCapture()
+	}
+	return nil
+}
+
+// OpenFullDisk 打开系统设置里的“完全磁盘访问权限”。
+func (s *Settings) OpenFullDisk() { platform.OpenFullDiskAccessSettings() }
 
 // Relaunch 重启应用（授予系统权限后需要重启才生效）。
 func (s *Settings) Relaunch() { mygo.App.Relaunch() }

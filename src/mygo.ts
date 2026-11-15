@@ -393,6 +393,7 @@ export interface FindResult {
   engine: string;
   truncated: boolean;
   note?: string;
+  hint?: string;
 }
 
 /** FinderInfo 是高级搜索页打开时需要的东西。 */
@@ -905,11 +906,15 @@ export const Settings = {
   openFolder(which: string): Promise<void> {
     return call("Settings.OpenFolder", which);
   },
+  /** OpenFullDisk 打开系统设置里的“完全磁盘访问权限”。 */
+  openFullDisk(): Promise<void> {
+    return call("Settings.OpenFullDisk");
+  },
   /** OpenScreenCapture 请求屏幕录制权限并打开设置页。 */
   openScreenCapture(): Promise<void> {
     return call("Settings.OpenScreenCapture");
   },
-  /** Permissions 报告系统权限的状态。 */
+  /** Permissions 报告系统权限的状态。disk 是“完全磁盘访问”，adhoc 表示应用没有固定的签名（更新后要重新授权）。 */
   permissions(): Promise<Record<string, boolean>> {
     return call("Settings.Permissions");
   },
@@ -932,6 +937,13 @@ export const Settings = {
   /** ResetPanelPosition 让主窗口回到屏幕中间，忘掉拖动过的位置。 */
   resetPanelPosition(): Promise<void> {
     return call("Settings.ResetPanelPosition");
+  },
+  /**
+   * ResetPermission 清掉系统里旧的授权记录，再把授权流程重新走一遍（kind：accessibility | screen）。
+   * 用来处理“系统设置里明明开着、应用却说没有权限”：更新或重装之后系统认的是旧版本。
+   */
+  resetPermission(kind: string): Promise<void> {
+    return call("Settings.ResetPermission", kind);
   },
   /** ResolveCommands 按 ID 查询命令的显示信息（设置页列出已绑定的快捷键、隐藏的项目用）。 */
   resolveCommands(ids: string[]): Promise<CommandTarget[]> {
@@ -1180,13 +1192,19 @@ export const Finder = {
   detail(path: string): Promise<FileDetail | null> {
     return call("Finder.Detail", path);
   },
-  /** Info 返回类型筛选、当前引擎和界面偏好。 */
   info(): Promise<FinderInfo> {
     return call("Finder.Info");
   },
   /** Open 打开文件；Reveal 在文件夹里显示它；CopyPath / CopyFile 复制路径或文件本身。 */
   open(path: string): Promise<void> {
     return call("Finder.Open", path);
+  },
+  /**
+   * Info 返回类型筛选、当前引擎和界面偏好。
+   * OpenFullDisk 打开系统设置里的“完全磁盘访问权限”。
+   */
+  openFullDisk(): Promise<void> {
+    return call("Finder.OpenFullDisk");
   },
   /** Reveal 在文件夹中显示。 */
   reveal(path: string): Promise<void> {

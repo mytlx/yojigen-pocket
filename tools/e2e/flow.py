@@ -1091,6 +1091,17 @@ else:
         check('卸载：窗口、文件夹、存档都没了，搜索里也没有', window_by('float.html') is None and not os.path.exists(os.path.join(HOME,'plugins','pet')) and not os.path.exists(saved) and '桌面宠物' not in r, r[:3])
         typed('')
 
+# ================= macOS 的权限状态 =================
+if sys.platform=='darwin':
+    perms=js('mygo.call("Settings.Permissions")') or {}
+    check('权限状态里有辅助功能、屏幕录制、完全磁盘访问和签名情况', all(k in perms for k in ('accessibility','screen','disk','adhoc')), perms)
+    doc={d['title']:d for d in (js('mygo.call("Settings.Doctor")') or [])}
+    disk=doc.get('完全磁盘访问权限（可选）')
+    check('环境检查列出完全磁盘访问权限', disk is not None and (disk['ok'] or disk.get('action')=='disk'), list(doc))
+    check('没有固定签名时说明更新后要重新授权', ('应用签名' in doc)==bool(perms.get('adhoc')), (perms.get('adhoc'), list(doc)))
+    r=js('mygo.call("Finder.Search",{query:"pocket-e2e-nothing-matches-this",kind:"all",scope:"home",limit:5})') or {}
+    check('搜索结果在缺少磁盘权限时带提示', r.get('engine')=='spotlight' and (r.get('hint')=='disk')==(not perms.get('disk')), (r.get('engine'), r.get('hint'), perms.get('disk')))
+
 # ================= 道具库 =================
 js('mygo.call("Settings.OpenCatalog")', panel_id()); wait(1.6)
 cw=window_by('catalog.html'); check('打开道具库窗口', cw is not None)

@@ -104,6 +104,9 @@ type FinderKind struct {
 }
 
 // Info 返回类型筛选、当前引擎和界面偏好。
+// OpenFullDisk 打开系统设置里的“完全磁盘访问权限”。
+func (f *Finder) OpenFullDisk() { platform.OpenFullDiskAccessSettings() }
+
 func (f *Finder) Info() FinderInfo {
 	cfg := f.a.config.Get()
 	out := FinderInfo{Preview: cfg.Files.FindPreview, Meta: cfg.Files.FindMeta, Scope: cfg.Files.FindScope, Scopes: isDarwin}
@@ -137,6 +140,10 @@ func (f *Finder) Search(ctx context.Context, req providers.FindRequest) provider
 	res := f.a.files.Find(ctx, req)
 	for i := range res.Items {
 		res.Items[i].Icon = f.a.engine.NormalizeIcon(res.Items[i].Icon)
+	}
+	// macOS：没有“完全磁盘访问”时，系统会把其他应用数据目录里的结果去掉（聚焦自己搜得到，这里搜不到）。
+	if res.Engine == "spotlight" && !platform.FullDiskAccess() {
+		res.Hint = "disk"
 	}
 	return res
 }

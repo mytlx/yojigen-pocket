@@ -202,7 +202,7 @@ func (m *Macro) normalize() error {
 	return nil
 }
 
-var errNeedInputPermission = errors.New("系统还不允许本应用模拟鼠标键盘。macOS 上要在“系统设置 → 隐私与安全性 → 辅助功能”里打开它")
+var errNeedInputPermission = errors.New("系统还不允许本应用模拟鼠标键盘。macOS 上要在“系统设置 → 隐私与安全性 → 辅助功能”里打开它；已经打开了还是这样的话，到“设置 → 关于 → 环境检查”里点“重置”再重新授权")
 
 // autoEngine 保存设置并负责运行。同一时间只跑一个任务。
 type autoEngine struct {

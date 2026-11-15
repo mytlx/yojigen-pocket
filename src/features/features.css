@@ -1767,3 +1767,8 @@
   font-size: 12px;
   color: var(--text-3);
 }
+
+/* 高级搜索：可能搜不全时的提示条 */
+.fx-find-hint {
+  flex: none;
+}
