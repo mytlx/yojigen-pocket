@@ -12,6 +12,9 @@ import { applyAppearance, applyUserStyles } from "../shared/theme";
 import { FeatureHost, PanelView, type ActiveView } from "../launcher/views";
 import type { FeatureCtx } from "../features/types";
 import { featureIcons as icons, featureTitles as titles } from "../features/meta";
+import { installTooltips } from "../shared/tooltip";
+
+installTooltips();
 
 const params = new URLSearchParams(location.search);
 const initial: ActiveView = {

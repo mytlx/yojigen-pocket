@@ -695,6 +695,119 @@ moved=ejs('pocket.fs.move("notes","周会记录.md","工作")'); wait(0.3)
 check('笔记可以移进文件夹', moved=='工作/周会记录.md' and os.path.exists(os.path.join(HOME,'notes','工作','周会记录.md')), moved)
 bad=ext_error('pocket.fs.write("notes","../逃出去.md","x")')
 check('笔记接口拒绝目录外的路径', bad is not None and not os.path.exists(os.path.join(HOME,'逃出去.md')), bad)
+
+# --- 笔记：语法、块菜单、设置、链接、多窗口同步
+SAMPLE='---\ntitle: 语法测试\ntags: [demo, markdown]\n---\n\n[TOC]\n\n# 一级标题\n\n正文里有 **加粗**、*斜体*、~~删除线~~、`行内代码`，还有 [链接](https://example.com) 和 [另一篇](另一篇.md)。\n\n## 二级标题\n\n水的分子式 H~2~O，质能方程 E=mc^2^，<sup>上标</sup> 和 <sub>下标</sub>。按 <kbd>Ctrl</kbd> + <kbd>C</kbd> 复制，<u>原生下划线</u>，==高亮==。\n\n行内公式 $a^2 + b^2 = c^2$，价格 $5 和 $10 不是公式。\n\n$$\n\\int_0^1 x^2 \\, dx = \\frac{1}{3}\n$$\n\n### 三级标题\n\n这里有一个脚注[^dev-note]，还有一个[^2]。\n\n#### 四级标题\n\n##### 五级标题\n\n###### 六级标题\n\n```python\ndef fib(n: int) -> int:\n    """斐波那契"""\n    if n < 2:\n        return n\n    return fib(n - 1) + fib(n - 2)  # 递归\n\nprint([fib(i) for i in range(10)])\n```\n\n```js\nconst greet = (name) => `hello ${name}`;\nconsole.log(greet("world"), 42, true);\n```\n\n| 名称 | 说明 |\n| --- | --- |\n| 短的 | 普通文字 |\n| 长代码 | `aVeryLongInlineCodeIdentifier_that_keeps_going_and_going_without_any_spaces_until_it_overflows_the_cell_boundary_0123456789` 后面的文字 |\n\n- 列表一\n- 列表二\n  1. 有序\n  2. 有序二\n- [ ] 待办\n- [x] 完成\n\n> 引用的文字\n\n[^dev-note]: 这是开发备注的脚注内容。\n[^2]: 第二个脚注。\n'
+NOTES=os.path.join(HOME,'notes')
+RICH='.fx-notes-rich .ProseMirror'
+def note_file(name): return open(os.path.join(NOTES,name),encoding='utf-8').read()
+def count_of(sel, win=None): return ejs('document.querySelectorAll(%s).length' % json.dumps(sel), win)
+def pm_append(text, win=None):
+    """在正文末尾加一段字：直接调编辑器实例。"""
+    return ejs('(()=>{const v=document.querySelector(".fx-notes-rich").__pm;v.dispatch(v.state.tr.insertText(%s, v.state.doc.content.size-1));return 1})()' % json.dumps(text), win)
+ejs('pocket.fs.createFile("notes","","另一篇.md",%s)' % json.dumps('# 另一篇\n\n这是被链接到的笔记。\n')); wait(0.2)
+ejs('pocket.fs.createFile("notes","","语法测试.md",%s)' % json.dumps(SAMPLE)); wait(0.6)
+check('别处新建的笔记自动出现在列表里', '语法测试' in etexts('.fx-side-name') and '另一篇' in etexts('.fx-side-name'), etexts('.fx-side-name'))
+eclick_text('.fx-side-name', '语法测试'); wait(0.5)
+check('打开语法测试笔记', ewait_for('!!document.querySelector(%s+" h6")' % json.dumps(RICH), 10), etext_of('.fx-notes-rich')[:80])
+wait(1.0)
+size=lambda tag: float(ejs('parseFloat(getComputedStyle(document.querySelector(%s)).fontSize)' % json.dumps(RICH+' '+tag)))
+sizes=[size('h%d' % i) for i in range(1,7)]
+check('标题一级到六级逐级变小', all(sizes[i]>sizes[i+1] for i in range(5)), sizes)
+check('一、二级标题带分割线', all(ejs('getComputedStyle(document.querySelector(%s)).borderBottomStyle' % json.dumps(RICH+' '+t))=='solid' for t in ('h1','h2')))
+check('编辑区是文字光标', ejs('getComputedStyle(document.querySelector(%s)).cursor' % json.dumps(RICH+' p'))=='text')
+check('默认不做拼写检查', ejs('document.querySelector(%s).getAttribute("spellcheck")' % json.dumps(RICH))=='false')
+check('上标和下标（^x^、~x~、<sup>、<sub>）', count_of(RICH+' sup.md-sup')==2 and count_of(RICH+' sub.md-sub')==2)
+check('<kbd>、<u>、==高亮==', count_of(RICH+' kbd')==2 and count_of(RICH+' u')==1 and count_of(RICH+' mark')==1)
+check('行内公式渲染出来，价格里的 $ 不算', count_of(RICH+' span[data-type=math_inline] .katex')==1, count_of(RICH+' span[data-type=math_inline]'))
+check('块级公式有预览', (count_of('.fx-notes-rich .milkdown-code-block .preview .katex') or 0)>=1)
+check('脚注：角标和定义', count_of(RICH+' sup[data-type=footnote_reference]')==2 and count_of(RICH+' dl[data-type=footnote_definition]')==2)
+toc=etexts(RICH+' .md-toc .md-toc-item'); check('[TOC] 生成目录', toc[:3]==['一级标题','二级标题','三级标题'] and len(toc)==6, toc)
+check('frontmatter 单独收起来，不混进正文', etext_of('.fx-notes-front-keys')=='title、tags' and 'tags:' not in etext_of(RICH), etext_of('.fx-notes-front'))
+fit=ejs('(()=>{const c=[...document.querySelectorAll(%s)].find(e=>e.innerText.includes("aVeryLong"));const td=c.closest("td");const a=c.getBoundingClientRect(),b=td.getBoundingClientRect();return a.right<=b.right+1&&a.height>30})()' % json.dumps(RICH+' td code'))
+check('表格里的长行内代码在格子里折行，不溢出', fit is True, fit)
+shot('feature-notes')
+ejs('document.querySelector(".fx-notes-rich").scrollTop=880;1'); wait(0.5)
+# 代码块滚到看得见的地方才渲染
+check('代码块按语言高亮', ewait_for('document.querySelectorAll(".fx-notes-rich .milkdown-code-block .cm-content span[class]").length>20', 6), count_of('.fx-notes-rich .milkdown-code-block .cm-content span[class]'))
+shot('feature-notes-code')
+ejs('document.querySelector(".fx-notes-rich").scrollTop=0;1'); wait(0.2)
+
+# 改一个字，看存回去的文件有没有保持原来的写法
+pm_append('完'); wait(1.5)
+saved=note_file('语法测试.md')
+keep=['---\ntitle: 语法测试','\n[TOC]\n','H~2~O','mc^2^','<sup>上标</sup>','<kbd>Ctrl</kbd>','<u>原生下划线</u>','==高亮==','$a^2 + b^2 = c^2$','$$\n\\int_0^1','[^dev-note]: 这是','\n- 列表一','```python']
+missing=[k for k in keep if k not in saved]
+check('保存时保持原来的写法（frontmatter、[TOC]、上下标、公式、脚注……）', not missing and saved.rstrip().endswith('完'), missing or saved[-40:])
+
+# 块手柄：鼠标移到一段上出现，点一下打开菜单
+ejs('(()=>{const p=[...document.querySelectorAll(%s)].find(e=>e.innerText.startsWith("正文里有"));const r=p.getBoundingClientRect();p.dispatchEvent(new PointerEvent("pointermove",{bubbles:true,clientX:r.left+40,clientY:r.top+r.height/2}));return 1})()' % json.dumps(RICH+' > p')); wait(0.6)
+check('鼠标移到一段文字上，左边出现块手柄', ejs('document.querySelector(".milkdown-block-handle")?.dataset.show')=='true', ejs('document.querySelector(".milkdown-block-handle")?.outerHTML.slice(0,120)'))
+ejs('document.querySelector(".milkdown-block-handle .operation-item:last-child").dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true}));1'); wait(0.4)
+items=etexts('.fx-block-menu .fx-menu-item'); check('点块手柄弹出块菜单', '标题 3' in items and '删除' in items and '复制一份' in items, items)
+check('菜单里标出当前类型', etexts('.fx-block-menu .fx-menu-item.is-current')==['正文'], etexts('.fx-block-menu .fx-menu-item.is-current'))
+shot('feature-notes-blockmenu')
+eclick_text('.fx-block-menu .fx-menu-item', '引用'); wait(0.5)
+check('块菜单：转换成引用', ejs('!![...document.querySelectorAll(%s)].find(e=>e.innerText.startsWith("正文里有"))' % json.dumps(RICH+' > blockquote')) and count_of('.fx-block-menu')==0)
+
+# 右上角的“更多”：打开方式、另存为、拼写检查、代码配色
+eclick('.fx-notes-more > .ui-btn'); wait(0.3)
+items=etexts('.fx-notes-more .fx-menu-item'); check('更多菜单：用其他应用打开、另存为', '用其他应用打开…' in items and '另存为…' in items and '拼写检查' in items, items)
+eclick_text('.fx-notes-more .fx-menu-item', '拼写检查'); wait(0.3)
+check('拼写检查可以打开', ejs('document.querySelector(%s).getAttribute("spellcheck")' % json.dumps(RICH))=='true')
+eclick_text('.fx-notes-more .fx-menu-item', '拼写检查'); wait(0.2)
+eclick_text('.fx-notes-more .fx-menu-item', 'One Dark'); wait(0.4)
+bg=ejs('getComputedStyle(document.querySelector(".fx-notes-rich .milkdown-code-block")).backgroundColor')
+check('代码块配色可以换', bg=='rgb(40, 44, 52)', bg)
+ejs('document.dispatchEvent(new MouseEvent("mousedown",{bubbles:true}));1'); wait(0.2)
+check('点菜单外面关闭菜单', count_of('.fx-notes-more .fx-menu')==0)
+ejs('document.querySelector(".fx-notes-rich").scrollTop=880;1'); wait(0.5); shot('feature-notes-theme')
+eclick('.fx-notes-more > .ui-btn'); wait(0.2); eclick_text('.fx-notes-more .fx-menu-item', '跟随界面'); ejs('document.dispatchEvent(new MouseEvent("mousedown",{bubbles:true}));1'); wait(0.2)
+solid=ejs('(()=>{const c=getComputedStyle(document.querySelector(".fx-notes-body")).getPropertyValue("--note-float").trim();return c})()')
+check('弹出面板的底色不透明', solid in ('#fff','#ffffff','#2d3038'), solid)
+
+# 按钮的提示：鼠标放上去就出来（自己画的，不靠系统的 title）
+ejs('document.querySelector(".fx-notes-more > .ui-btn").dispatchEvent(new MouseEvent("mouseover",{bubbles:true}));1'); wait(0.6)
+check('扩展页面里：鼠标放到按钮上显示提示', '另存为' in etext_of('.ui-tip'), etext_of('.ui-tip'))
+ejs('document.querySelector(".fx-notes-more > .ui-btn").dispatchEvent(new MouseEvent("mouseout",{bubbles:true}));1'); wait(0.2)
+check('移开后提示消失', count_of('.ui-tip')==0)
+js('document.querySelector(".pk-view-head [title], .pk-header [title]").dispatchEvent(new MouseEvent("mouseover",{bubbles:true}));1'); wait(0.6)
+check('主窗口右上角的按钮：鼠标放上去显示提示', js('!!document.querySelector(".ui-tip.is-shown") && document.querySelector(".ui-tip").innerText.length>0'), js('[...document.querySelectorAll("[title],[data-tip]")].slice(0,6).map(e=>e.className)'))
+js('document.dispatchEvent(new MouseEvent("mousedown",{bubbles:true}));1'); wait(0.2)
+
+# ⌘ / Ctrl + 点击链接：指向另一篇笔记的就在这里打开
+ejs('(()=>{const a=[...document.querySelectorAll(%s)].find(e=>e.innerText==="另一篇");a.dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true,metaKey:true}));return 1})()' % json.dumps(RICH+' a')); wait(0.9)
+check('⌘ + 点击指向另一篇笔记的链接：打开那一篇', ejs('document.querySelector(".fx-notes-title").value')=='另一篇')
+eclick_text('.fx-side-name', '语法测试'); wait(0.8)
+
+# 同一篇笔记同时开在主窗口和独立窗口里
+files_before=sorted(os.listdir(NOTES))
+press('d', metaKey=True); wait(1.6)
+dw=window_by('plugin=editors') or window_by('feature.html')
+check('分离成独立窗口', dw is not None, [x.get('url') for x in windows()])
+if dw:
+    check('独立窗口里打开的是同一篇，没有多出新文件', ewait_for('document.querySelector(".fx-notes-title")?.value==="语法测试"', 8, dw['id']) and sorted(os.listdir(NOTES))==files_before, sorted(os.listdir(NOTES)))
+    show(); open_tool('md', '!!document.querySelector(".fx-notes-rich .ProseMirror h6")'); wait(0.6)
+    check('主窗口里再打开笔记，也是同一篇', ejs('document.querySelector(".fx-notes-title").value')=='语法测试' and sorted(os.listdir(NOTES))==files_before, sorted(os.listdir(NOTES)))
+    pm_append(' 主窗口写的'); wait(1.8)
+    check('主窗口里改了，独立窗口跟着变', ewait_for('document.querySelector(%s).innerText.includes("主窗口写的")' % json.dumps(RICH), 5, dw['id']), ejs('document.querySelector(%s).innerText.slice(-40)' % json.dumps(RICH), dw['id']))
+    pm_append(' 独立窗口写的', dw['id']); wait(1.8)
+    check('独立窗口里改了，主窗口跟着变', ewait_for('document.querySelector(%s).innerText.includes("独立窗口写的")' % json.dumps(RICH), 5))
+    tail=note_file('语法测试.md').rstrip()[-30:]
+    check('两边的修改都在文件里', '主窗口写的' in tail and '独立窗口写的' in tail and sorted(os.listdir(NOTES))==files_before, tail)
+    ejs('pocket.fs.rename("notes","语法测试.md","语法大全.md")', dw['id']); wait(0.8)
+    check('一边改名，另一边跟着改', ejs('document.querySelector(".fx-notes-title").value')=='语法大全' and '语法大全' in etexts('.fx-side-name'), etexts('.fx-side-name'))
+    js('setTimeout(()=>mygo.call("Windows.Control","close",0),30);1', dw['id']); wait(0.9)
+    check('关掉独立窗口后没有多出文件', sorted(os.listdir(NOTES))==sorted([f if f!='语法测试.md' else '语法大全.md' for f in files_before]), sorted(os.listdir(NOTES)))
+
+# 带着一段文字进来存成笔记：同一段内容不会存两遍
+show(); press('Escape'); wait(0.3)
+n0=len(os.listdir(NOTES))
+typed('md 随手记一句'); press('Enter'); wait(0.8)
+check('md 加一段文字：存成一篇新笔记', wait_for('!!window.__pluginEval', 5) and ewait_for('(document.querySelector(%s)?.innerText||"").includes("随手记一句")' % json.dumps(RICH), 10) and len(os.listdir(NOTES))==n0+1, sorted(os.listdir(NOTES)))
+press('Escape'); wait(0.4)
+typed('md 随手记一句'); press('Enter'); wait(0.8)
+check('同一段文字再带进来一次：打开刚才那篇，不重复新建', wait_for('!!window.__pluginEval', 5) and ewait_for('(document.querySelector(%s)?.innerText||"").includes("随手记一句")' % json.dumps(RICH), 10) and len(os.listdir(NOTES))==n0+1, sorted(os.listdir(NOTES)))
 press('Escape'); wait(0.3)
 
 # --- 文本对比

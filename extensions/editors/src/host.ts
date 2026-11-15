@@ -41,6 +41,18 @@ function onlyMarkdown(nodes: Node[]): Node[] {
     .map((n) => (n.isDir ? { ...n, children: onlyMarkdown(n.children ?? []) } : n));
 }
 
+/** 别的页面（同一个扩展的另一个窗口）改了文件。 */
+export interface FsChange {
+  root: string;
+  op: "write" | "create" | "rename" | "delete";
+  path: string;
+  /** 改名或移动之后的新路径。 */
+  to?: string;
+}
+
+/** 用系统浏览器（或对应的应用）打开一个地址。 */
+export const openExternal = (url: string) => pocket.openExternal(url);
+
 const NOTES = "notes";
 
 /** 笔记：用户目录 notes 里的 .md 文件。 */
@@ -59,6 +71,8 @@ export const Notes = {
   open: (path: string) => pocket.fs.open(NOTES, path),
   openWith: (path: string) => pocket.fs.openWith(NOTES, path),
   saveAs: (name: string, content: string) => pocket.fs.saveAs(name, content),
+  /** 笔记目录里的文件有变化（包括自己这个页面引起的）。 */
+  onChange: (fn: (change: FsChange) => void) => pocket.on("fs", ((change: FsChange) => void (change.root === NOTES && fn(change))) as (data: never) => void),
 };
 
 const SCRATCHES = "scratches";

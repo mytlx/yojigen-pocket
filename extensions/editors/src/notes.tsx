@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { EditorView } from "@codemirror/view";
-import { Bold, ChevronDown, ChevronRight, Clock, Code, Copy, FileText, Folder, FolderOpen, FolderPlus, Heading, Italic, Link, List, ListChecks, Pencil, Plus, Quote, Search, Table, Trash2 } from "lucide-preact";
-import { Notes, type FeatureProps, type Node } from "./host";
-import { CodeEditor } from "./code/editor";
+import { Bold, Check, ChevronDown, ChevronRight, Clock, Code, Copy, ExternalLink, FileOutput, FileText, Folder, FolderOpen, FolderPlus, Heading, Italic, Link, List, ListChecks, MoreHorizontal, Palette, Pencil, Plus, Quote, Search, SpellCheck, SquareArrowOutUpRight, Table, Trash2 } from "lucide-preact";
+import { Notes, openExternal, type FeatureProps, type FsChange, type Node } from "./host";
+import { CodeEditor, linkOpener } from "./code/editor";
 import { Btn, Empty, Seg } from "../../../src/features/ui";
+import { frontSummary, joinFrontmatter, splitFrontmatter } from "./notes/frontmatter";
+import { RichEditor } from "./notes/rich";
+import "./notes/notes.css";
 
 type Mode = "rich" | "source";
 
@@ -32,45 +35,36 @@ function stamp() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-/** 所见即所得的编辑器（Milkdown）。打开笔记时才加载，换一篇就重建。 */
-function RichEditor({ value, onChange }: { value: string; onChange: (md: string) => void }) {
-  const host = useRef<HTMLDivElement>(null);
-  const latest = useRef(onChange);
-  latest.current = onChange;
-  const [failed, setFailed] = useState("");
-  useEffect(() => {
-    let alive = true;
-    let destroy: (() => void) | undefined;
-    void (async () => {
-      try {
-        const [{ Crepe }] = await Promise.all([import("@milkdown/crepe"), import("@milkdown/crepe/theme/common/style.css"), import("@milkdown/crepe/theme/frame.css")]);
-        if (!alive || !host.current) return;
-        const crepe = new Crepe({
-          root: host.current,
-          defaultValue: value,
-          features: {
-            [Crepe.Feature.Latex]: false,
-            [Crepe.Feature.AI]: false,
-            [Crepe.Feature.ImageBlock]: false,
-            [Crepe.Feature.TopBar]: false,
-          },
-          featureConfigs: { [Crepe.Feature.Placeholder]: { text: "写点什么…  输入 / 插入标题、列表、表格、代码块" } },
-        });
-        crepe.on((l) => l.markdownUpdated((_ctx, md) => latest.current(md)));
-        await crepe.create();
-        destroy = () => void crepe.destroy();
-        if (!alive) destroy();
-      } catch (e) {
-        if (alive) setFailed((e as Error).message || "编辑器加载失败");
-      }
-    })();
-    return () => {
-      alive = false;
-      destroy?.();
-    };
-  }, []);
-  if (failed) return <div class="pk-empty">所见即所得编辑器加载失败（{failed}），可以先切到源码模式。</div>;
-  return <div class="fx-notes-rich" ref={host} />;
+/** 代码块的配色方案。具体颜色在 notes.css 里，这里只是名字。 */
+const codeThemes = [
+  { id: "auto", label: "跟随界面" },
+  { id: "github-light", label: "GitHub 浅色" },
+  { id: "github-dark", label: "GitHub 深色" },
+  { id: "one-dark", label: "One Dark" },
+  { id: "solarized-light", label: "Solarized 浅色" },
+  { id: "monokai", label: "Monokai" },
+] as const;
+
+interface Prefs {
+  /** 拼写检查（单词下面的红色波浪线）。默认关。 */
+  spell: boolean;
+  codeTheme: string;
+}
+const prefsKey = "pocket.notes.prefs";
+const loadPrefs = (): Prefs => {
+  const base: Prefs = { spell: false, codeTheme: "auto" };
+  try {
+    return { ...base, ...(JSON.parse(localStorage.getItem(prefsKey) ?? "{}") as Partial<Prefs>) };
+  } catch {
+    return base;
+  }
+};
+
+/** 一段文字的指纹：判断“这段内容是不是刚才已经存成笔记了”。 */
+function fingerprint(text: string) {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  return `${text.length}:${h}`;
 }
 
 /** Markdown 笔记：左边是文件夹和笔记，右边编辑。笔记就是用户目录 notes 里的 .md 文件。 */
@@ -96,10 +90,27 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [cursor, setCursor] = useState({ line: 1, col: 1, selected: 0 });
   const [loaded, setLoaded] = useState(false);
+  const [prefs, setPrefs] = useState(loadPrefs);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [frontOpen, setFrontOpen] = useState(false);
+  const richScroll = useRef(0); // 所见即所得编辑器重建后要恢复到的滚动位置
+  const body = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>();
-  const state = useRef({ path, content, dirty });
-  state.current = { path, content, dirty };
+  const state = useRef({ path, content, dirty, mode });
+  state.current = { path, content, dirty, mode };
+
+  const updatePrefs = (patch: Partial<Prefs>) => {
+    setPrefs((p) => {
+      const next = { ...p, ...patch };
+      try {
+        localStorage.setItem(prefsKey, JSON.stringify(next));
+      } catch {
+        /* 存不了就只在这次生效 */
+      }
+      return next;
+    });
+  };
 
   const all = useMemo(() => flatten(tree), [tree]);
   const refresh = () => Notes.tree().then((t) => setTree(t ?? []));
@@ -122,9 +133,11 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       setPath(p);
       setContent(text);
       setTitle(stem(p.slice(p.lastIndexOf("/") + 1)));
+      richScroll.current = 0;
       setNonce((n) => n + 1);
       setDirty(false);
       setSaved("");
+      setFrontOpen(false);
       // 把它所在的文件夹都展开。
       setOpen((o) => {
         const next = { ...o };
@@ -168,6 +181,34 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     }
   };
 
+  /**
+   * 带着一段内容进来（选中文字后“存成笔记”、关键词后面跟着内容）：存成一篇新笔记。
+   * 同一段内容可能被带进来不止一次（面板重新打开、分离成独立窗口），已经存过就打开那一篇，不再新建。
+   */
+  const importText = async (text: string, files: Node[]) => {
+    const key = "pocket.notes.imported";
+    const sig = fingerprint(text);
+    try {
+      const prev = JSON.parse(localStorage.getItem(key) ?? "null") as { sig: string; path: string } | null;
+      if (prev?.sig === sig && files.some((f) => f.path === prev.path)) return void openNote(prev.path);
+    } catch {
+      /* 记录坏了就当没存过 */
+    }
+    try {
+      const p = await Notes.newNote("");
+      await Notes.write(p, text);
+      try {
+        localStorage.setItem(key, JSON.stringify({ sig, path: p }));
+      } catch {
+        /* 忽略 */
+      }
+      await refresh();
+      await openNote(p);
+    } catch (e) {
+      fail(e as Error);
+    }
+  };
+
   useEffect(() => {
     void Notes.tree().then((t) => {
       const list = t ?? [];
@@ -180,13 +221,69 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       } catch {
         /* 忽略 */
       }
-      if (input.trim()) void newNote("", input);
+      if (input.trim()) void importText(input, files);
       else {
         const first = files.find((f) => f.path === last) ?? [...files].sort((a, b) => b.modified - a.modified)[0];
         if (first) void openNote(first.path);
       }
     });
-    return () => void flush();
+    // 分离成独立窗口时带过去的是“输入”。笔记不需要带内容：那边会打开同一篇（最近打开的那篇）。
+    ctx.remember("");
+    // 页面要没了（面板关掉、分离出去）：把还没存的赶紧存上。
+    const leave = () => void flush();
+    window.addEventListener("pagehide", leave);
+    return () => {
+      window.removeEventListener("pagehide", leave);
+      void flush();
+    };
+  }, []);
+
+  // 窗口开着的时候又带着内容被叫到。
+  const firstInput = useRef(true);
+  useEffect(() => {
+    if (firstInput.current) {
+      firstInput.current = false;
+      return;
+    }
+    if (input.trim()) void importText(input, all.filter((n) => !n.isDir));
+  }, [input]);
+
+  // 同一篇笔记可能同时开在主窗口和独立窗口里。别处改了文件，这边跟着变，不会各改各的。
+  useEffect(() => {
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    const off = Notes.onChange((ev: FsChange) => {
+      const s = state.current;
+      if (ev.op === "write") {
+        if (ev.path !== s.path || s.dirty) return;
+        void Notes.read(ev.path).then((text) => {
+          const now = state.current;
+          // 自己刚存的（内容一样）不用管；这边正在改的以这边为准。
+          if (now.path !== ev.path || now.dirty || text === now.content) return;
+          richScroll.current = body.current?.querySelector(".fx-notes-rich")?.scrollTop ?? 0;
+          setContent(text);
+          setNonce((n) => n + 1);
+        }, () => undefined);
+        return;
+      }
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => void refresh(), 120);
+      const inside = s.path === ev.path || s.path.startsWith(ev.path + "/");
+      if (!inside) return;
+      if (ev.op === "rename" && ev.to) {
+        const np = s.path === ev.path ? ev.to : ev.to + s.path.slice(ev.path.length);
+        setPath(np);
+        setTitle(stem(np.slice(np.lastIndexOf("/") + 1)));
+      } else if (ev.op === "delete") {
+        clearTimeout(timer.current);
+        setPath("");
+        setContent("");
+        setDirty(false);
+      }
+    });
+    return () => {
+      clearTimeout(refreshTimer);
+      off();
+    };
   }, []);
 
   const edit = (text: string) => {
@@ -196,7 +293,6 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => void flush(), 600);
   };
-  useEffect(() => ctx.remember(content), [content]);
 
   const switchMode = (m: Mode) => {
     setMode(m);
@@ -289,6 +385,65 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       setNonce((n) => n + 1);
     }
   };
+
+  /** Ctrl / ⌘ + 点击链接：网址用系统浏览器打开；指向另一篇笔记的相对路径就在这里打开那一篇。 */
+  const openLink = (href: string) => {
+    const target = href.trim();
+    if (!target) return;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(target)) return void openExternal(target).catch(fail);
+    if (/^www\./i.test(target)) return void openExternal(`https://${target}`).catch(fail);
+    if (target.startsWith("#")) return ctx.toast("这是页内链接");
+    let rel = target.split("#")[0]!.split("?")[0]!;
+    try {
+      rel = decodeURIComponent(rel);
+    } catch {
+      /* 不是合法的转义就按原样找 */
+    }
+    const parts = (rel.startsWith("/") ? rel.slice(1) : `${dirOf(path)}/${rel}`).split("/");
+    const out: string[] = [];
+    for (const p of parts) {
+      if (p === "..") out.pop();
+      else if (p && p !== ".") out.push(p);
+    }
+    const want = out.join("/");
+    const hit = all.find((n) => !n.isDir && (n.path === want || n.path === `${want}.md`));
+    if (hit) void openNote(hit.path);
+    else ctx.toast(`找不到笔记：${rel}`, true);
+  };
+
+  const saveAs = async () => {
+    setMenuOpen(false);
+    try {
+      const target = await Notes.saveAs(`${title || "笔记"}.md`, content);
+      if (target) ctx.toast(`已另存为 ${target}`);
+    } catch (e) {
+      fail(e as Error);
+    }
+  };
+  const openOutside = (how: "open" | "openWith" | "reveal") => {
+    setMenuOpen(false);
+    void flush()
+      .then(() => Notes[how](path))
+      .catch(fail);
+  };
+
+  // 点菜单外面关掉菜单。
+  useEffect(() => {
+    if (!menuOpen) return;
+    const away = (e: MouseEvent) => {
+      if (!(e.target as Element).closest?.(".fx-notes-more")) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", away, true);
+    return () => document.removeEventListener("mousedown", away, true);
+  }, [menuOpen]);
+
+  // 所见即所得模式下，frontmatter 摘出来单独编辑，编辑器只管正文。
+  const split = useMemo(() => splitFrontmatter(content), [content]);
+  const front = useRef(split.front);
+  front.current = split.front;
+  const openLinkRef = useRef(openLink);
+  openLinkRef.current = openLink;
+  const sourceExtensions = useMemo(() => [linkOpener((href) => openLinkRef.current(href))], []);
 
   const stats = useMemo(() => count(content), [content]);
   const q = filter.trim().toLowerCase();
@@ -445,9 +600,48 @@ export function NotesTool({ input, ctx }: FeatureProps) {
             <Btn small ghost icon title="复制全文（Markdown）" onClick={() => void ctx.copy(content)}>
               <Copy size={14} />
             </Btn>
-            <Btn small ghost icon title="在文件夹中显示" onClick={() => void flush().then(() => Notes.reveal(path))}>
-              <FolderOpen size={14} />
-            </Btn>
+            <div class="fx-notes-more">
+              <Btn small ghost icon title="更多：用其他应用打开、另存为、设置" onClick={() => setMenuOpen((o) => !o)}>
+                <MoreHorizontal size={14} />
+              </Btn>
+              {menuOpen && (
+                <div class="fx-menu" role="menu">
+                  <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("open")}>
+                    <ExternalLink size={14} />
+                    <span>用默认应用打开</span>
+                  </button>
+                  <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("openWith")}>
+                    <SquareArrowOutUpRight size={14} />
+                    <span>用其他应用打开…</span>
+                  </button>
+                  <button type="button" role="menuitem" class="fx-menu-item" onClick={() => void saveAs()}>
+                    <FileOutput size={14} />
+                    <span>另存为…</span>
+                  </button>
+                  <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("reveal")}>
+                    <FolderOpen size={14} />
+                    <span>在文件夹中显示</span>
+                  </button>
+                  <div class="fx-menu-sep" />
+                  <button type="button" role="menuitemcheckbox" aria-checked={prefs.spell} class="fx-menu-item" onClick={() => updatePrefs({ spell: !prefs.spell })}>
+                    <SpellCheck size={14} />
+                    <span>拼写检查</span>
+                    {prefs.spell && <Check size={12} class="fx-menu-check" />}
+                  </button>
+                  <div class="fx-menu-sep" />
+                  <div class="fx-menu-label">
+                    <Palette size={12} /> 代码块配色
+                  </div>
+                  {codeThemes.map((t) => (
+                    <button key={t.id} type="button" role="menuitemradio" aria-checked={prefs.codeTheme === t.id} class="fx-menu-item" onClick={() => updatePrefs({ codeTheme: t.id })}>
+                      <span class={`fx-code-swatch is-${t.id}`} />
+                      <span>{t.label}</span>
+                      {prefs.codeTheme === t.id && <Check size={12} class="fx-menu-check" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <Seg value={mode} options={[{ value: "rich", label: "所见即所得" }, { value: "source", label: "源码" }]} onChange={switchMode} />
           </div>
           {mode === "source" && (
@@ -463,11 +657,37 @@ export function NotesTool({ input, ctx }: FeatureProps) {
               <Btn small ghost icon title="表格" onClick={() => insert("| 列一 | 列二 |\n| --- | --- |\n|  |  |\n")}><Table size={14} /></Btn>
             </div>
           )}
-          <div class="fx-out fx-notes-body">
+          {mode === "rich" && split.front !== null && (
+            <div class={`fx-notes-front${frontOpen ? " is-open" : ""}`}>
+              <button type="button" class="fx-notes-front-head" title="文档开头 --- 之间的属性（frontmatter）" onClick={() => setFrontOpen((o) => !o)}>
+                {frontOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                <span class="fx-notes-front-label">文档属性</span>
+                {!frontOpen && <span class="fx-notes-front-keys">{frontSummary(split.front)}</span>}
+              </button>
+              {frontOpen && (
+                <textarea
+                  class="fx-notes-front-text"
+                  spellcheck={false}
+                  rows={Math.min(10, Math.max(2, split.front.split("\n").length))}
+                  value={split.front}
+                  onInput={(e) => edit(joinFrontmatter((e.target as HTMLTextAreaElement).value, split.body))}
+                />
+              )}
+            </div>
+          )}
+          <div class="fx-out fx-notes-body" ref={body} data-code-theme={prefs.codeTheme}>
             {mode === "rich" ? (
-              <RichEditor key={`${path}#${nonce}`} value={content} onChange={edit} />
+              <RichEditor
+                key={`${path}#${nonce}`}
+                value={split.body}
+                onChange={(md) => edit(joinFrontmatter(front.current, md))}
+                spellcheck={prefs.spell}
+                onOpenLink={openLink}
+                onToast={ctx.toast}
+                scrollTop={richScroll.current}
+              />
             ) : (
-              <CodeEditor key={path} value={content} lang="markdown" wrap onChange={edit} onReady={(v) => (view.current = v)} onCursor={setCursor} autoFocus />
+              <CodeEditor key={path} value={content} lang="markdown" wrap onChange={edit} onReady={(v) => (view.current = v)} onCursor={setCursor} autoFocus extensions={sourceExtensions} />
             )}
           </div>
           <div class="fx-meta fx-notes-status">

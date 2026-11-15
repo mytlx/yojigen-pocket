@@ -111,6 +111,7 @@ plugins/hello/
 | `pocket.ui.toast / copy / close / detach / remember` | 提示、复制、关闭、分离成独立窗口、记下要带到独立窗口的内容 |
 | `pocket.storage.get / set` | 按扩展隔离的键值存储 |
 | `pocket.fs.*` | `tree read write createFile createFolder rename move delete reveal open openWith pick saveAs`。第一个参数是根目录：空字符串是扩展的私有目录，其余必须在 `permissions.dirs` 里。`delete` 是移到废纸篓 |
+| `pocket.on("fs", fn)` | 这个扩展的任何一个页面改了文件时收到 `{ root, op, path, to }`（`op` 是 `write` `create` `rename` `delete`）。同一个工具同时开在主窗口和独立窗口里时，靠它保持两边一致 |
 | `pocket.fetch(url, options)` | 由宿主代发请求，不受跨域限制，只能访问 `permissions.fetch` 里的主机 |
 | `pocket.runner.languages / format / run / stop` | 代码草稿用的那一套运行环境 |
 | `pocket.window.*` | 悬浮窗专用：`info move ground resize dragStart dragMove setAlwaysOnTop close` |

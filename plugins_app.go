@@ -277,23 +277,35 @@ func (h *pluginHost) fs(ctx context.Context, m providers.Manifest, id, name stri
 	if err != nil {
 		return nil, err
 	}
+	// 同一个扩展可能同时开着几个页面（主窗口里一个、独立窗口里一个），
+	// 文件变了就广播一声，其他页面跟着刷新，不会各改各的。
+	changed := func(op, path, to string, err error) error {
+		if err == nil {
+			_ = PluginEvent.Broadcast(PluginEventData{Plugin: id, Name: "fs", Data: map[string]any{"root": args.str(0), "op": op, "path": path, "to": to}})
+		}
+		return err
+	}
 	switch name {
 	case "tree":
 		return s.Tree()
 	case "read":
 		return s.Read(args.str(1))
 	case "write":
-		return nil, s.Write(args.str(1), args.str(2))
+		return nil, changed("write", args.str(1), "", s.Write(args.str(1), args.str(2)))
 	case "createFile":
-		return s.CreateFile(args.str(1), args.str(2), args.str(3))
+		p, err := s.CreateFile(args.str(1), args.str(2), args.str(3))
+		return p, changed("create", p, "", err)
 	case "createFolder":
-		return s.CreateFolder(args.str(1), args.str(2))
+		p, err := s.CreateFolder(args.str(1), args.str(2))
+		return p, changed("create", p, "", err)
 	case "rename":
-		return s.Rename(args.str(1), args.str(2))
+		p, err := s.Rename(args.str(1), args.str(2))
+		return p, changed("rename", args.str(1), p, err)
 	case "move":
-		return s.Move(args.str(1), args.str(2))
+		p, err := s.Move(args.str(1), args.str(2))
+		return p, changed("rename", args.str(1), p, err)
 	case "delete":
-		return nil, trash(s, args.str(1))
+		return nil, changed("delete", args.str(1), "", trash(s, args.str(1)))
 	case "reveal", "open", "openWith":
 		if strings.TrimSpace(args.str(1)) == "" {
 			if _, err := s.Tree(); err != nil { // 顺便保证目录存在

@@ -46,7 +46,7 @@ export const pocketHighlight = syntaxHighlighting(
     { tag: [t.typeName, t.className, t.namespace, t.standard(t.typeName)], color: "var(--cm-type)" },
     { tag: [t.propertyName, t.attributeName], color: "var(--cm-property)" },
     { tag: [t.tagName, t.angleBracket], color: "var(--cm-tag)" },
-    { tag: [t.variableName, t.self], color: "var(--text)" },
+    { tag: [t.variableName, t.self], color: "var(--code-text, var(--text))" },
     { tag: [t.operator, t.punctuation, t.bracket, t.separator], color: "var(--cm-punct)" },
     { tag: [t.meta, t.processingInstruction, t.annotation], color: "var(--cm-meta)" },
     { tag: t.heading, color: "var(--cm-keyword)", fontWeight: "700" },
@@ -61,6 +61,53 @@ export const pocketHighlight = syntaxHighlighting(
     { tag: [t.deleted], color: "var(--danger)" },
   ]),
 );
+
+/**
+ * 笔记里代码块的外观。颜色走 --code-* 变量，换配色方案只要换一组变量（见 notes.css）。
+ * 没有行号以外的装饰：代码块夹在正文里，越安静越好。
+ */
+export const noteCodeTheme = EditorView.theme({
+  "&": { fontSize: "12.5px", color: "var(--code-text, var(--text))", backgroundColor: "transparent" },
+  "&.cm-focused": { outline: "none" },
+  ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.65" },
+  ".cm-content": { caretColor: "var(--code-text, var(--text))", padding: "2px 0 4px" },
+  ".cm-gutters": { backgroundColor: "transparent", color: "var(--code-dim, var(--text-3))", border: "none" },
+  ".cm-lineNumbers .cm-gutterElement": { padding: "0 10px 0 2px", minWidth: "24px" },
+  ".cm-foldGutter": { display: "none" },
+  ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "transparent" },
+  "&.cm-focused .cm-activeLine": { backgroundColor: "var(--code-line, rgba(127, 127, 127, 0.08))" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--code-text, var(--text))" },
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+    backgroundColor: "var(--code-sel, rgba(var(--accent-rgb), 0.22))",
+  },
+  ".cm-selectionMatch": { backgroundColor: "var(--code-line, rgba(127, 127, 127, 0.12))" },
+  ".cm-matchingBracket, &.cm-focused .cm-matchingBracket": { backgroundColor: "var(--code-sel, rgba(var(--accent-rgb), 0.22))", outline: "none" },
+});
+
+/**
+ * Ctrl / ⌘ + 点击网址：交给 open 处理（用系统浏览器打开）。
+ * 认 Markdown 链接 [文字](地址) 里的地址，也认裸写的 http(s) 网址。
+ */
+export function linkOpener(open: (href: string) => void): Extension {
+  const pattern = /\]\(\s*<?([^)\s>]+)>?[^)]*\)|(https?:\/\/[^\s<>()\[\]"'`]+)/g;
+  return EditorView.domEventHandlers({
+    mousedown(e, view) {
+      if (!(e.metaKey || e.ctrlKey) || e.button !== 0) return false;
+      const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+      if (pos === null) return false;
+      const line = view.state.doc.lineAt(pos);
+      const at = pos - line.from;
+      for (const m of line.text.matchAll(pattern)) {
+        const start = m.index ?? 0;
+        if (at < start || at > start + m[0].length) continue;
+        e.preventDefault();
+        open(m[1] ?? m[2] ?? "");
+        return true;
+      }
+      return false;
+    },
+  });
+}
 
 /** 按语言 ID 加载高亮，装进一个可以随时替换的隔间里。 */
 export function loadLanguage(view: EditorView, compartment: Compartment, lang: string) {
@@ -86,6 +133,8 @@ export interface CodeEditorProps {
   onCursor?: (info: { line: number; col: number; selected: number }) => void;
   autoFocus?: boolean;
   class?: string;
+  /** 额外的编辑器扩展（只在创建时读一次）。 */
+  extensions?: Extension[];
 }
 
 /** 代码编辑器：行号、折叠、括号匹配、查找替换（⌘F / Ctrl+F）、多光标、自动缩进，按语言高亮。 */
@@ -120,6 +169,7 @@ export function CodeEditor(props: CodeEditorProps) {
       }),
     ];
     if (props.placeholder) extensions.push(placeholderExt(props.placeholder));
+    if (props.extensions) extensions.push(...props.extensions);
     const v = new EditorView({ parent: host.current, state: EditorState.create({ doc: props.value, extensions }) });
     view.current = v;
     // 把编辑器实例挂在它的 DOM 上：自动化测试靠它往里填内容（iframe 里没有焦点时浏览器的 insertText 不生效）。

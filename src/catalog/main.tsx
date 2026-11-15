@@ -13,6 +13,9 @@ import { applyAppearance, applyUserStyles, formatAccelerator } from "../shared/t
 import { Hotkey } from "../settings/ui";
 import { Toggle } from "../features/ui";
 import { ExtensionsPanel } from "./extensions";
+import { installTooltips } from "../shared/tooltip";
+
+installTooltips();
 
 const MANAGE = "扩展管理";
 
