@@ -1,16 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { Channel } from "mygo-runtime";
 import type { EditorView } from "@codemirror/view";
 import { toggleComment } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
 import { Copy, FolderOpen, MessageSquareCode, Play, Plus, Search, Sparkles, Square, Trash2, WrapText } from "lucide-preact";
-import { Scratch, type Event as RunEvent, type Node, type ScratchLang } from "../mygo";
-import { CodeEditor } from "../shared/code/editor";
-import { LangPicker } from "../shared/code/langpick";
-import { languages } from "../shared/code/languages";
-import { canFormatLocally, formatCode } from "../shared/code/format";
-import { Btn, Empty } from "./ui";
-import type { FeatureProps } from "./types";
+import { Scratch, type FeatureProps, type Node, type RunEvent, type ScratchLang } from "./host";
+import { CodeEditor } from "./code/editor";
+import { LangPicker } from "./code/langpick";
+import { languages } from "./code/languages";
+import { canFormatLocally, formatCode } from "./code/format";
+import { Btn, Empty } from "../../../src/features/ui";
 
 /** 新建草稿时放进去的几行，点一下运行就能看到结果。 */
 const templates: Record<string, string> = {
@@ -62,7 +60,6 @@ export function ScratchTool({ input, ctx }: FeatureProps) {
   const [renaming, setRenaming] = useState("");
   const [confirmDelete, setConfirmDelete] = useState("");
   const view = useRef<EditorView | null>(null);
-  const channel = useRef<Channel<RunEvent> | null>(null);
   const outBox = useRef<HTMLPreElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const state = useRef({ path, code });
@@ -101,7 +98,7 @@ export function ScratchTool({ input, ctx }: FeatureProps) {
   };
   const create = async (id: string, content?: string) => {
     try {
-      const p = await Scratch.new(id);
+      const p = await Scratch.new(langs.find((l) => l.id === id)?.ext ?? ".txt");
       const text = content ?? templates[id] ?? "";
       if (text) await Scratch.write(p, text);
       await refresh();
@@ -130,8 +127,7 @@ export function ScratchTool({ input, ctx }: FeatureProps) {
     });
     return () => {
       flush();
-      channel.current?.close();
-      void Scratch.stop();
+        void Scratch.stop();
     };
   }, []);
 
@@ -159,17 +155,14 @@ export function ScratchTool({ input, ctx }: FeatureProps) {
     }
     if (running) return true;
     flush();
-    channel.current?.close();
     setLines([]);
     setExit(null);
     setRunning(true);
-    const ch = new Channel<RunEvent>((ev) => {
+    Scratch.run({ lang, code, stdin: showStdin ? stdin : "", timeout: 0 }, (ev) => {
       if (ev.kind === "stdout" || ev.kind === "stderr") setLines((l) => [...l, { kind: ev.kind as "stdout" | "stderr", text: ev.text ?? "" }]);
       else if (ev.kind === "start") setLines((l) => [...l, { kind: "info", text: `▸ ${ev.text}\n` }]);
       else if (ev.kind === "exit") setExit(ev);
-    });
-    channel.current = ch;
-    Scratch.run({ lang, code, stdin: showStdin ? stdin : "", timeout: 0 }, ch)
+    })
       .catch((e: Error) => setLines((l) => [...l, { kind: "stderr", text: e.message + "\n" }]))
       .finally(() => setRunning(false));
     return true;

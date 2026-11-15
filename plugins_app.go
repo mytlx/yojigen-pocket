@@ -147,7 +147,11 @@ func (h *pluginHost) call(ctx context.Context, id, tool, method string, raw []an
 		if !m.Permissions.Runner {
 			return nil, errPermission
 		}
-		return (&Scratch{a: a}).Languages(), nil
+		var langs []map[string]string
+		for _, l := range runner.Langs() {
+			langs = append(langs, map[string]string{"id": l.ID, "name": l.Name, "ext": l.Ext, "tool": l.Tool(), "formatter": l.Formatter()})
+		}
+		return langs, nil
 	case "runner.format":
 		if !m.Permissions.Runner {
 			return nil, errPermission

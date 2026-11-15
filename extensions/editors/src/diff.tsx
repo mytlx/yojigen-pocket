@@ -5,12 +5,12 @@ import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
 import { MergeView, getChunks, goToNextChunk, goToPreviousChunk } from "@codemirror/merge";
-import { loadLanguage, pocketHighlight, pocketTheme } from "../shared/code/editor";
-import { LangPicker } from "../shared/code/langpick";
-import { guessLang } from "../shared/code/languages";
-import { formatCode } from "../shared/code/format";
-import { Btn } from "./ui";
-import type { FeatureProps } from "./types";
+import { loadLanguage, pocketHighlight, pocketTheme } from "./code/editor";
+import { LangPicker } from "./code/langpick";
+import { guessLang } from "./code/languages";
+import { formatCode } from "./code/format";
+import { Btn } from "../../../src/features/ui";
+import type { FeatureProps } from "./host";
 
 type Side = "a" | "b";
 
@@ -98,6 +98,7 @@ export function DiffTool({ input, ctx }: FeatureProps) {
       collapseUnchanged: collapsed ? { margin: 3, minSize: 4 } : undefined,
     });
     mv.current = view;
+    for (const side of [view.a, view.b]) (side.dom as unknown as { __cm: EditorView }).__cm = side;
     loadLanguage(view.a, c.langA, lang);
     loadLanguage(view.b, c.langB, lang);
     measure();

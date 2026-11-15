@@ -122,6 +122,8 @@ export function CodeEditor(props: CodeEditorProps) {
     if (props.placeholder) extensions.push(placeholderExt(props.placeholder));
     const v = new EditorView({ parent: host.current, state: EditorState.create({ doc: props.value, extensions }) });
     view.current = v;
+    // 把编辑器实例挂在它的 DOM 上：自动化测试靠它往里填内容（iframe 里没有焦点时浏览器的 insertText 不生效）。
+    (v.dom as unknown as { __cm: EditorView }).__cm = v;
     loadLanguage(v, c.lang, props.lang ?? "text");
     props.onReady?.(v);
     if (props.autoFocus) v.focus();

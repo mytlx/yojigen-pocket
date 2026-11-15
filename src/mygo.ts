@@ -293,15 +293,6 @@ export interface EdgeVoiceInfo {
   label: string;
 }
 
-export interface Event {
-  kind: string;
-  text?: string;
-  code: number;
-  millis?: number;
-  stopped?: boolean;
-  note?: string;
-}
-
 export interface ExecEvent {
   kind: string;
   view?: View;
@@ -517,15 +508,6 @@ export interface ModuleInfo {
   description: string;
 }
 
-export interface Node {
-  path: string;
-  name: string;
-  isDir: boolean;
-  size: number;
-  modified: number;
-  children?: Node[];
-}
-
 export interface OCRConfig {
   engine: string;
   language: string;
@@ -647,31 +629,11 @@ export interface Result {
   tSpeakUrl?: string;
 }
 
-/** RunRequest 是一次运行。 */
-export interface RunRequest {
-  lang: string;
-  code: string;
-  stdin: string;
-  /** 秒；0 用默认的 60 秒 */
-  timeout: number;
-}
-
 export interface Scope {
   id: string;
   title: string;
   icon?: string;
   placeholder?: string;
-}
-
-/** ScratchLang 是页面上可选的一种语言。 */
-export interface ScratchLang {
-  id: string;
-  name: string;
-  ext: string;
-  /** 用什么程序运行；空表示这台电脑上跑不了 */
-  tool?: string;
-  /** 后端用什么格式化；空表示后端格式化不了 */
-  formatter?: string;
 }
 
 export interface SelectionConfig {
@@ -1372,94 +1334,6 @@ export const Speech = {
   /** Voices 从微软拉取 Edge 的全部音色。 */
   voices(): Promise<EdgeVoiceInfo[]> {
     return call("Speech.Voices");
-  },
-} as const;
-
-/** Notes 是笔记页的服务。笔记是用户目录 notes 里的 .md 文件，可以用任何编辑器打开、同步。 */
-export const Notes = {
-  /** Delete 把笔记或文件夹移到废纸篓。 */
-  delete(p: string): Promise<void> {
-    return call("Notes.Delete", p);
-  },
-  /** Move 把笔记或文件夹移到另一个文件夹（dir 为空是最外层）。 */
-  move(p: string, dir: string): Promise<string> {
-    return call("Notes.Move", p, dir);
-  },
-  /** NewFolder 在 dir 里新建文件夹。 */
-  newFolder(dir: string): Promise<string> {
-    return call("Notes.NewFolder", dir);
-  },
-  /** NewNote 在 dir 里新建一篇笔记，名字带当天的日期（2026-11-14 笔记.md），重名时自动加序号。 */
-  newNote(dir: string): Promise<string> {
-    return call("Notes.NewNote", dir);
-  },
-  /** Read 读一篇笔记。 */
-  read(p: string): Promise<string> {
-    return call("Notes.Read", p);
-  },
-  /** Rename 改名。笔记的名字不用带 .md，会自动补上。 */
-  rename(p: string, name: string): Promise<string> {
-    return call("Notes.Rename", p, name);
-  },
-  /** Reveal 在文件管理器里显示；p 为空时打开笔记目录。 */
-  reveal(p: string): Promise<void> {
-    return call("Notes.Reveal", p);
-  },
-  /** Tree 返回笔记的目录树。 */
-  tree(): Promise<Node[]> {
-    return call("Notes.Tree");
-  },
-  /** Write 保存一篇笔记。 */
-  write(p: string, content: string): Promise<void> {
-    return call("Notes.Write", p, content);
-  },
-} as const;
-
-/** Scratch 是代码草稿页的服务：存草稿文件、运行、格式化。 */
-export const Scratch = {
-  /** Delete 把草稿移到废纸篓。 */
-  delete(p: string): Promise<void> {
-    return call("Scratch.Delete", p);
-  },
-  /** Format 用后端的办法格式化（Go，以及装了对应工具的 Python、Rust、C/C++、Shell 等）。 */
-  format(lang: string, code: string): Promise<string> {
-    return call("Scratch.Format", lang, code);
-  },
-  /** Languages 返回支持的语言，以及每种在这台电脑上能不能运行。 */
-  languages(): Promise<ScratchLang[]> {
-    return call("Scratch.Languages");
-  },
-  /** List 返回全部草稿。 */
-  list(): Promise<Node[]> {
-    return call("Scratch.List");
-  },
-  /** New 新建一个某种语言的草稿：scratch.py、scratch 2.py…… */
-  new(lang: string): Promise<string> {
-    return call("Scratch.New", lang);
-  },
-  /** Read 读一个草稿。 */
-  read(p: string): Promise<string> {
-    return call("Scratch.Read", p);
-  },
-  /** Rename 改名；没写扩展名时沿用原来的。 */
-  rename(p: string, name: string): Promise<string> {
-    return call("Scratch.Rename", p, name);
-  },
-  /** Reveal 打开草稿目录。 */
-  reveal(): Promise<void> {
-    return call("Scratch.Reveal");
-  },
-  /** Run 运行代码，输出一边产生一边通过 out 送回；结束时最后一条是 exit。 */
-  run(req: RunRequest, out: Channel<Event>): Promise<void> {
-    return call("Scratch.Run", req, out);
-  },
-  /** Stop 停掉这个窗口正在运行的代码。 */
-  stop(): Promise<void> {
-    return call("Scratch.Stop");
-  },
-  /** Write 保存一个草稿。 */
-  write(p: string, content: string): Promise<void> {
-    return call("Scratch.Write", p, content);
   },
 } as const;
 

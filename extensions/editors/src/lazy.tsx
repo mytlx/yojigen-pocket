@@ -1,6 +1,6 @@
 import type { FunctionComponent } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import type { FeatureProps } from "./types";
+import type { FeatureProps } from "./host";
 
 /**
  * 按需加载的功能页。带着大依赖的页面（代码编辑器、Markdown 编辑器）用它包一层，

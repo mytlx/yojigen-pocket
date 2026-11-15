@@ -20,13 +20,8 @@ import { WinToolsPage } from "./wintools";
 import { ClickerTool } from "./clicker";
 import { MacroTool } from "./macro";
 import { InputTest } from "./inputtest";
-import { lazyFeature } from "./lazy";
-import "./features.css";
 
-// 带着大依赖的页面（代码编辑器、Markdown 编辑器）打开时才加载。
-const DiffTool = lazyFeature(() => import("./diff").then((m) => m.DiffTool));
-const ScratchTool = lazyFeature(() => import("./scratch").then((m) => m.ScratchTool));
-const NotesTool = lazyFeature(() => import("./notes").then((m) => m.NotesTool));
+import "./features.css";
 
 /** 功能页：组件和它在主窗口里的高度。 */
 export const features: Record<string, { component: FunctionComponent<FeatureProps>; height: number }> = {
@@ -43,12 +38,9 @@ export const features: Record<string, { component: FunctionComponent<FeatureProp
   timestamp: { component: TimestampTool, height: 470 },
   regex: { component: RegexTool, height: 520 },
   jwt: { component: JwtTool, height: 480 },
-  diff: { component: DiffTool, height: 560 },
   clicker: { component: ClickerTool, height: 520 },
   macro: { component: MacroTool, height: 580 },
   inputtest: { component: InputTest, height: 470 },
-  notes: { component: NotesTool, height: 580 },
-  scratch: { component: ScratchTool, height: 580 },
   random: { component: RandomTool, height: 440 },
   color: { component: ColorTool, height: 420 },
   urlparse: { component: UrlTool, height: 440 },

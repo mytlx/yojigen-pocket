@@ -32,8 +32,6 @@ func main() {
 	mygo.Bind(&Clips{a: a})
 	mygo.Bind(&WinTools{a: a})
 	mygo.Bind(&Speech{a: a})
-	mygo.Bind(&Notes{a: a})
-	mygo.Bind(&Scratch{a: a})
 	mygo.Bind(&Auto{a: a})
 	mygo.Bind(&Extensions{a: a})
 	if bindExtra != nil {

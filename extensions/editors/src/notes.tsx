@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { EditorView } from "@codemirror/view";
 import { Bold, ChevronDown, ChevronRight, Clock, Code, Copy, FileText, Folder, FolderOpen, FolderPlus, Heading, Italic, Link, List, ListChecks, Pencil, Plus, Quote, Search, Table, Trash2 } from "lucide-preact";
-import { Notes, type Node } from "../mygo";
-import { CodeEditor } from "../shared/code/editor";
-import { Btn, Empty, Seg } from "./ui";
-import type { FeatureProps } from "./types";
+import { Notes, type FeatureProps, type Node } from "./host";
+import { CodeEditor } from "./code/editor";
+import { Btn, Empty, Seg } from "../../../src/features/ui";
 
 type Mode = "rich" | "source";
 

@@ -1,4 +1,4 @@
-import { Scratch } from "../../mygo";
+import { Scratch } from "../host";
 
 /** 浏览器里就能格式化的语言 → Prettier 的解析器。 */
 const prettierParsers: Record<string, string> = {
