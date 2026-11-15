@@ -66,8 +66,8 @@
 | 剪贴板历史 | `cb`、`clip`、`剪贴板` | 左边列表、右边预览，按文字 / 图片 / 文件筛选，固定、删除；回车粘贴到之前的窗口。`cb 关键词` 或按 `Tab` 仍可在搜索框里直接搜 |
 | 高级搜索 | `find`、`文件搜索` | 左边按类型筛选，中间是文件，右边是预览区和属性区（各有开关）。详见下面的「文件搜索和预览」 |
 | Windows 工具 | `wt`、`cpl`、`msc` | 仅 Windows。约 80 个常用的控制面板项、管理单元和系统程序（`services.msc`、`sysdm.cpl`、`compmgmt.msc`、环境变量……），按原名、中文名、说明或拼音搜索；在搜索框里直接输入名字也能找到 |
-| Markdown 笔记 | `md`、`note`、`笔记` | 左边是文件夹和笔记，右边编辑；所见即所得和源码两种模式；新建的笔记名字带日期；笔记是 `notes` 目录里的 `.md` 文件 |
-| 代码草稿 | `scratch`、`code`、`草稿` | 27 种语言高亮和格式化；装了对应环境的可以直接运行（Python、JS/TS、Go、Shell、Java、C/C++、Rust……），支持标准输入、停止和超时 |
+| Markdown 笔记（扩展包） | `md`、`note`、`笔记` | 左边是文件夹和笔记，右边编辑；所见即所得和源码两种模式；新建的笔记名字带日期；笔记是 `notes` 目录里的 `.md` 文件 |
+| 代码草稿（扩展包） | `scratch`、`code`、`草稿` | 27 种语言高亮和格式化；装了对应环境的可以直接运行（Python、JS/TS、Go、Shell、Java、C/C++、Rust……），支持标准输入、停止和超时 |
 | 鼠标连点器 | `连点`、`clicker` | 单击、双击、三击、长按；固定或随机间隔；定次数或定时长；固定位置可加随机偏移；全局快捷键和紧急停止 |
 | 键盘宏 | `宏`、`macro` | 按键、组合键、长按、连击、文字、等待、鼠标点击；可以录制；重复次数、速度、全局快捷键 |
 | 按键测试 | `按键测试`、`keytest` | 键盘和鼠标的示意图，按下时跟着亮；统计次数、同时按下的键数，标出疑似连击 |
@@ -80,18 +80,21 @@
 | 时间戳转换 | `ts` | 秒、毫秒、微秒、纳秒和日期互转 |
 | 正则测试 | `re`、`regex` | 实时高亮、分组、替换，附常用正则 |
 | JWT 解析 | `jwt` | 头部、载荷、是否过期 |
-| 文本对比 | `diff` | 左右两边直接编辑，差异实时高亮到字符；按语言高亮和格式化；上一处 / 下一处、交换、折叠相同部分、常用文本处理 |
+| 文本对比（扩展包） | `diff` | 左右两边直接编辑，差异实时高亮到字符；按语言高亮和格式化；上一处 / 下一处、交换、折叠相同部分、常用文本处理 |
 | UUID 与密码 | `uuid`、`pwd` | 批量生成 |
 | 颜色转换 | `color` | HEX、RGB、HSL 互转，支持透明度（`#rrggbbaa`、`rgba()`、`rgb(… / 50%)`），给出叠在白底、黑底上的颜色和对比度 |
 | URL 解析 | `urlp` | 拆出各部分和查询参数 |
 | 文本处理 | `upper`、`lower`、`count` | 大小写、命名风格、去重排序、字数统计 |
 
-**道具库**（搜索「道具库」、托盘菜单、设置侧栏底部）分类列出所有功能、内置模块、网页插件、脚本、系统指令、网页搜索和文本片段，可以直接打开、分离、绑快捷键、停用。
+**道具库**（搜索「道具库」、托盘菜单、设置侧栏底部）分类列出所有功能、内置模块、扩展、脚本、系统指令、网页搜索和文本片段，可以直接打开、分离、绑快捷键、停用。
+
+标了“扩展包”的功能不在安装包里：到 Releases 下载对应的 zip，在**道具库 → 扩展管理**里安装（或把 zip 拖进去）。
+同一页可以停用和卸载，停用后它的窗口和后台程序都会关掉。详见[扩展文档](extensions.md)。
 
 ### 桌面宠物
 
-一只会在桌面上走动的小狸猫，肚子上有个口袋。默认关闭，关着的时候不建窗口、不占资源。
-在「设置 → 通用」、托盘菜单，或搜索框里输入 `宠物` 打开。
+“桌面宠物”扩展包：一只会在桌面上走动的小狸猫，肚子上有个口袋。装上之后在搜索框里输入 `宠物` 或 `pet` 叫出来，
+再输入一次收起来；收起来的时候不建窗口、不占资源，上次开着的话下次启动会自动回来。
 
 - 单击打招呼，双击让它掏口袋，在头上来回蹭是抚摸，按住可以拎起来，右键打开面板。
 - 饱腹、心情、精力、清洁四项状态随时间变化；喂食、玩耍、洗澡、睡觉可以照顾它。
@@ -153,7 +156,7 @@ Windows 上不用授权，但对以管理员身份运行的窗口无效。请只
 ~/.yojigen-pocket/
 ├─ config.json   主配置。设置窗口改的就是它，手改保存后也立刻生效；写错时沿用上一份有效配置，并提示错在哪一行
 ├─ commands/     脚本命令
-├─ plugins/      网页插件
+├─ plugins/      扩展（装进来的 zip 也解压在这里）
 ├─ snippets/     文本片段（.md / .txt）
 ├─ ui/           theme.css（变量）、user.css（任意样式）、user.js（界面钩子）
 └─ data/ cache/ logs/   运行数据，已写入 .gitignore
@@ -213,15 +216,18 @@ echo "你好，$1"
 
 解释器按 `@pocket.interpreter` → 配置里的 `interpreters` → shebang → 扩展名的顺序决定。支持 `.sh .py .js .mjs .ts .rb .pl .php .lua .ps1`，macOS 上还有 `.applescript .command`，Windows 上还有 `.bat .cmd .ahk .exe .lnk`。Windows 中文系统的 GBK 输出会自动转码。
 
-### 网页插件
+### 扩展
 
-`plugins/<id>/` 下放一个 `plugin.json` 和一个网页，文件夹名只能用小写字母、数字和连字符：
+`plugins/<id>/` 下放一个 `plugin.json` 和一个网页就是一个扩展，文件夹名只能用小写字母、数字和连字符：
 
 ```json
-{ "title": "颜色工具", "description": "…", "icon": "🎨", "keywords": ["color"], "main": "index.html", "height": 300 }
+{ "name": "颜色工具", "description": "…", "icon": "🎨", "keywords": ["color"], "main": "index.html", "height": 300 }
 ```
 
-网页里引入 `<script src="/__pocket.js"></script>` 就有了 `window.pocket`：`copyText` `readClipboard` `pasteText` `openExternal` `notify` `hide` `getStorage` `setStorage`。插件运行在隔离的 iframe 里，不能直接调用后端，存储按插件隔离。`plugins/color-tool` 是一个完整的例子。
+网页里引入 `<script src="/__pocket.js"></script>` 就有了 `window.pocket`。扩展运行在隔离的 iframe 里，
+只能使用清单里声明过的能力：私有存储和文件目录、代发网络请求、运行代码、悬浮窗、按需启动的本地程序。
+一个扩展可以带多个工具，打成 zip 就能分享给别人安装。`plugins/color-tool` 是一个完整的例子，
+清单的全部字段和接口见[扩展文档](extensions.md)。
 
 ### 改外观
 
@@ -278,7 +284,13 @@ bun run build
 bunx mygo build -platform darwin/universal,windows/amd64,windows/arm64
 ```
 
-推送 `v*` 标签时，`.github/workflows/build.yml` 会在 CI 上测试并打包。
+官方扩展包单独构建，产物是 `build/extensions/<id>-<版本>.zip`（和平台无关）：
+
+```bash
+bun run build:ext
+```
+
+推送 `v*` 标签时，`.github/workflows/build.yml` 会在 CI 上测试并打包，安装包和扩展包一起发到 Release。
 
 端到端测试会启动一个真实的应用（只在 macOS 上跑过），用临时目录和测试热键，不影响你的配置，但主窗口会出现在屏幕上，运行期间剪贴板也会被覆盖：
 
@@ -291,7 +303,7 @@ tools/e2e/run.sh
 ```
 main.go, app.go      应用入口、窗口、托盘、热键、配置生效
 services.go          页面调用的 Go 服务（Launcher、Settings）
-host.go              系统能力、自定义协议（图标、插件）
+host.go              系统能力、自定义协议（图标、扩展页面）、注入给扩展的 window.pocket
 internal/core        引擎：查询路由、合并排序、动作执行
 internal/match       模糊匹配和拼音
 internal/store       用户目录、配置、使用记录
@@ -303,10 +315,12 @@ internal/llm         大模型接口：Claude（官方 Go SDK）、OpenAI 兼容
 internal/translate   翻译：大模型、有道智云、百度翻译
 internal/ocr         文字识别：macOS Vision、Windows.Media.Ocr、大模型
 internal/reader      摸鱼阅读的书库：txt / epub 导入、章节、进度
-internal/workspace   限定在一个目录里的文件库（笔记、代码草稿）
-internal/runner      代码草稿的运行和格式化
+internal/workspace   限定在一个目录里的文件库（扩展的文件接口用它）
+internal/runner      运行和格式化代码（扩展的 runner 接口）
 auto.go              连点器和键盘宏的执行引擎
-pet.go, src/pet      桌面宠物：窗口、存档、3D 模型、动作和养成
+plugins_app.go       扩展的宿主接口、悬浮窗、安装和卸载
+plugins_backend.go   扩展自带的外部进程：启动、通信、空闲回收
+extensions/          官方扩展包的源码：editors（笔记、草稿、对比）、pet（桌面宠物）、sdk（接口类型）
 internal/tts         发音：词典单词音频、Edge 语音（含签名算法）、OpenAI 兼容接口
 services_tools.go    高级搜索、文件预览、计算器、剪贴板页、Windows 工具的服务，本地媒体服务
 services_speech.go   发音服务

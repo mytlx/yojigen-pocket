@@ -1,4 +1,4 @@
-# 每次推送都测试，打 v* 标签时构建 macOS 和 Windows 的安装包。
+# 每次推送都测试，打 v* 标签时构建 macOS 和 Windows 的安装包，以及官方扩展包（zip）。
 # macOS 必须在 macOS 上打包（签名和 dmg）；Windows 可以在 Ubuntu 上交叉编译，安装包用 NSIS 制作。
 name: Build
 
@@ -29,6 +29,8 @@ jobs:
         run: bunx tsc --noEmit
       - name: Build the frontend
         run: bun --bun vite build
+      - name: Build the extensions
+        run: bun run build:ext
       - name: Vet
         run: go vet ./...
       - name: Test
@@ -68,6 +70,10 @@ jobs:
               zip -j "$dir/${SLUG}-${VERSION}-windows-${arch}-portable.zip" "$exe"
             fi
           done
+      # 扩展包和平台无关，只在一个任务里打，免得发布时出现两份同名文件。
+      - name: Build the extension packages
+        if: matrix.name == 'Windows'
+        run: bun run build:ext
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.name }}
@@ -75,6 +81,7 @@ jobs:
             build/**/*.dmg
             build/**/*-setup-*.exe
             build/**/*-portable.zip
+            build/extensions/*.zip
 
   release:
     name: Release
