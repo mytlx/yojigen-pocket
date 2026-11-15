@@ -192,6 +192,21 @@ func Decode(b []byte) string {
 	return strings.ToValidUTF8(string(b), "�")
 }
 
+// ansiSeq 匹配终端的转义序列：颜色（ESC[32;1m）、移动光标、清屏、设置标题等。
+var ansiSeq = regexp.MustCompile("\x1b\\[[0-9;?<=>!]*[ -/]*[@-~]|\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)|\x1b[()][0-9A-Za-z]|\x1b[=>78cDEHMNOZ]")
+
+// StripANSI 去掉终端的转义序列。很多程序（PowerShell 7 的表头、各种编译器）不管输出的是不是终端
+// 都带颜色码，原样显示出来是一堆 [32;1m。脚本命令和命令行的输出只当纯文本用，直接去掉。
+func StripANSI(s string) string {
+	if !strings.Contains(s, "\x1b") {
+		return s
+	}
+	return ansiSeq.ReplaceAllString(s, "")
+}
+
+// DecodeText 是 Decode 加上 StripANSI：给只显示纯文本的地方用。
+func DecodeText(b []byte) string { return StripANSI(Decode(b)) }
+
 // ParseList 解析 list / filter 模式的输出：JSON（{"items":[...]} 或数组），或者每行一项的 Tab 分隔文本。
 func ParseList(output string) []core.Item {
 	s := strings.TrimSpace(output)

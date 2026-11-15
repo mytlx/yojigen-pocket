@@ -10,7 +10,7 @@ import "./code.css";
 
 /** 编辑器的外观：颜色都走 CSS 变量，深浅色跟着应用的主题变。 */
 export const pocketTheme = EditorView.theme({
-  "&": { height: "100%", fontSize: "12.5px", color: "var(--text)", backgroundColor: "transparent" },
+  "&": { height: "100%", fontSize: "calc(12.5px * var(--zoom-code, 1))", color: "var(--text)", backgroundColor: "transparent" },
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.6", overflow: "auto" },
   ".cm-content": { caretColor: "var(--text)", padding: "8px 0" },
@@ -67,7 +67,7 @@ export const pocketHighlight = syntaxHighlighting(
  * 没有行号以外的装饰：代码块夹在正文里，越安静越好。
  */
 export const noteCodeTheme = EditorView.theme({
-  "&": { fontSize: "12.5px", color: "var(--code-text, var(--text))", backgroundColor: "transparent" },
+  "&": { fontSize: "calc(12.5px * var(--zoom-rich, 1))", color: "var(--code-text, var(--text))", backgroundColor: "transparent" },
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.65" },
   ".cm-content": { caretColor: "var(--code-text, var(--text))", padding: "2px 0 4px" },

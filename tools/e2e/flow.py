@@ -841,8 +841,28 @@ if langs.get('python',{}).get('tool'):
     ok=ewait_for('(document.querySelector(".fx-scratch-exit")||{}).innerText?.includes("退出码")', 15)
     check('标准输入和退出码', ok and 'in: abc' in etext_of('.fx-scratch-log') and '退出码 3' in etext_of('.fx-scratch-exit'), (etext_of('.fx-scratch-log'), etext_of('.fx-scratch-exit')))
     shot('feature-scratch')
+    # 输出里带终端颜色码（PowerShell 7 的表头就是这样）：画成颜色，不原样显示
+    cm_type(0, 'print("\\x1b[32;1m总进程数\\x1b[0m : 312")\nprint("\\x1b[2K\\x1b[31m错误\\x1b[0m")\n'); wait(0.3)
+    eclick_text('.fx-scratch-main .fx-toolbar .ui-btn', '运行')
+    ewait_for('(document.querySelector(".fx-scratch-exit")||{}).innerText?.includes("运行完成")', 15)
+    log=etext_of('.fx-scratch-log')
+    check('输出里的颜色码不原样显示', '总进程数 : 312' in log and '[32' not in log and '[0m' not in log and '\x1b' not in log, repr(log))
+    check('颜色码画成对应的颜色和粗体', etexts('.fx-scratch-log .ansi-green.ansi-bold')==['总进程数'] and etexts('.fx-scratch-log .ansi-red')==['错误'], ejs('document.querySelector(".fx-scratch-log").innerHTML.slice(0,300)'))
 else:
     soft('这台电脑上没有 Python，跳过运行检查', False)
+# Ctrl + 滚轮：只在编辑区里调字号，别处什么都不发生（更不会缩放整个界面）
+wheel='(()=>{const el=document.querySelector(%s);const e=new WheelEvent("wheel",{ctrlKey:true,deltaY:%d,bubbles:true,cancelable:true});el.dispatchEvent(e);return e.defaultPrevented})()'
+fs0=ejs('parseFloat(getComputedStyle(document.querySelector(".code-editor .cm-editor")).fontSize)')
+p1=ejs(wheel % (json.dumps('.code-editor .cm-content'), -100)); wait(0.3)
+fs1=ejs('parseFloat(getComputedStyle(document.querySelector(".code-editor .cm-editor")).fontSize)')
+check('Ctrl + 滚轮在代码编辑区里放大字号', p1 is True and fs1>fs0 and etext_of('.ui-zoom-badge')=='110%', (fs0,fs1,etext_of('.ui-zoom-badge')))
+p2=ejs(wheel % (json.dumps('.fx-side'), -100)); wait(0.2)
+fs2=ejs('parseFloat(getComputedStyle(document.querySelector(".code-editor .cm-editor")).fontSize)')
+check('编辑区外面 Ctrl + 滚轮不改字号，也不缩放页面', p2 is True and fs2==fs1, (p2,fs1,fs2))
+ejs(wheel % (json.dumps('.code-editor .cm-content'), 100)); wait(0.3)
+check('往回滚恢复原来的字号', ejs('parseFloat(getComputedStyle(document.querySelector(".code-editor .cm-editor")).fontSize)')==fs0)
+p3=js('(()=>{const e=new WheelEvent("wheel",{ctrlKey:true,deltaY:-100,bubbles:true,cancelable:true});document.querySelector(".pk-panel").dispatchEvent(e);return e.defaultPrevented})()')
+check('主窗口里 Ctrl + 滚轮不缩放界面', p3 is True, p3)
 ejs('pocket.fs.createFile("scratches","","scratch.go","package main\\n")')
 r=ejs('pocket.runner.format("go",%s)' % json.dumps('package main\nfunc main(){\nprintln( 1 )}\n'))
 check('后端格式化 Go', r and '\tprintln(1)' in r, r)

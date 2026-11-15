@@ -277,6 +277,8 @@ const pluginRuntime = `(() => {
       post({ __pocket: true, method: "ui.detach" });
     }
   });
+  // Ctrl + 滚轮：WebView 默认会缩放整个页面，拦掉。扩展想用它调字号可以自己处理这个事件。
+  window.addEventListener("wheel", (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false, capture: true });
   const pocket = (window.pocket = {
     api: 1,
     context: null,

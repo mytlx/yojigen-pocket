@@ -14,8 +14,10 @@ import { Hotkey } from "../settings/ui";
 import { Toggle } from "../features/ui";
 import { ExtensionsPanel } from "./extensions";
 import { installTooltips } from "../shared/tooltip";
+import { installZoom } from "../shared/zoom";
 
 installTooltips();
+installZoom();
 
 const MANAGE = "扩展管理";
 

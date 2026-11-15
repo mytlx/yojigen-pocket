@@ -200,3 +200,25 @@ body {
   border: 0;
   background: #fff;
 }
+
+/* 运行输出里的终端颜色（code/ansi.ts） */
+.fx-scratch-log {
+  --ansi-black: #4b5263; --ansi-red: #c4372f; --ansi-green: #238636; --ansi-yellow: #9a6700;
+  --ansi-blue: #0a66d6; --ansi-magenta: #8f3fc7; --ansi-cyan: #0f7c8a; --ansi-white: #6e7781;
+}
+:root[data-theme="dark"] .fx-scratch-log {
+  --ansi-black: #7d8590; --ansi-red: #ff7b72; --ansi-green: #6fd08c; --ansi-yellow: #e3b341;
+  --ansi-blue: #79b8ff; --ansi-magenta: #d79bf0; --ansi-cyan: #6fd3dd; --ansi-white: #d0d7de;
+}
+.ansi-black, .ansi-bright-black { color: var(--ansi-black); }
+.ansi-red, .ansi-bright-red { color: var(--ansi-red); }
+.ansi-green, .ansi-bright-green { color: var(--ansi-green); }
+.ansi-yellow, .ansi-bright-yellow { color: var(--ansi-yellow); }
+.ansi-blue, .ansi-bright-blue { color: var(--ansi-blue); }
+.ansi-magenta, .ansi-bright-magenta { color: var(--ansi-magenta); }
+.ansi-cyan, .ansi-bright-cyan { color: var(--ansi-cyan); }
+.ansi-white, .ansi-bright-white { color: var(--ansi-white); }
+.ansi-bold { font-weight: 700; }
+.ansi-dim { opacity: 0.65; }
+.ansi-italic { font-style: italic; }
+.ansi-underline { text-decoration: underline; }

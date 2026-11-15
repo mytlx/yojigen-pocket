@@ -77,7 +77,7 @@ type chunkWriter struct {
 func (w *chunkWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.r.Append(scripts.Decode(p))
+	w.r.Append(scripts.DecodeText(p))
 	return len(p), nil
 }
 

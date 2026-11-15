@@ -99,7 +99,7 @@
   --crepe-font-title: var(--font-ui);
   --crepe-font-default: var(--font-ui);
   --crepe-font-code: var(--font-mono);
-  --crepe-base-font-size: calc(14px * var(--editor-zoom, 1));
+  --crepe-base-font-size: calc(14px * var(--zoom-rich, 1));
   --crepe-shadow-1: 0 6px 22px rgba(0, 0, 0, 0.16), 0 0 0 0.5px var(--note-float-line);
   --crepe-shadow-2: 0 10px 30px rgba(0, 0, 0, 0.2), 0 0 0 0.5px var(--note-float-line);
   min-height: 100%;

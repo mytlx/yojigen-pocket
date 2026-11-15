@@ -8,6 +8,7 @@ import { CodeEditor } from "./code/editor";
 import { LangPicker } from "./code/langpick";
 import { languages } from "./code/languages";
 import { canFormatLocally, formatCode } from "./code/format";
+import { AnsiParser, stripAnsi } from "./code/ansi";
 import { Btn, Empty } from "../../../src/features/ui";
 
 /** 新建草稿时放进去的几行，点一下运行就能看到结果。 */
@@ -52,6 +53,11 @@ export function ScratchTool({ input, ctx }: FeatureProps) {
   const [wrap, setWrap] = useState(false);
   const [running, setRunning] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
+  // 输出里的终端颜色码画成颜色（标准输出和错误输出各记各的样式）。
+  const rendered = useMemo(() => {
+    const parsers = { stdout: new AnsiParser(), stderr: new AnsiParser() };
+    return lines.flatMap((l) => (l.kind === "info" ? [{ kind: l.kind, text: l.text, cls: "", color: undefined as string | undefined }] : parsers[l.kind].push(l.text).map((sp) => ({ kind: l.kind, text: sp.text, cls: sp.cls, color: sp.color }))));
+  }, [lines]);
   const [exit, setExit] = useState<RunEvent | null>(null);
   const [stdin, setStdin] = useState("");
   const [showStdin, setShowStdin] = useState(false);
@@ -355,15 +361,15 @@ export function ScratchTool({ input, ctx }: FeatureProps) {
                   )}
                   <span class="fx-spacer" />
                   <Btn small ghost on={showStdin} title="运行时从标准输入读到的内容" onClick={() => setShowStdin(!showStdin)}>输入</Btn>
-                  <Btn small ghost icon title="复制输出" disabled={lines.length === 0} onClick={() => void ctx.copy(lines.filter((l) => l.kind !== "info").map((l) => l.text).join(""))}>
+                  <Btn small ghost icon title="复制输出" disabled={lines.length === 0} onClick={() => void ctx.copy(stripAnsi(lines.filter((l) => l.kind !== "info").map((l) => l.text).join("")))}>
                     <Copy size={13} />
                   </Btn>
                   <Btn small ghost onClick={() => { setLines([]); setExit(null); setShowStdin(false); }}>清空</Btn>
                 </div>
                 {showStdin && <textarea class="ui-area fx-scratch-stdin" placeholder="程序从标准输入读到的内容（input()、read、Scanner…）" value={stdin} spellcheck={false} onInput={(e) => setStdin((e.target as HTMLTextAreaElement).value)} />}
                 <pre class="fx-scratch-log" ref={outBox}>
-                  {lines.map((l, i) => (
-                    <span key={i} class={`is-${l.kind}`}>{l.text}</span>
+                  {rendered.map((l, i) => (
+                    <span key={i} class={`is-${l.kind}${l.cls ? ` ${l.cls}` : ""}`} style={l.color ? { color: l.color } : undefined}>{l.text}</span>
                   ))}
                   {!running && !exit && lines.length === 0 && <span class="is-info">点“运行”或按 {mod}回车</span>}
                 </pre>

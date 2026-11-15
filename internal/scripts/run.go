@@ -104,6 +104,8 @@ func (r *Runner) Env(c *Command, in Input) []string {
 		"POCKET_CACHE_DIR="+r.CacheDir,
 		"PYTHONUTF8=1",
 		"PYTHONIOENCODING=utf-8",
+		// 输出不是给终端看的：请程序别带颜色码（认这个约定的不多不少，剩下的在读输出时去掉）。
+		"NO_COLOR=1",
 	)
 }
 
@@ -130,7 +132,7 @@ func (w *limitWriter) Write(p []byte) (int, error) {
 	}
 	w.buf.Write(p)
 	if w.onChunk != nil {
-		w.onChunk(Decode(p))
+		w.onChunk(DecodeText(p))
 	}
 	return n, nil
 }
@@ -162,7 +164,7 @@ func (r *Runner) Run(ctx context.Context, c *Command, in Input, onStdout func(st
 
 	start := time.Now()
 	runErr := cmd.Run()
-	out := Output{Stdout: Decode(stdout.buf.Bytes()), Stderr: Decode(stderr.buf.Bytes()), Duration: time.Since(start)}
+	out := Output{Stdout: DecodeText(stdout.buf.Bytes()), Stderr: DecodeText(stderr.buf.Bytes()), Duration: time.Since(start)}
 	if stdout.truncated {
 		out.Stdout += "\n…（输出超过 5 MB，已截断）"
 	}

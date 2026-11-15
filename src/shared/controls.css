@@ -260,3 +260,8 @@
   background: var(--tip-bg, #e9eaee);
   color: var(--tip-text, #17181b);
 }
+
+/* Ctrl + 滚轮调字号时，编辑区右上角闪一下当前的比例（shared/zoom.ts）。 */
+.ui-zoom-badge {
+  font-variant-numeric: tabular-nums;
+}

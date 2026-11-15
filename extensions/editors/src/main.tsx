@@ -9,8 +9,10 @@ import "./editors.css";
 import { lazyFeature } from "./lazy";
 import { makeCtx } from "./host";
 import { installTooltips } from "../../../src/shared/tooltip";
+import { installZoom } from "../../../src/shared/zoom";
 
 installTooltips();
+installZoom();
 
 // 三个工具共用一个入口：打开哪个由宿主告诉我们，用到哪个才加载哪个的代码。
 const tools = {
