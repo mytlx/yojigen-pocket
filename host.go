@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -142,8 +143,15 @@ func iconURL(kind, p string) string {
 	return schemeURL("pocketicon", "", "/"+kind+"?path="+url.QueryEscape(p))
 }
 
-func pluginURL(id, main string) string {
-	return schemeURL("pocketplugin", id, "/"+strings.TrimPrefix(path.Clean("/"+filepath.ToSlash(main)), "/"))
+// pluginURL 生成扩展页面的地址。
+// Windows 的 WebView2 里，跨源 iframe 内部的脚本和样式请求不会触发 AddWebResourceRequestedFilter，
+// 自定义协议在 iframe 里只能加载到 HTML 空壳；因此 Windows 上走本机回环 HTTP 服务（<id>.pocketplugin.localhost:<port>）。
+func (a *App) pluginURL(id, main string) string {
+	p := "/" + strings.TrimPrefix(path.Clean("/"+filepath.ToSlash(main)), "/")
+	if runtime.GOOS == "windows" && a.media != nil && a.media.port > 0 {
+		return fmt.Sprintf("http://%s.pocketplugin.localhost:%d%s", id, a.media.port, p)
+	}
+	return schemeURL("pocketplugin", id, p)
 }
 
 var imageExts = []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp", ".heic", ".tiff", ".icns"}
@@ -355,9 +363,17 @@ const pluginRuntime = `(() => {
 
 // servePlugin 提供插件的文件。地址的 host 部分是插件 ID。
 func (a *App) servePlugin(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*") // 构建工具给脚本加的 crossorigin 属性需要它
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	id := strings.ToLower(r.URL.Hostname())
 	if id == "" {
 		id = strings.ToLower(r.Host)
+	}
+	if h, _, err := net.SplitHostPort(id); err == nil {
+		id = h
 	}
 	id = strings.TrimSuffix(id, ".pocketplugin.localhost")
 	if r.URL.Path == "/__pocket.js" {

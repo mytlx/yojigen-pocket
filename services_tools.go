@@ -29,6 +29,7 @@ import (
 
 type mediaServer struct {
 	base  string
+	port  int
 	token string
 	cache string
 }
@@ -40,7 +41,12 @@ func (a *App) startMedia() {
 	}
 	raw := make([]byte, 16)
 	_, _ = rand.Read(raw)
-	m := &mediaServer{base: "http://" + ln.Addr().String(), token: hex.EncodeToString(raw), cache: a.paths.Cache}
+	m := &mediaServer{
+		base:  "http://" + ln.Addr().String(),
+		port:  ln.Addr().(*net.TCPAddr).Port,
+		token: hex.EncodeToString(raw),
+		cache: a.paths.Cache,
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/"+m.token+"/file", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -56,8 +62,19 @@ func (a *App) startMedia() {
 		w.Header().Set("Cache-Control", "no-store")
 		http.ServeFile(w, r, p)
 	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := strings.ToLower(r.Host)
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		if strings.HasSuffix(host, ".pocketplugin.localhost") {
+			a.servePlugin(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 	a.media = m
-	go func() { _ = (&http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}).Serve(ln) }()
+	go func() { _ = (&http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}).Serve(ln) }()
 }
 
 func (m *mediaServer) allowed(p string) bool {

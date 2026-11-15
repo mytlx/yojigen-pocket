@@ -460,10 +460,12 @@ func (h *pluginHost) openFloat(plugin, tool string) error {
 	if hgt <= 0 {
 		hgt = 260
 	}
+	wa := mygo.Screen.PrimaryDisplay().WorkArea
 	q := url.Values{"p": {plugin}, "t": {t.ID}, "u": {view.URL}}
 	win := mygo.NewWindow(mygo.WindowOptions{
-		Title: t.Title, URL: "/float.html?" + q.Encode(), Width: w, Height: hgt, Hidden: true,
-		Frameless: true, Transparent: true, AlwaysOnTop: true, SkipTaskbar: true, DisableShadow: true,
+		Title: t.Title, URL: "/float.html?" + q.Encode(), Width: w, Height: hgt,
+		X: max(wa.X, wa.X+wa.Width-w-60), Y: max(wa.Y, wa.Y+wa.Height-hgt-10),
+		Hidden: true, Frameless: true, Transparent: true, AlwaysOnTop: true, SkipTaskbar: true, DisableShadow: true,
 		MinWidth: 60, MinHeight: 60, StateKey: "float-" + plugin + "-" + t.ID,
 	})
 	win.SetResizable(false)
@@ -471,11 +473,6 @@ func (h *pluginHost) openFloat(plugin, tool string) error {
 	h.floats[key] = win
 	h.mu.Unlock()
 	win.OnReadyToShow(func() {
-		// 第一次出现时放在主屏右下角。
-		if x, y := win.Position(); x == 0 && y == 0 {
-			wa := mygo.Screen.PrimaryDisplay().WorkArea
-			win.SetPosition(wa.X+wa.Width-w-60, wa.Y+wa.Height-hgt-10)
-		}
 		win.ShowInactive()
 	})
 	win.OnClosed(func() {

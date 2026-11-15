@@ -129,13 +129,13 @@ func (a *App) ready() {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 
+	a.startMedia()
 	a.registerProtocols()
 	a.buildEngine(ctx)
 
 	cfg := a.config.Get()
 	a.applyTheme(cfg)
 	a.createPanel(cfg)
-	a.startMedia()
 	a.createTray()
 	a.pluginHost.restoreFloats()
 	a.applyHotkeys(cfg)
@@ -220,7 +220,7 @@ func (a *App) buildEngine(ctx context.Context) {
 
 	a.pluginHost = newPluginHost(a)
 	a.plugins = &providers.Plugins{
-		Dir: a.paths.Plugins, URL: pluginURL,
+		Dir: a.paths.Plugins, URL: a.pluginURL,
 		Disabled:  func(id string) bool { return slices.Contains(a.config.Get().DisabledPlugins, id) },
 		OpenFloat: a.pluginHost.toggleFloat,
 		Detach: func(v *core.View) error {
