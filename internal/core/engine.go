@@ -115,21 +115,29 @@ func (e *Engine) route(cfg *store.Config, q QueryRequest) ([]Provider, *Request)
 	}
 	text := strings.TrimLeft(q.Text, " \t　")
 	// 前缀模式：符号前缀不需要空格（=1+1），字母前缀需要空格（f 报告）。
+	// 一个模块可以有多个前缀；几个前缀都对得上时取最长的（>> 优先于 >）。
+	var (
+		hit     Provider
+		hitRest string
+		hitLen  = -1
+	)
 	for _, p := range e.providers {
-		info := p.Info()
-		m, ok := cfg.Modules[info.ID]
-		if !ok || !m.Enabled || m.Prefix == "" {
+		m, ok := cfg.Modules[p.Info().ID]
+		if !ok || !m.Enabled {
 			continue
 		}
-		symbol := !unicode.IsLetter([]rune(m.Prefix)[0])
-		switch {
-		case symbol && strings.HasPrefix(text, m.Prefix):
-			rest := strings.TrimLeft(text[len(m.Prefix):], " ")
-			return []Provider{p}, newRequest(rest, "", true, c)
-		case strings.HasPrefix(text, m.Prefix+" "):
-			rest := strings.TrimLeft(text[len(m.Prefix):], " ")
-			return []Provider{p}, newRequest(rest, "", true, c)
+		for _, prefix := range m.Prefixes() {
+			if len(prefix) <= hitLen {
+				continue
+			}
+			symbol := !unicode.IsLetter([]rune(prefix)[0])
+			if (symbol && strings.HasPrefix(text, prefix)) || strings.HasPrefix(text, prefix+" ") {
+				hit, hitRest, hitLen = p, strings.TrimLeft(text[len(prefix):], " "), len(prefix)
+			}
 		}
+	}
+	if hit != nil {
+		return []Provider{hit}, newRequest(hitRest, "", true, c)
 	}
 	var out []Provider
 	for _, p := range e.providers {

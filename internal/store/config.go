@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -25,10 +26,16 @@ type Appearance struct {
 
 // Module 是一个功能模块（数据源）的开关和触发方式。
 type Module struct {
-	Enabled bool    `json:"enabled"`
-	Prefix  string  `json:"prefix"`
-	Global  bool    `json:"global"` // 是否参与无前缀的全局搜索
-	Weight  float64 `json:"weight"`
+	Enabled bool `json:"enabled"`
+	// Prefix 是这个模块的专属入口，可以写多个，用空格隔开（"cb clip"）。
+	Prefix string  `json:"prefix"`
+	Global bool    `json:"global"` // 是否参与无前缀的全局搜索
+	Weight float64 `json:"weight"`
+}
+
+// Prefixes 把 Prefix 拆成一个个前缀。
+func (m Module) Prefixes() []string {
+	return strings.FieldsFunc(m.Prefix, func(r rune) bool { return r == ' ' || r == '\t' || r == ',' || r == '，' || r == '　' })
 }
 
 // WebEntry 是一条网页搜索或网址别名。URL 中的 {q} 会替换成输入内容。
@@ -156,20 +163,22 @@ type Config struct {
 	Web             []WebEntry        `json:"web"`
 	Hotkeys         map[string]string `json:"hotkeys"`  // 命令 ID → 直达热键
 	Disabled        []string          `json:"disabled"` // 隐藏的命令 ID
-	Clipboard       ClipboardConfig   `json:"clipboard"`
-	Files           FilesConfig       `json:"files"`
-	Interpreters    map[string]string `json:"interpreters"` // 扩展名 → 解释器
-	URIAllowlist    []string          `json:"uriAllowlist"` // 允许通过 URI 直接执行的命令 ID
-	Keys            Keys              `json:"keys"`
-	DisabledPlugins []string          `json:"disabledPlugins"` // 停用的扩展：不加载、不占快捷键、窗口和后端进程都关掉
-	DetachOnHotkey  map[string]bool   `json:"detachOnHotkey"`  // 这些命令按直达热键时直接以独立窗口打开
-	HotkeyInput     map[string]string `json:"hotkeyInput"`     // 这些命令按直达热键时带入的内容：selection（默认）| clipboard | both | none
-	Translate       TranslateConfig   `json:"translate"`
-	Speech          SpeechConfig      `json:"speech"`
-	OCR             OCRConfig         `json:"ocr"`
-	Reader          ReaderConfig      `json:"reader"`
-	Selection       SelectionConfig   `json:"selection"`
-	PanelPosition   string            `json:"panelPosition"` // remember：记住拖动后的位置；center：每次在鼠标所在屏幕居中
+	// Keywords 是用户自己定的关键词：命令 ID → 关键词列表，代替这一项自带的。没有的项用自带的。
+	Keywords        map[string][]string `json:"keywords,omitempty"`
+	Clipboard       ClipboardConfig     `json:"clipboard"`
+	Files           FilesConfig         `json:"files"`
+	Interpreters    map[string]string   `json:"interpreters"` // 扩展名 → 解释器
+	URIAllowlist    []string            `json:"uriAllowlist"` // 允许通过 URI 直接执行的命令 ID
+	Keys            Keys                `json:"keys"`
+	DisabledPlugins []string            `json:"disabledPlugins"` // 停用的扩展：不加载、不占快捷键、窗口和后端进程都关掉
+	DetachOnHotkey  map[string]bool     `json:"detachOnHotkey"`  // 这些命令按直达热键时直接以独立窗口打开
+	HotkeyInput     map[string]string   `json:"hotkeyInput"`     // 这些命令按直达热键时带入的内容：selection（默认）| clipboard | both | none
+	Translate       TranslateConfig     `json:"translate"`
+	Speech          SpeechConfig        `json:"speech"`
+	OCR             OCRConfig           `json:"ocr"`
+	Reader          ReaderConfig        `json:"reader"`
+	Selection       SelectionConfig     `json:"selection"`
+	PanelPosition   string              `json:"panelPosition"` // remember：记住拖动后的位置；center：每次在鼠标所在屏幕居中
 }
 
 // DefaultClaudeModel 是翻译和识别默认使用的 Claude 模型。

@@ -1,6 +1,6 @@
 # @pocket.title 复制当前时间戳
 # @pocket.desc toast 模式：把最后一行显示成通知
-# @pocket.keywords timestamp,now
+# @pocket.keywords now,unixtime
 # @pocket.icon ⏱
 # @pocket.mode toast
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import { Settings, type ModuleInfo } from "../mygo";
+import { Catalog, Settings, type KeywordConflict, type ModuleInfo } from "../mygo";
 import { Icon } from "../shared/icons";
 import type { SectionProps } from "./app";
 import { Button, NumberInput, Row, Section, Text, Toggle } from "./ui";
@@ -21,11 +21,18 @@ export function Modules({ info, config, update }: SectionProps) {
   useEffect(() => {
     void Settings.modules().then(setModules);
   }, []);
+  // 前缀和别的功能的关键词撞了的话，在下面提示一句。改完稍等一下（等配置保存）再查。
+  const [conflicts, setConflicts] = useState<Record<string, KeywordConflict[]>>({});
+  const prefixes = Object.values(config.modules).map((m) => `${m.prefix}/${m.enabled}`).join("|");
+  useEffect(() => {
+    const t = setTimeout(() => void Catalog.conflicts().then((c) => setConflicts(c ?? {})), 500);
+    return () => clearTimeout(t);
+  }, [prefixes]);
 
   const c = config.clipboard;
   return (
     <>
-      <Section description="关掉不用的模块；前缀是这个模块的专属入口，比如输入「cb 关键词」只搜剪贴板。">
+      <Section description="关掉不用的模块；前缀是这个模块的专属入口，比如输入「cb 关键词」只搜剪贴板。一个模块可以有多个前缀，用空格隔开。各个功能的关键词在道具库里改。">
         <div class="st-table-head st-modules-grid">
           <span>模块</span>
           <span>前缀</span>
@@ -43,9 +50,14 @@ export function Modules({ info, config, update }: SectionProps) {
                 <div>
                   <div class="st-row-label">{m.title}</div>
                   <div class="st-row-desc">{m.description}</div>
+                  {(conflicts[`module:${m.id}`] ?? []).map((c) => (
+                    <div class="st-row-desc st-warn-text" key={c.keyword}>
+                      前缀 {c.keyword} 和「{c.with.join("」「")}」的关键词重复了
+                    </div>
+                  ))}
                 </div>
               </div>
-              <Text value={mod.prefix} width={64} mono placeholder="无" onChange={(v) => update((x) => (x.modules[m.id]!.prefix = v.trim()))} />
+              <Text value={mod.prefix} width={84} mono placeholder="无" onChange={(v) => update((x) => (x.modules[m.id]!.prefix = v.trim().split(/[\s,，]+/).filter(Boolean).join(" ")))} />
               <Toggle label={`${m.title}参与全局搜索`} checked={mod.global} onChange={(v) => update((x) => (x.modules[m.id]!.global = v))} />
               <select
                 class="st-select"

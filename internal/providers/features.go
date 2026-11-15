@@ -27,7 +27,6 @@ type FeatureDef struct {
 	// OS 不为空时只在这个系统上出现（windows | darwin）。
 	OS     string
 	target *match.Target
-	kw     []*match.Target
 }
 
 // FeatureCommand 是功能下的一条命令，例如「截图识别并复制」。
@@ -115,6 +114,14 @@ type Features struct {
 	PayloadCommands []*PayloadCommand
 	// Detach 把功能页直接以独立窗口打开。
 	Detach func(v *core.View) error
+	// Custom 查用户自己定的关键词（设置里可以改）。
+	Custom CustomKeywords
+	kws    keywordSet
+}
+
+// words 返回一个功能页或命令实际生效的关键词。
+func (f *Features) words(id string, defaults []string) []string {
+	return effective(f.Custom, "features:"+id, defaults)
 }
 
 // NewFeatures 创建功能页数据源。
@@ -127,15 +134,9 @@ func NewFeatures(commands []*FeatureCommand, detach func(v *core.View) error) *F
 	}
 	for _, d := range f.Defs {
 		d.target = match.Prepare(d.Title)
-		for _, k := range d.Keywords {
-			d.kw = append(d.kw, match.Prepare(k))
-		}
 	}
 	for _, c := range f.Commands {
 		c.target = match.Prepare(c.Title)
-		for _, k := range c.Keywords {
-			c.kw = append(c.kw, match.Prepare(k))
-		}
 	}
 	return f
 }
@@ -197,7 +198,8 @@ func (f *Features) Search(_ context.Context, req *core.Request) []core.Item {
 	var out []core.Item
 	first := strings.ToLower(req.First)
 	for _, d := range f.Defs {
-		if hit, args := keywordOf(d, first); hit {
+		words := f.words(d.ID, d.Keywords)
+		if hit, args := keywordOf(d, words, first); hit {
 			it := f.item(d, req.Rest, args)
 			switch {
 			case req.Rest == "":
@@ -210,14 +212,14 @@ func (f *Features) Search(_ context.Context, req *core.Request) []core.Item {
 			out = append(out, it)
 			continue
 		}
-		if r := match.Best(req.Query, d.target, d.kw...); r.OK && r.Score > 0 {
+		if r := match.Best(req.Query, d.target, f.kws.targets(words)...); r.OK && r.Score > 0 {
 			it := f.item(d, "", nil)
 			it.Score, it.Highlights = r.Score, r.Positions
 			out = append(out, it)
 		}
 	}
 	for _, c := range f.Commands {
-		if r := match.Best(req.Query, c.target, c.kw...); r.OK && r.Score > 0 {
+		if r := match.Best(req.Query, c.target, f.kws.targets(f.words(c.ID, c.Keywords))...); r.OK && r.Score > 0 {
 			it := f.commandItem(c)
 			it.Score, it.Highlights = r.Score, r.Positions
 			out = append(out, it)
@@ -226,11 +228,11 @@ func (f *Features) Search(_ context.Context, req *core.Request) []core.Item {
 	return out
 }
 
-func keywordOf(d *FeatureDef, first string) (bool, map[string]string) {
+func keywordOf(d *FeatureDef, words []string, first string) (bool, map[string]string) {
 	if first == "" {
 		return false, nil
 	}
-	for _, k := range d.Keywords {
+	for _, k := range words {
 		if strings.EqualFold(k, first) {
 			return true, d.Aliases[strings.ToLower(k)]
 		}
@@ -271,8 +273,14 @@ func (f *Features) CatalogItems() []core.Item {
 	return out
 }
 
-// KeywordsOf 返回功能页或命令的触发词（道具库展示用）。
+// KeywordsOf 返回功能页或命令实际生效的关键词。
 func (f *Features) KeywordsOf(id string) []string {
+	name := strings.TrimPrefix(id, "features:")
+	return f.words(name, f.DefaultKeywordsOf(id))
+}
+
+// DefaultKeywordsOf 返回功能页或命令自带的关键词（用户没改过时用的）。
+func (f *Features) DefaultKeywordsOf(id string) []string {
 	name := strings.TrimPrefix(id, "features:")
 	if d := f.Def(name); d != nil {
 		return d.Keywords

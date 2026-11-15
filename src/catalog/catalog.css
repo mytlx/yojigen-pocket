@@ -197,3 +197,114 @@
 .ct-ext-warn {
   color: var(--danger);
 }
+
+/* --- 关键词 / 前缀：冲突提示和编辑 --- */
+.ct-tag.is-conflict {
+  background: rgba(230, 150, 0, 0.16);
+  color: #a65f00;
+}
+:root[data-theme="dark"] .ct-tag.is-conflict {
+  color: #ffc56b;
+}
+.ct-tag.is-more {
+  background: transparent;
+  color: var(--text-3);
+}
+.ct-conflict-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 9px 12px;
+  border-radius: var(--radius-control);
+  background: rgba(230, 150, 0, 0.12);
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.ct-conflict-bar > svg {
+  flex: none;
+  color: #c47a00;
+}
+.ct-conflict-bar > span {
+  flex: 1;
+  min-width: 0;
+}
+.ct-words {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+}
+.ct-words-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 5px;
+  border-radius: var(--radius-control);
+  background: var(--well);
+}
+.ct-words-list:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.ct-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 3px 0 8px;
+  border-radius: 6px;
+  background: var(--card-solid);
+  box-shadow: inset 0 0 0 0.5px var(--line-strong);
+  font: 12px var(--font-mono);
+  color: var(--text);
+}
+.ct-word.is-conflict {
+  box-shadow: inset 0 0 0 1px rgba(230, 150, 0, 0.8);
+}
+.ct-word > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.ct-word > button:hover {
+  background: var(--hover);
+  color: var(--danger);
+}
+.ct-word-input {
+  flex: 1;
+  min-width: 110px;
+  height: 22px;
+  padding: 0 4px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: 12px var(--font-mono);
+}
+.ct-words-warn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #a65f00;
+}
+:root[data-theme="dark"] .ct-words-warn {
+  color: #ffc56b;
+}
+.ct-words-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}

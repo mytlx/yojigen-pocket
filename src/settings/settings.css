@@ -752,3 +752,11 @@ body,
   padding: 8px 10px 8px 14px;
   border-top: 0.5px solid var(--line);
 }
+
+/* 行里的提醒文字（前缀和关键词重复） */
+.st-warn-text {
+  color: #a65f00;
+}
+:root[data-theme="dark"] .st-warn-text {
+  color: #ffc56b;
+}

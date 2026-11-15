@@ -1,6 +1,6 @@
 import { render } from "preact";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ExternalLink, Keyboard, Pencil, PictureInPicture2, Search } from "lucide-preact";
+import { ExternalLink, Keyboard, Pencil, PictureInPicture2, Search, Tag, TriangleAlert, X } from "lucide-preact";
 import { Catalog, Launcher, Settings, events, type CatalogItem } from "../mygo";
 import "../shared/tokens.css";
 import "../shared/motion.css";
@@ -44,6 +44,8 @@ function App() {
   const [category, setCategory] = useState("全部");
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
+  const [editingWords, setEditingWords] = useState<string | null>(null); // 正在改关键词的那一项
+  const [onlyConflicts, setOnlyConflicts] = useState(false);
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null);
   const nav = useRef<HTMLElement>(null);
   const cursor = useRef<HTMLDivElement>(null);
@@ -84,10 +86,17 @@ function App() {
     const q = query.trim().toLowerCase();
     return items.filter((it) => {
       if (category !== "全部" && it.category !== category) return false;
+      if (onlyConflicts && !(it.conflicts ?? []).length) return false;
       if (!q) return true;
       return [it.title, it.subtitle ?? "", it.prefix ?? "", ...(it.keywords ?? [])].some((s) => s.toLowerCase().includes(q));
     });
-  }, [items, category, query]);
+  }, [items, category, query, onlyConflicts]);
+
+  // 被不止一项用着的关键词有几个（每个词只数一次）。
+  const conflictCount = useMemo(() => new Set(items.flatMap((it) => (it.conflicts ?? []).map((c) => c.keyword.toLowerCase()))).size, [items]);
+  useEffect(() => {
+    if (conflictCount === 0) setOnlyConflicts(false);
+  }, [conflictCount]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, CatalogItem[]>();
@@ -143,6 +152,15 @@ function App() {
         </div>
         <div class="st-content" key={category}>
           {category === MANAGE && <ExtensionsPanel flash={flash} />}
+          {category !== MANAGE && conflictCount > 0 && (
+            <div class="ct-conflict-bar">
+              <TriangleAlert size={15} />
+              <span>有 {conflictCount} 个关键词被不止一项用着：输入它的时候这几项都会出现，谁排前面看使用次数。想让它只属于一项，就改掉其中一项的关键词。</span>
+              <button class={`ui-btn is-small q-press${onlyConflicts ? " is-on" : ""}`} onClick={() => setOnlyConflicts((v) => !v)}>
+                {onlyConflicts ? "显示全部" : "只看有冲突的"}
+              </button>
+            </div>
+          )}
           {category !== MANAGE && grouped.length === 0 && <div class="st-empty">没有找到匹配的功能</div>}
           {category !== MANAGE && grouped.map(([cat, list]) => (
             <section class="ct-section" key={cat}>
@@ -173,10 +191,15 @@ function App() {
                       <Toggle checked={it.enabled} label={`${it.enabled ? "停用" : "启用"}${it.title}`} onChange={(v) => void act(Catalog.setEnabled(it.id, v), v ? "已启用" : "已停用")} />
                     </div>
                     <div class="ct-tags">
-                      {it.prefix && <span class="ct-tag is-prefix">前缀 {it.prefix}</span>}
-                      {(it.keywords ?? []).slice(0, 6).map((k) => (
-                        <span class="ct-tag" key={k}>{k}</span>
-                      ))}
+                      {it.kind === "module" && (it.prefix ?? "").split(/[\s,，]+/).filter(Boolean).map((k) => {
+                        const clash = conflictOf(it, k);
+                        return <span class={`ct-tag is-prefix${clash ? " is-conflict" : ""}`} key={k} title={clash}>前缀 {k}</span>;
+                      })}
+                      {(it.keywords ?? []).slice(0, 6).map((k) => {
+                        const clash = conflictOf(it, k);
+                        return <span class={`ct-tag${clash ? " is-conflict" : ""}`} key={k} title={clash}>{clash && <TriangleAlert size={10} />}{k}</span>;
+                      })}
+                      {(it.keywords ?? []).length > 6 && <span class="ct-tag is-more" title={(it.keywords ?? []).slice(6).join("、")}>+{(it.keywords ?? []).length - 6}</span>}
                       {it.hotkey && (
                         <span class="ct-tag is-hotkey">
                           {formatAccelerator(it.hotkey, platform).map((k) => <kbd key={k}>{k}</kbd>)}
@@ -193,8 +216,13 @@ function App() {
                         </button>
                       )}
                       {it.canHotkey && (
-                        <button class={`ui-btn is-small q-press${editing === it.id ? " is-on" : ""}`} onClick={() => setEditing(editing === it.id ? null : it.id)}>
+                        <button class={`ui-btn is-small q-press${editing === it.id ? " is-on" : ""}`} onClick={() => { setEditing(editing === it.id ? null : it.id); setEditingWords(null); }}>
                           <Keyboard size={13} /> 快捷键
+                        </button>
+                      )}
+                      {it.canKeywords && (
+                        <button class={`ui-btn is-small q-press${editingWords === it.id ? " is-on" : ""}`} title={it.kind === "module" ? "改这个模块的前缀，可以有多个" : "改打开它的关键词，可以有多个"} onClick={() => { setEditingWords(editingWords === it.id ? null : it.id); setEditing(null); }}>
+                          <Tag size={13} /> {it.kind === "module" ? "前缀" : "关键词"}
                         </button>
                       )}
                       {it.path && (
@@ -206,6 +234,7 @@ function App() {
                     {editing === it.id && (
                       <HotkeyEditor item={it} platform={platform} onDone={(msg, err) => { flash(msg, err); refresh(); }} />
                     )}
+                    {editingWords === it.id && <KeywordEditor item={it} onDone={(msg, err) => { flash(msg, err); refresh(); }} />}
                   </article>
                 ))}
               </div>
@@ -213,6 +242,77 @@ function App() {
           ))}
         </div>
       </main>
+    </div>
+  );
+}
+
+/** 这个词和谁撞了（给标签的提示用）；没撞返回 undefined。 */
+function conflictOf(item: CatalogItem, word: string): string | undefined {
+  const c = (item.conflicts ?? []).find((x) => x.keyword.toLowerCase() === word.toLowerCase());
+  return c ? `和「${c.with.join("」「")}」用了同一个词` : undefined;
+}
+
+/** 改一项的关键词（内置模块是前缀）：可以有多个，每改一下就保存。 */
+function KeywordEditor({ item, onDone }: { item: CatalogItem; onDone: (msg: string, error?: boolean) => void }) {
+  const isModule = item.kind === "module";
+  const words = isModule ? (item.prefix ?? "").split(/[\s,，]+/).filter(Boolean) : (item.keywords ?? []);
+  const [draft, setDraft] = useState("");
+  const noun = isModule ? "前缀" : "关键词";
+  const save = (next: string[], ok: string) =>
+    void Catalog.setKeywords(item.id, next).then(
+      () => onDone(ok),
+      (e: Error) => onDone(e.message, true),
+    );
+  const add = () => {
+    const fresh = draft.split(/[\s,，]+/).filter((w) => w && !words.some((x) => x.toLowerCase() === w.toLowerCase()));
+    setDraft("");
+    if (fresh.length) save([...words, ...fresh], `已添加${noun}`);
+  };
+  return (
+    <div class="ct-hotkey ct-words">
+      <div class="ct-words-list">
+        {words.map((w) => {
+          const clash = conflictOf(item, w);
+          return (
+            <span class={`ct-word${clash ? " is-conflict" : ""}`} key={w} title={clash}>
+              {w}
+              <button type="button" aria-label={`删除${noun} ${w}`} onClick={() => save(words.filter((x) => x !== w), `已删除${noun}`)}>
+                <X size={11} />
+              </button>
+            </span>
+          );
+        })}
+        <input
+          class="ct-word-input"
+          value={draft}
+          spellcheck={false}
+          placeholder={words.length ? `再加一个${noun}，回车确认` : `输入${noun}，回车确认`}
+          onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " " || e.key === "," || e.key === "，") {
+              e.preventDefault();
+              add();
+            } else if (e.key === "Backspace" && !draft && words.length) {
+              save(words.slice(0, -1), `已删除${noun}`);
+            }
+          }}
+          onBlur={add}
+        />
+      </div>
+      {(item.conflicts ?? []).map((c) => (
+        <div class="ct-words-warn" key={c.keyword}>
+          <TriangleAlert size={12} />
+          <span><b>{c.keyword}</b> 和「{c.with.join("」「")}」重复了</span>
+        </div>
+      ))}
+      <div class="ct-words-foot">
+        <span>{isModule ? "输入前缀加空格（符号前缀不用空格），只在这个模块里搜" : "输入关键词回车打开；后面跟内容就带着内容打开"}</span>
+        {item.customKeywords && (
+          <button class="ui-btn is-small q-press" onClick={() => void Catalog.resetKeywords(item.id).then(() => onDone("已恢复默认"), (e: Error) => onDone(e.message, true))}>
+            恢复默认
+          </button>
+        )}
+      </div>
     </div>
   );
 }

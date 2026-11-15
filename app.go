@@ -228,6 +228,7 @@ func (a *App) buildEngine(ctx context.Context) {
 			return err
 		},
 	}
+	a.plugins.Custom = a.customKeywords
 	a.plugins.Reload()
 
 	a.files = &providers.Files{Config: get}
@@ -245,6 +246,7 @@ func (a *App) buildEngine(ctx context.Context) {
 		return err
 	})
 	a.features.PayloadCommands = a.payloadCommands()
+	a.features.Custom = a.customKeywords
 	windows := &providers.Windows{
 		List: func() []providers.WindowEntry {
 			var out []providers.WindowEntry

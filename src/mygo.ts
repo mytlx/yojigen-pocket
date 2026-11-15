@@ -132,6 +132,11 @@ export interface CatalogItem {
   /** 能不能绑直达快捷键 */
   canHotkey?: boolean;
   path?: string;
+  /** 关键词（内置模块就是前缀）：能不能在这里改、自带的是什么、是不是改过、哪些和别的项撞了。 */
+  canKeywords?: boolean;
+  defaultKeywords?: string[];
+  customKeywords?: boolean;
+  conflicts?: KeywordConflict[];
 }
 
 export interface ChapterText {
@@ -228,6 +233,7 @@ export interface Config {
   web: WebEntry[];
   hotkeys: Record<string, string>;
   disabled: string[];
+  keywords?: Record<string, string[]>;
   clipboard: ClipboardConfig;
   files: FilesConfig;
   interpreters: Record<string, string>;
@@ -436,6 +442,13 @@ export interface Item {
 
 export interface Keys {
   detach: string;
+}
+
+/** KeywordConflict 是一个被别的项也用了的关键词。 */
+export interface KeywordConflict {
+  keyword: string;
+  /** 另外那几项的名字 */
+  with: string[];
 }
 
 export interface LLMConfig {
@@ -1152,6 +1165,10 @@ export const DevTools = {
 
 /** Catalog 是「道具库」窗口的服务。 */
 export const Catalog = {
+  /** Conflicts 列出所有“同一个关键词被几项共用”的情况：命令 ID → 撞了的词。设置里的模块页用它提示。 */
+  conflicts(): Promise<Record<string, KeywordConflict[]>> {
+    return call("Catalog.Conflicts");
+  },
   /** Detach 以独立窗口打开一项。 */
   detach(id: string): Promise<void> {
     return call("Catalog.Detach", id);
@@ -1168,6 +1185,10 @@ export const Catalog = {
   open(id: string): Promise<void> {
     return call("Catalog.Open", id);
   },
+  /** ResetKeywords 把一项的关键词恢复成自带的。 */
+  resetKeywords(id: string): Promise<void> {
+    return call("Catalog.ResetKeywords", id);
+  },
   /** SetEnabled 启用或停用一项；内置模块（module:xxx）是整个模块的开关。 */
   setEnabled(id: string, enabled: boolean): Promise<void> {
     return call("Catalog.SetEnabled", id, enabled);
@@ -1175,6 +1196,10 @@ export const Catalog = {
   /** SetHotkey 给一项绑定直达热键，返回注册失败的原因（成功时为空）。 */
   setHotkey(id: string, accel: string, detach: boolean, inputMode: string): Promise<string> {
     return call("Catalog.SetHotkey", id, accel, detach, inputMode);
+  },
+  /** SetKeywords 改一项的关键词（内置模块就是它的前缀），可以有多个。空列表表示不要关键词。 */
+  setKeywords(id: string, words: string[]): Promise<void> {
+    return call("Catalog.SetKeywords", id, words);
   },
 } as const;
 

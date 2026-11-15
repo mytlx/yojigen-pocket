@@ -1119,6 +1119,51 @@ if cw:
     show(); typed('regex'); check('停用后搜不到', '正则测试' not in rows())
     js('mygo.call("Catalog.SetEnabled","features:regex",true)', cw['id']); wait(0.4)
     typed('regex'); check('重新启用', '正则测试' in rows())
+
+    # --- 关键词和前缀：可以改、可以有多个，重复了有提示
+    cid=cw['id']
+    def item(i): return next((x for x in (js('mygo.call("Catalog.Items")', cid) or []) if x['id']==i), {})
+    def call_err(code):
+        try:
+            js(code, cid); return None
+        except RuntimeError as e:
+            return str(e)
+    base=js('mygo.call("Catalog.Conflicts")', cid) or {}
+    check('默认的关键词互不重复', base=={}, base)
+    js('mygo.call("Catalog.SetKeywords","features:json",["jj","格式化"])', cid); wait(0.5)
+    it=item('features:json'); check('关键词可以改成自己的，可以有多个', it.get('keywords')==['jj','格式化'] and it.get('customKeywords') is True and 'json' in it.get('defaultKeywords',[]), it)
+    typed('jj'); r=rows(); check('新关键词马上生效', r[:1]==['JSON 工具'], r[:3])
+    typed('格式化'); r=rows(); check('第二个关键词也生效', r[:1]==['JSON 工具'], r[:3])
+    typed('jj [1,2]'); wait(0.3); sub=js('document.querySelector(".pk-row.is-selected .pk-row-subtitle")?.innerText||""') or ''
+    check('新关键词后面跟内容：带着内容打开', rows()[:1]==['JSON 工具'] and '带入' in sub, (rows()[:2], sub))
+    js('mygo.call("Catalog.SetKeywords","features:regex",["JJ","re"])', cid); wait(0.5)
+    cf=js('mygo.call("Catalog.Conflicts")', cid) or {}
+    check('两项用了同一个关键词：两边都提示（不分大小写）', [c['with'] for c in cf.get('features:json',[])]==[['正则测试']] and [c['with'] for c in cf.get('features:regex',[])]==[['JSON 工具']], cf)
+    js('mygo.call("Catalog.SetKeywords","module:calc",["=","算"])', cid); wait(0.5)
+    check('内置模块可以有多个前缀', item('module:calc').get('prefix')=='= 算', item('module:calc'))
+    typed('算 1+2'); wait(0.4); alt=rows(); typed('=1+2'); wait(0.4)
+    check('第二个前缀和第一个进的是同一个模块', alt[:1]==['3'] and rows()[:1]==['3'], (alt[:3], rows()[:3]))
+    js('mygo.call("Catalog.SetKeywords","module:shell",[">","jj"])', cid); wait(0.5)
+    cf=js('mygo.call("Catalog.Conflicts")', cid) or {}
+    check('模块前缀和功能的关键词重复也会提示', any(c['keyword']=='jj' for c in cf.get('module:shell',[])), cf.get('module:shell'))
+    bad=call_err('mygo.call("Catalog.SetKeywords","features:json",["a b"])')
+    check('关键词里不能有空格', bad is not None and '空格' in bad, bad)
+    bad=call_err('mygo.call("Catalog.SetKeywords","scripts:示例/时间戳",["x"])')
+    check('脚本的关键词写在脚本里，不在这里改', bad is not None, bad)
+    js('mygo.call("Catalog.ResetKeywords","module:shell")', cid); js('mygo.call("Catalog.ResetKeywords","module:calc")', cid); js('mygo.call("Catalog.ResetKeywords","features:regex")', cid); wait(0.5)
+    check('恢复默认', item('module:shell').get('prefix')=='>' and item('features:regex').get('customKeywords') is not True and (js('mygo.call("Catalog.Conflicts")', cid) or {})=={}, js('mygo.call("Catalog.Conflicts")', cid))
+    # 界面：卡片上点“关键词”，在输入框里加一个
+    fill('.ct-search input', 'JSON 工具', cid); wait(0.4)
+    js('(()=>{const c=[...document.querySelectorAll(".ct-card")].find(c=>c.querySelector("b").innerText==="JSON 工具");[...c.querySelectorAll(".ct-actions .ui-btn")].find(b=>b.innerText.includes("关键词")).click();return 1})()', cid); wait(0.4)
+    check('卡片上可以打开关键词编辑', texts('.ct-words .ct-word', cid)==['jj','格式化'], texts('.ct-words .ct-word', cid))
+    js('(()=>{const i=document.querySelector(".ct-word-input");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(i,"re");i.dispatchEvent(new Event("input",{bubbles:true}));return 1})()', cid); wait(0.2)
+    js('document.querySelector(".ct-word-input").dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));1', cid); wait(0.8)
+    check('在编辑框里加一个关键词', texts('.ct-words .ct-word', cid)==['jj','格式化','re'], texts('.ct-words .ct-word', cid))
+    check('加的词和别人重复：编辑框里和卡片上都标出来', 're' in ''.join(texts('.ct-words-warn', cid)) and '正则测试' in ''.join(texts('.ct-words-warn', cid)) and len(texts('.ct-tag.is-conflict', cid))>=1 and len(texts('.ct-conflict-bar', cid))==1, (texts('.ct-words-warn', cid), texts('.ct-tag.is-conflict', cid)))
+    shot('catalog-keywords', cid)
+    js('[...document.querySelectorAll(".ct-words-foot .ui-btn")].find(b=>b.innerText.includes("恢复默认")).click();1', cid); wait(0.8)
+    check('编辑框里点恢复默认', 'json' in texts('.ct-words .ct-word', cid) and len(texts('.ct-conflict-bar', cid))==0, texts('.ct-words .ct-word', cid))
+    fill('.ct-search input', '', cid); wait(0.2)
     js('setTimeout(()=>mygo.call("Windows.Control","close",0),30);1', cw['id']); wait(0.4)
 
 # 设置：翻译与识别分区

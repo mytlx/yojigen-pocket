@@ -107,7 +107,6 @@ type Tool struct {
 	ToolDef
 	Plugin string
 	target *match.Target
-	kw     []*match.Target
 }
 
 // ItemID 是这个工具在搜索、快捷键、停用列表里的 ID。扩展只有一个同名工具时就是 plugins:<扩展>。
@@ -152,6 +151,9 @@ type Plugins struct {
 	// OpenFloat 打开（或收起）悬浮窗工具；Detach 直接以独立窗口打开。
 	OpenFloat func(plugin, tool string) error
 	Detach    func(v *core.View) error
+	// Custom 查用户自己定的关键词（设置里可以改）。
+	Custom CustomKeywords
+	kws    keywordSet
 
 	mu   sync.RWMutex
 	list []*plugin
@@ -240,11 +242,7 @@ func ReadManifest(dir, dirName string) (*Manifest, []*Tool, error) {
 				r.re = re
 			}
 		}
-		t := &Tool{ToolDef: d, Plugin: m.ID, target: match.Prepare(d.Title)}
-		for _, k := range d.Keywords {
-			t.kw = append(t.kw, match.Prepare(k))
-		}
-		tools = append(tools, t)
+		tools = append(tools, &Tool{ToolDef: d, Plugin: m.ID, target: match.Prepare(d.Title)})
 	}
 	for _, d := range m.Permissions.Dirs {
 		if !ValidUserDir(d) {
@@ -479,21 +477,23 @@ func (p *Plugins) Search(_ context.Context, req *core.Request) []core.Item {
 			continue
 		}
 		for _, t := range x.tools {
+			words := effective(p.Custom, t.ItemID(), t.Keywords)
+			hit := hasKeyword(words, first)
 			// 关键词完全命中、后面还有内容：把内容带进去（md 今天的会议）。
-			if req.Rest != "" && slices.ContainsFunc(t.Keywords, func(k string) bool { return strings.EqualFold(k, first) }) && t.Window != "float" {
+			if req.Rest != "" && hit && t.Window != "float" {
 				it := p.item(x, t, req.Rest, nil)
 				it.Exact, it.Score = true, 1
 				it.Subtitle = "带入：" + truncate(req.Rest, 60)
 				out = append(out, it)
 				continue
 			}
-			if slices.ContainsFunc(t.Keywords, func(k string) bool { return strings.EqualFold(k, first) }) && req.Rest == "" {
+			if hit && req.Rest == "" {
 				it := p.item(x, t, "", nil)
 				it.Exact, it.Score = true, 1
 				out = append(out, it)
 				continue
 			}
-			if r := match.Best(req.Query, t.target, t.kw...); r.OK && r.Score > 0 {
+			if r := match.Best(req.Query, t.target, p.kws.targets(words)...); r.OK && r.Score > 0 {
 				it := p.item(x, t, "", nil)
 				it.Score, it.Highlights = r.Score, r.Positions
 				out = append(out, it)
@@ -570,7 +570,7 @@ func (p *Plugins) SearchPayload(_ context.Context, req *core.Request, pl *core.P
 				}
 				if typed == "" {
 					it.Score = 0.6
-				} else if r := match.Best(req.Query, t.target, t.kw...); r.OK && r.Score > 0 {
+				} else if r := match.Best(req.Query, t.target, p.kws.targets(effective(p.Custom, t.ItemID(), t.Keywords))...); r.OK && r.Score > 0 {
 					it.Score, it.Highlights = r.Score, r.Positions
 				} else {
 					break
@@ -627,8 +627,13 @@ func (p *Plugins) CatalogItems() []core.Item {
 	return out
 }
 
-// KeywordsOf 返回一个工具的触发词（道具库展示用）。
+// KeywordsOf 返回一个工具实际生效的关键词。
 func (p *Plugins) KeywordsOf(id string) []string {
+	return effective(p.Custom, id, p.DefaultKeywordsOf(id))
+}
+
+// DefaultKeywordsOf 返回一个工具在清单里写的关键词（用户没改过时用的）。
+func (p *Plugins) DefaultKeywordsOf(id string) []string {
 	rest := strings.TrimPrefix(id, "plugins:")
 	plug, tool, _ := strings.Cut(rest, "/")
 	if t, ok := p.ToolOf(plug, tool); ok {

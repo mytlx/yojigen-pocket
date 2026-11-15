@@ -33,6 +33,7 @@ import (
 	"yojigen-pocket/internal/ocr"
 	"yojigen-pocket/internal/platform"
 	"yojigen-pocket/internal/providers"
+	"yojigen-pocket/internal/store"
 	"yojigen-pocket/internal/translate"
 )
 
@@ -97,8 +98,8 @@ var modulePages = map[string]string{"calc": "features:calc", "clipboard": "featu
 
 // openModule 带着模块的前缀打开搜索框（没有独立页面的模块）。
 func (a *App) openModule(name string) {
-	if m := a.config.Get().Modules[name]; m.Prefix != "" {
-		a.showPanel(m.Prefix + " ")
+	if prefixes := a.config.Get().Modules[name].Prefixes(); len(prefixes) > 0 {
+		a.showPanel(prefixes[0] + " ")
 		return
 	}
 	a.showPanel("")
@@ -704,6 +705,11 @@ type CatalogItem struct {
 	CanDetach bool     `json:"canDetach"`
 	CanHotkey bool     `json:"canHotkey,omitempty"` // 能不能绑直达快捷键
 	Path      string   `json:"path,omitempty"`
+	// 关键词（内置模块就是前缀）：能不能在这里改、自带的是什么、是不是改过、哪些和别的项撞了。
+	CanKeywords     bool              `json:"canKeywords,omitempty"`
+	DefaultKeywords []string          `json:"defaultKeywords,omitempty"`
+	CustomKeywords  bool              `json:"customKeywords,omitempty"`
+	Conflicts       []KeywordConflict `json:"conflicts,omitempty"`
 }
 
 // 道具库的分类顺序。
@@ -716,6 +722,7 @@ func (a *App) catalogItems() []CatalogItem {
 		hotkeys[id] = k
 	}
 	var out []CatalogItem
+	owners := a.keywordOwners(cfg)
 	add := func(it core.Item, category string, keywords []string) {
 		ui := a.engine.NormalizeIcon(it.Icon)
 		canDetach := false
@@ -723,30 +730,40 @@ func (a *App) catalogItems() []CatalogItem {
 			v := it.Actions[0].View
 			canDetach = v.Type == "feature" || (v.Type == "panel" && v.URL != "")
 		}
-		out = append(out, CatalogItem{
+		item := CatalogItem{
 			ID: it.ID, Title: it.Title, Subtitle: it.Subtitle, Icon: ui, Category: category, Keywords: keywords,
 			Hotkey: hotkeys[it.ID], Kind: "item", Enabled: !slices.Contains(cfg.Disabled, it.ID), CanDetach: canDetach, CanHotkey: true, Path: it.Path,
-		})
+		}
+		if defaults, ok := a.defaultKeywords(it.ID); ok {
+			item.CanKeywords, item.DefaultKeywords = true, defaults
+			_, item.CustomKeywords = cfg.Keywords[it.ID]
+		}
+		isCommand := strings.HasPrefix(it.ID, "features:") && a.features.Def(strings.TrimPrefix(it.ID, "features:")) == nil
+		if item.Enabled && !isCommand {
+			item.Conflicts = conflictsOf(owners, a.ownerKey(it.ID), keywords)
+		}
+		out = append(out, item)
 	}
 	for _, it := range a.features.CatalogItems() {
 		add(it, it.SourceLabel, a.features.KeywordsOf(it.ID))
 	}
 	// 内置模块：按前缀或全局搜索使用的能力。
-	moduleItems := map[string]struct{ title, icon string }{
-		"apps": {"应用搜索", "svg:app"}, "files": {"文件搜索", "svg:file"}, "clipboard": {"剪贴板历史", "svg:clipboard"},
-		"snippets": {"文本片段", "svg:snippet"}, "calc": {"计算器", "svg:calculator"}, "paths": {"路径浏览", "svg:folder"},
-		"shell": {"命令行", "svg:terminal"}, "web": {"网页搜索", "svg:globe"}, "tools": {"快捷小工具", "svg:wrench"},
-	}
-	for _, id := range []string{"apps", "files", "clipboard", "snippets", "calc", "paths", "shell", "web", "tools"} {
+	defaults := store.DefaultConfig()
+	for _, id := range moduleOrder {
 		m := cfg.Modules[id]
-		meta := moduleItems[id]
+		meta := moduleMeta[id]
 		_, hasPage := modulePages[id]
-		out = append(out, CatalogItem{
+		item := CatalogItem{
 			ID: "module:" + id, Title: meta.title, Subtitle: moduleDescriptions[id], Icon: meta.icon, Category: "内置模块",
 			Prefix: m.Prefix, Kind: "module", Enabled: m.Enabled,
 			// 有页面的能开独立窗口；有页面或有前缀的能绑快捷键（按下就是打开它）。
 			Hotkey: hotkeys["module:"+id], CanDetach: hasPage, CanHotkey: hasPage || m.Prefix != "",
-		})
+			CanKeywords: true, DefaultKeywords: defaults.Modules[id].Prefixes(), CustomKeywords: m.Prefix != defaults.Modules[id].Prefix,
+		}
+		if m.Enabled {
+			item.Conflicts = conflictsOf(owners, "module:"+id, m.Prefixes())
+		}
+		out = append(out, item)
 	}
 	for _, it := range a.plugins.CatalogItems() {
 		// 扩展里的工具可以声明自己归到哪一类（效率工具、开发工具），没写的归到“扩展”。
