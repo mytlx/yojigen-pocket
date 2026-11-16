@@ -1023,6 +1023,9 @@
 .fx-notes-rich .milkdown .ProseMirror .milkdown-list-item-block.pocket-active-prefix-li > .list-item > .label-wrapper {
   display: none;
 }
+.fx-notes-rich .milkdown .ProseMirror .milkdown-list-item-block.pocket-active-prefix-li > .list-item > .children > .content-dom > p:first-of-type ~ * {
+  margin-left: 34px;
+}
 .fx-notes-rich .milkdown .ProseMirror blockquote:has(> p.pocket-active-prefix-quote) {
   padding-left: 0;
 }
