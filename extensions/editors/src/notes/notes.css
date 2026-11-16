@@ -114,6 +114,7 @@
 }
 .fx-notes-rich .milkdown .ProseMirror p {
   line-height: 1.7;
+  min-height: calc(1.7em + 6px);
   padding: 3px 0;
 }
 
@@ -959,6 +960,7 @@
 
 /* Typora 行内语法显隐与块前缀实时渲染（模式一）。 */
 .fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap {
+  position: relative;
   display: inline-grid;
   align-items: baseline;
   vertical-align: baseline;
@@ -974,13 +976,22 @@
   grid-area: 1 / 1;
   visibility: hidden;
   white-space: pre;
+  min-width: 1ch;
   padding: 0 3px;
   font: inherit;
+  line-height: inherit;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap.is-url::after {
+  max-width: 320px;
+  overflow: hidden;
 }
 .fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap > .pocket-syntax-input {
-  grid-area: 1 / 1;
+  position: absolute;
+  inset: 0;
   width: 100%;
-  min-width: 1ch;
+  height: 100%;
+  min-width: 0;
+  margin: 0;
   padding: 0 3px;
   border: 0;
   outline: none;
@@ -988,6 +999,7 @@
   color: var(--accent);
   caret-color: var(--text);
   font: inherit;
+  line-height: inherit;
 }
 .fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap.is-block-prefix {
   margin-right: 4px;
@@ -1008,12 +1020,24 @@
   align-items: baseline;
   vertical-align: baseline;
 }
-.fx-notes-rich .milkdown .ProseMirror li.pocket-active-prefix-li > .milkdown-list-item-block > .list-item > .label-wrapper {
+.fx-notes-rich .milkdown .ProseMirror .milkdown-list-item-block.pocket-active-prefix-li > .list-item > .label-wrapper {
   display: none;
 }
-.fx-notes-rich .milkdown .ProseMirror blockquote:has(> p.pocket-active-prefix-quote:only-child) {
-  border-left-color: transparent;
+.fx-notes-rich .milkdown .ProseMirror blockquote:has(> p.pocket-active-prefix-quote) {
   padding-left: 0;
+}
+.fx-notes-rich .milkdown .ProseMirror blockquote:has(> p.pocket-active-prefix-quote)::before {
+  display: none;
+}
+.fx-notes-rich .milkdown .ProseMirror blockquote:has(> p.pocket-active-prefix-quote) > :not(.pocket-active-prefix-quote) {
+  padding-left: 16px;
+  border-left: 3px solid rgba(var(--accent-rgb), 0.5);
+}
+.fx-notes-rich .milkdown .ProseMirror blockquote:has(> p.pocket-active-prefix-quote) > blockquote:not(.pocket-active-prefix-quote) {
+  padding-left: 30px;
+}
+.fx-notes-rich .milkdown .ProseMirror blockquote:has(> p.pocket-active-prefix-quote) > blockquote:not(.pocket-active-prefix-quote)::before {
+  left: 14px;
 }
 
 /* 阅读模式下 HTML 与 <br> 直接渲染。 */
@@ -1033,21 +1057,70 @@
 .fx-notes-rich .milkdown .ProseMirror .pocket-html-live.is-block {
   display: block;
   width: 100%;
+  margin: 4px 0;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-block {
+  margin: 6px 0;
+}
+.fx-notes-rich .milkdown .ProseMirror details.pocket-html-block {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--well) 45%, transparent);
+}
+.fx-notes-rich .milkdown .ProseMirror details.pocket-html-block > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+  user-select: none;
+}
+.fx-notes-rich .milkdown .ProseMirror details.pocket-html-block[open] > summary {
+  margin-bottom: 6px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-live :is(ul, ol) {
+  padding-left: 22px;
+  margin: 4px 0;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-live details {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-live details > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-live table {
+  border-collapse: collapse;
+  margin: 4px 0;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-live :is(th, td) {
+  border: 1px solid var(--line-strong);
+  padding: 4px 10px;
 }
 .fx-notes-rich .milkdown .ProseMirror .pocket-html-editing {
   display: inline-block;
   max-width: 100%;
 }
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-editing:has(> textarea) {
+  display: block;
+  width: 100%;
+}
 .fx-notes-rich .milkdown .ProseMirror .pocket-html-input {
-  padding: 2px 6px;
+  box-sizing: border-box;
+  padding: 4px 8px;
   border: 1px solid rgba(var(--accent-rgb), 0.55);
   border-radius: 5px;
   background: var(--well);
   color: var(--text);
   caret-color: var(--text);
-  font: 13px/1.5 var(--font-mono);
+  font: 13px/1.55 var(--font-mono);
   outline: none;
   max-width: 100%;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-editing > textarea.pocket-html-input {
+  width: 100%;
+  display: block;
 }
 .fx-notes-rich .milkdown .ProseMirror .pocket-block-source {
   display: block;

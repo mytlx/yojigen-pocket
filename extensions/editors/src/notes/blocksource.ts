@@ -24,8 +24,8 @@ interface BlockTarget {
 }
 
 const key = new PluginKey<Editing | null>("pocket-block-source");
-const BLOCK_EDITABLE = new Set(["paragraph", "heading", "blockquote", "bullet_list", "ordered_list"]);
-const CONTAINER_BLOCKS = new Set(["blockquote", "bullet_list", "ordered_list"]);
+const BLOCK_EDITABLE = new Set(["paragraph", "heading", "blockquote", "bullet_list", "ordered_list", "pocket_html_block"]);
+const CONTAINER_BLOCKS = new Set(["blockquote", "bullet_list", "ordered_list", "pocket_html_block"]);
 const EXCLUDED_ANCESTORS = new Set(["table", "table_row", "table_cell", "table_header", "code_block"]);
 let sequence = 0;
 

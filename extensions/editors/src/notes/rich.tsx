@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { EditorView as PMView } from "@milkdown/kit/prose/view";
 import { ArrowDown, ArrowUp, Check, Code, Copy, Heading1, Heading2, Heading3, Heading4, List, ListChecks, ListOrdered, Pilcrow, Quote, Trash2 } from "lucide-preact";
 import { blockSourcePlugin } from "./blocksource";
-import { configureBlankLines, remarkBlankLines } from "./blanklines";
+import { blankLinesPlugin, configureBlankLines, remarkBlankLines, restoreBlankLinesOnMarkdown } from "./blanklines";
 import { configurePocketHtml, pocketHtmlPlugins } from "./htmlrender";
 import { liveInlinePlugin } from "./liveinline";
 import { previewDocument } from "./html-preview";
@@ -87,10 +87,9 @@ export function RichEditor(props: RichProps) {
             }),
           );
 
-        const leading = /^(?:[ \t]*\r?\n)+/.exec(latest.current.value)?.[0] ?? "";
         const crepe = new Crepe({
           root: host.current,
-          defaultValue: latest.current.value.slice(leading.length),
+          defaultValue: latest.current.value,
           features: {
             [Crepe.Feature.Latex]: true,
             [Crepe.Feature.AI]: false,
@@ -150,16 +149,23 @@ export function RichEditor(props: RichProps) {
             ctx.set(remarkGFMPlugin.options.key, { singleTilde: false });
             marks.configurePocketMarks(ctx);
             configureBlankLines(ctx);
-            configurePocketHtml(ctx);
+            configurePocketHtml(ctx, { isLive: () => !latest.current.revealSource });
           })
           .use(marks.pocketMarks)
           .use(pocketHtmlPlugins)
           .use(remarkBlankLines)
+          .use(blankLinesPlugin)
           .use(toc.tocPlugin)
           .use(liveInlinePlugin(() => ({ enabled: !latest.current.revealSource })))
           .use(blockSourcePlugin(() => ({ enabled: latest.current.revealSource, shortcuts: latest.current.shortcuts })));
         // 保存时 [TOC] 会被转义成 \[TOC]（方括号在 Markdown 里有含义），别的编辑器就不认了：改回去。
-        crepe.on((l) => l.markdownUpdated((_ctx, md) => latest.current.onChange(leading + md.replace(/^\\\[(toc)\]$/gim, "[$1]"))));
+        crepe.on((l) =>
+          l.markdownUpdated((ctx, md) => {
+            const v = ctx.get(editorViewCtx);
+            const full = restoreBlankLinesOnMarkdown(v.state.doc, md, v.state);
+            latest.current.onChange(full.replace(/^\\\[(toc)\]$/gim, "[$1]"));
+          }),
+        );
         // 不在空段落处写入 <br /> 占位，保持标准 Markdown 换行行为（类 Typora）。
         await crepe.editor.remove(remarkPreserveEmptyLinePlugin);
         await crepe.create();

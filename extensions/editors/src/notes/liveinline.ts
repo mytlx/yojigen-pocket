@@ -1,7 +1,7 @@
 import { lift, setBlockType } from "@milkdown/kit/prose/commands";
 import type { Mark, Node as PMNode, ResolvedPos } from "@milkdown/kit/prose/model";
 import { liftListItem, wrapInList } from "@milkdown/kit/prose/schema-list";
-import { Plugin, PluginKey, TextSelection } from "@milkdown/kit/prose/state";
+import { NodeSelection, Plugin, PluginKey, TextSelection } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { $prose } from "@milkdown/kit/utils";
 
@@ -112,6 +112,7 @@ function makeTokenWidget(
 
   const input = document.createElement("input");
   input.type = "text";
+  input.size = 1;
   input.className = "pocket-syntax-input";
   input.value = text;
   input.spellcheck = false;
@@ -185,14 +186,62 @@ function mapTokenToMark(token: string): { name: string; attrs?: Record<string, u
   }
 }
 
+const STANDALONE_VOID_HTML_RE = /^<(?:br|hr)\s*\/?>$/i;
+const STANDALONE_COMMENT_HTML_RE = /^<!--[\s\S]*-->$/;
+const STANDALONE_PAIRED_HTML_RE = /^<([a-z][a-z0-9-]*)(?:\s+[^>]*)?>[\s\S]*<\/\1>$/i;
+const DISALLOWED_INLINE_UPGRADE = new Set(["script", "iframe", "object", "embed", "applet", "base", "meta", "link", "form", "noscript"]);
+
+/** 判断整段纯文本是否为手动输入的独立 HTML 片段（用于阅读模式输入后实时渲染）。 */
+export function matchStandaloneHtmlSnippet(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed || !trimmed.startsWith("<") || !trimmed.endsWith(">")) return null;
+  if (STANDALONE_VOID_HTML_RE.test(trimmed) || STANDALONE_COMMENT_HTML_RE.test(trimmed)) return trimmed;
+  const paired = STANDALONE_PAIRED_HTML_RE.exec(trimmed);
+  if (!paired) return null;
+  const tag = paired[1]!.toLowerCase();
+  if (DISALLOWED_INLINE_UPGRADE.has(tag)) return null;
+  return trimmed;
+}
+
+function paragraphPlainTextIfUnmarked(node: PMNode): string | null {
+  if (node.type.name !== "paragraph" || node.childCount === 0) return null;
+  let text = "";
+  for (let i = 0; i < node.childCount; i++) {
+    const c = node.child(i);
+    if (!c.isText || c.marks.length > 0) return null;
+    text += c.text ?? "";
+  }
+  return text;
+}
+
+function singleHtmlNodePos(state: EditorView["state"]): number {
+  const sel = state.selection;
+  if (sel instanceof NodeSelection && sel.node.type.name === "html") return sel.from;
+  if (sel instanceof TextSelection && sel.empty) {
+    const $from = sel.$from;
+    for (let d = $from.depth; d >= 1; d--) {
+      const n = $from.node(d);
+      if (n.type.name === "paragraph") {
+        return n.childCount === 1 && n.firstChild?.type.name === "html" ? $from.before(d) + 1 : -1;
+      }
+      if (n.isTextblock) return -1;
+    }
+  }
+  return -1;
+}
+
 /**
  * 模式一（Typora 式实时渲染）：
  * - 行内块：光标点到加粗/斜体/代码/高亮/上标/下标/链接等行内格式时，仅在两侧展开语法符号；
- * - 块前缀：光标进入标题、单个列表项或引用段落时，仅展示/替换当前行的 # / - / 1. / - [ ] / > 前缀。
+ * - 块前缀：光标进入标题、单个列表项或引用段落时，仅展示/替换当前行的 # / - / 1. / - [ ] / > 前缀；
+ * - HTML 节点：单击或光标移入 HTML 节点实时编辑源码，输入独立 HTML 片段后失焦/回车自动渲染。
  */
 export function liveInlinePlugin(options: () => { enabled: boolean }) {
   return $prose(() => {
     let pointerDown = false;
+    let dismissedHtmlPos: number | null = null;
+    let lastAutoHtmlPos: number | null = null;
+    let editedParaPos: number | null = null;
 
     const buildDecorations = (view: EditorView | null, state: EditorView["state"]): DecorationSet | null => {
       if (!options().enabled || pointerDown) return null;
@@ -481,15 +530,72 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
 
     let boundView: EditorView | null = null;
 
+    const currentParaPos = (state: EditorView["state"]): number | null => {
+      const $from = state.selection.$from;
+      for (let d = $from.depth; d >= 1; d--) {
+        if ($from.node(d).type.name === "paragraph") return $from.before(d);
+      }
+      return null;
+    };
+
+    const upgradeEditedPara = (view: EditorView, pos: number): boolean => {
+      const node = view.state.doc.nodeAt(pos);
+      if (!node) return false;
+      const plain = paragraphPlainTextIfUnmarked(node);
+      if (!plain) return false;
+      const snippet = matchStandaloneHtmlSnippet(plain);
+      const htmlType = view.state.schema.nodes.html;
+      if (!snippet || !htmlType) return false;
+      const tr = view.state.tr.replaceWith(pos + 1, pos + node.nodeSize - 1, htmlType.create({ value: snippet }));
+      view.dispatch(tr.setMeta("pocket-html-upgrade", true));
+      return true;
+    };
+
     return new Plugin({
       key: liveKey,
       view(editorView) {
         boundView = editorView;
+        const onDismiss = (e: Event) => {
+          const detail = (e as CustomEvent<{ pos?: number }>).detail;
+          dismissedHtmlPos = typeof detail?.pos === "number" ? detail.pos : null;
+        };
+        editorView.dom.addEventListener("pocket-html-dismiss", onDismiss);
         return {
-          update() {
-            // 装饰直接基于 view.state 与焦点实时计算，无需额外维护缓存状态。
+          update(view, prevState) {
+            if (!view.state.doc.eq(prevState.doc)) {
+              const p = currentParaPos(view.state);
+              if (p !== null) editedParaPos = p;
+            }
+            const curP = currentParaPos(view.state);
+            if (editedParaPos !== null && curP !== editedParaPos && !pointerDown) {
+              const targetPos = editedParaPos;
+              editedParaPos = null;
+              if (options().enabled && upgradeEditedPara(view, targetPos)) return;
+            }
+
+            if (!options().enabled || pointerDown || !view.hasFocus()) return;
+            if (view.dom.querySelector(".pocket-html-editing")) return;
+
+            const htmlPos = singleHtmlNodePos(view.state);
+            if (htmlPos < 0) {
+              dismissedHtmlPos = null;
+              lastAutoHtmlPos = null;
+              return;
+            }
+            if (htmlPos === dismissedHtmlPos || htmlPos === lastAutoHtmlPos) return;
+            lastAutoHtmlPos = htmlPos;
+            const nodeDom = view.nodeDOM(htmlPos);
+            if (nodeDom instanceof Element) {
+              requestAnimationFrame(() => {
+                if (!boundView || boundView.isDestroyed || pointerDown) return;
+                if (singleHtmlNodePos(boundView.state) === htmlPos && boundView.hasFocus()) {
+                  nodeDom.dispatchEvent(new CustomEvent("pocket-open-html-edit"));
+                }
+              });
+            }
           },
           destroy() {
+            editorView.dom.removeEventListener("pocket-html-dismiss", onDismiss);
             boundView = null;
           },
         };
@@ -497,6 +603,30 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
       props: {
         decorations(state) {
           return buildDecorations(boundView, state);
+        },
+        handleKeyDown(view, event) {
+          if (!options().enabled || event.isComposing) return false;
+          if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            const sel = view.state.selection;
+            if (sel instanceof TextSelection && sel.empty && sel.$from.parent.type.name === "paragraph" && sel.$from.parentOffset === sel.$from.parent.content.size) {
+              const plain = paragraphPlainTextIfUnmarked(sel.$from.parent);
+              const snippet = plain ? matchStandaloneHtmlSnippet(plain) : null;
+              const htmlType = view.state.schema.nodes.html;
+              const paraType = view.state.schema.nodes.paragraph;
+              if (snippet && htmlType && paraType) {
+                event.preventDefault();
+                const pPos = sel.$from.before();
+                const htmlPara = paraType.create(null, htmlType.create({ value: snippet }));
+                const nextPara = paraType.create();
+                const tr = view.state.tr.replaceWith(pPos, pPos + sel.$from.parent.nodeSize, [htmlPara, nextPara]);
+                tr.setSelection(TextSelection.create(tr.doc, pPos + htmlPara.nodeSize + 1));
+                editedParaPos = null;
+                view.dispatch(tr.scrollIntoView());
+                return true;
+              }
+            }
+          }
+          return false;
         },
         handleDOMEvents: {
           mousedown() {
@@ -518,6 +648,11 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
           blur(view, event) {
             const next = event.relatedTarget as Node | null;
             if (next && view.dom.contains(next)) return false;
+            if (options().enabled && editedParaPos !== null) {
+              const targetPos = editedParaPos;
+              editedParaPos = null;
+              upgradeEditedPara(view, targetPos);
+            }
             view.dispatch(view.state.tr.setMeta(liveKey, false));
             return false;
           },

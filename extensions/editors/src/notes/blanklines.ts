@@ -1,6 +1,8 @@
 import type { Ctx } from "@milkdown/kit/ctx";
 import { remarkStringifyOptionsCtx } from "@milkdown/kit/core";
-import { $remark } from "@milkdown/kit/utils";
+import type { Node as PMNode } from "@milkdown/kit/prose/model";
+import { type EditorState, Plugin, PluginKey } from "@milkdown/kit/prose/state";
+import { $prose, $remark } from "@milkdown/kit/utils";
 
 interface MdPos {
   start: { line: number };
@@ -13,20 +15,39 @@ export interface MdBlankNode {
   position?: MdPos;
 }
 
-const isEmptyPara = (n?: MdBlankNode) => n?.type === "paragraph" && (!n.children || n.children.length === 0);
+const isEmptyMdPara = (n?: MdBlankNode) => n?.type === "paragraph" && (!n.children || n.children.length === 0);
+const isEmptyPmPara = (n: PMNode | null | undefined) => !!n && n.type.name === "paragraph" && n.content.size === 0;
 
 /**
- * 解析期把源码中相邻块之间的多余空行（以及文档末尾多余空行）还原为空段落节点，
- * 使阅读模式与源码之间切换不会丢失用户手动敲出的空行。
+ * 解析期把源码中的首部、块间以及末尾多余空行还原为空段落节点，
+ * 使阅读模式与源码之间切换 1:1 保留用户显式写出的空行。
  */
 export function applyBlankLinesToAst(node: MdBlankNode, rawSource?: string) {
-  if (!node.children || node.children.length === 0) return;
-  for (const c of node.children) {
-    if (c.type === "blockquote" || c.type === "listItem") applyBlankLinesToAst(c);
+  if (!node.children) return;
+  if (node.children.length === 0) {
+    if (node.type === "root" && typeof rawSource === "string" && rawSource.length > 0 && /^[ \t\r\n]*$/.test(rawSource)) {
+      const eols = rawSource.match(/\r?\n/g)?.length ?? 0;
+      if (eols > 0) {
+        for (let k = 0; k <= eols; k++) node.children.push({ type: "paragraph", children: [] });
+      }
+    }
+    return;
   }
-  if (node.type !== "root" && node.type !== "blockquote") return;
+
+  for (const c of node.children) {
+    if (c.type === "blockquote" || c.type === "listItem" || c.type === "pocketHtmlBlock") {
+      applyBlankLinesToAst(c);
+    }
+  }
+  if (node.type !== "root" && node.type !== "blockquote" && node.type !== "pocketHtmlBlock") return;
 
   const expanded: MdBlankNode[] = [];
+  if (node.type === "root") {
+    const first = node.children[0]!;
+    const leadLines = first.position?.start?.line ? first.position.start.line - 1 : 0;
+    for (let k = 0; k < leadLines; k++) expanded.push({ type: "paragraph", children: [] });
+  }
+
   for (let i = 0; i < node.children.length; i++) {
     const cur = node.children[i]!;
     if (i > 0) {
@@ -39,15 +60,20 @@ export function applyBlankLinesToAst(node: MdBlankNode, rawSource?: string) {
     expanded.push(cur);
   }
 
-  // 还原文档末尾显式多出的空行（超过常规单个结尾换行符的空行）。
+  // 还原文档末尾显式多出的空行（超过常规单个结尾换行符的部分）。
   if (node.type === "root" && typeof rawSource === "string") {
-    const trailing = /(\r?\n)+$/.exec(rawSource)?.[0];
-    if (trailing) {
-      const eols = trailing.match(/\r?\n/g)?.length ?? 0;
-      const last = expanded[expanded.length - 1];
-      // 若原文档已有内容且末尾存在多余空行，补对应数量的空段落。
-      if (last && eols > 1) {
-        for (let k = 0; k < eols - 1; k++) expanded.push({ type: "paragraph", children: [] });
+    const last = expanded[expanded.length - 1];
+    if (last?.position?.end?.line) {
+      const tailLines = rawSource.split(/\r?\n/).slice(last.position.end.line);
+      if (tailLines.length > 0 && tailLines.every((l) => /^[ \t]*$/.test(l))) {
+        const extraTail = tailLines[tailLines.length - 1] === "" ? Math.max(0, tailLines.length - 1) : tailLines.length;
+        for (let k = 0; k < extraTail; k++) expanded.push({ type: "paragraph", children: [] });
+      }
+    } else if (last) {
+      const trailing = /(?:[ \t]*\r?\n)+[ \t]*$/.exec(rawSource)?.[0];
+      if (trailing) {
+        const eols = trailing.match(/\r?\n/g)?.length ?? 0;
+        for (let k = 0; k < Math.max(0, eols - 1); k++) expanded.push({ type: "paragraph", children: [] });
       }
     }
   }
@@ -59,6 +85,35 @@ export const remarkBlankLines = $remark("remarkBlankLines", () => () => (tree: u
   const src = typeof file?.value === "string" ? file.value : undefined;
   applyBlankLinesToAst(tree as MdBlankNode, src);
 });
+
+const blankLinesKey = new PluginKey<boolean>("pocket-blanklines-trailing");
+
+/** 区分 @milkdown/plugin-trailing 自动补出的尾随光标段落与用户/源文件自带的末尾空行。 */
+export const blankLinesPlugin = $prose(
+  () =>
+    new Plugin<boolean>({
+      key: blankLinesKey,
+      state: {
+        init: () => false,
+        apply(tr, prev, oldState, newState) {
+          const last = newState.doc.lastChild;
+          if (!isEmptyPmPara(last)) return false;
+          const lastStart = newState.doc.content.size - last!.nodeSize;
+          if (!tr.docChanged) return prev;
+
+          const oldLast = oldState.doc.lastChild;
+          const oldWasNonParaOrHead = !!oldLast && oldLast.type.name !== "paragraph" && oldLast.type.name !== "heading";
+          if (!prev && oldWasNonParaOrHead && newState.doc.childCount === oldState.doc.childCount + 1 && newState.selection.to <= lastStart) {
+            return true;
+          }
+          if (prev && newState.doc.childCount === oldState.doc.childCount && newState.selection.to <= lastStart) {
+            return true;
+          }
+          return false;
+        },
+      },
+    }),
+);
 
 /**
  * 配置序列化时的段落连接间距：空段落不再使用 <br /> 占位，
@@ -73,13 +128,33 @@ export function configureBlankLines(ctx: Ctx) {
         const l = left as MdBlankNode;
         const r = right as MdBlankNode;
         const p = parent as MdBlankNode;
-        if (isEmptyPara(l)) return 0;
-        if (p?.type === "root" && Array.isArray(p.children) && isEmptyPara(r)) {
+        if (isEmptyMdPara(l)) return 0;
+        if (p?.type === "root" && Array.isArray(p.children) && isEmptyMdPara(r)) {
           const idx = p.children.indexOf(r);
-          if (idx >= 0 && p.children.slice(idx).every(isEmptyPara)) return 0;
+          if (idx >= 0 && p.children.slice(idx).every(isEmptyMdPara)) return 0;
         }
         return undefined;
       },
     ],
   }));
+}
+
+/** 根据 ProseMirror 文档首尾空段落还原完整的首尾换行符，弥补 mdast-util-to-markdown 吞掉首尾空字符串的问题。 */
+export function restoreBlankLinesOnMarkdown(doc: PMNode, md: string, state?: EditorState): string {
+  const count = doc.childCount;
+  let leadingEmpty = 0;
+  while (leadingEmpty < count && isEmptyPmPara(doc.child(leadingEmpty))) leadingEmpty++;
+
+  const syntheticTrailing = !!(state && blankLinesKey.getState(state));
+  if (leadingEmpty === count) {
+    const effective = syntheticTrailing ? Math.max(1, count - 1) : count;
+    return effective <= 1 ? "" : "\n".repeat(effective - 1);
+  }
+
+  let trailingEmpty = 0;
+  while (trailingEmpty < count && isEmptyPmPara(doc.child(count - 1 - trailingEmpty))) trailingEmpty++;
+  if (syntheticTrailing && trailingEmpty > 0) trailingEmpty--;
+
+  const core = md.replace(/^(?:\r?\n)+/, "").replace(/(?:\r?\n)+$/, "");
+  return `${"\n".repeat(leadingEmpty)}${core}${"\n".repeat(1 + trailingEmpty)}`;
 }

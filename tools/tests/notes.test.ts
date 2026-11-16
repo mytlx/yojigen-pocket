@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { splitFrontmatter, joinFrontmatter } from "../../extensions/editors/src/notes/frontmatter";
 import { applyBlankLinesToAst } from "../../extensions/editors/src/notes/blanklines";
+import { matchStandaloneHtmlSnippet } from "../../extensions/editors/src/notes/liveinline";
 import { outlineOf, outlineTree } from "../../extensions/editors/src/notes/outline";
 import { defaultShortcuts, insertLine, lineAction, shortcutOf } from "../../extensions/editors/src/notes/shortcuts";
 import {
@@ -175,18 +176,35 @@ describe("notes sidebar multi-select, delete normalization, and resizable widths
     expect(roots[1]!.index).toBe(4);
   });
 
-  test("applyBlankLinesToAst restores extra blank lines between blocks and at EOF", () => {
+  test("applyBlankLinesToAst restores extra blank lines between blocks, at top, and at EOF", () => {
     const ast = {
       type: "root",
       children: [
-        { type: "paragraph", position: { start: { line: 1 }, end: { line: 1 } }, children: [{ type: "text", value: "a" }] },
-        { type: "paragraph", position: { start: { line: 4 }, end: { line: 4 } }, children: [{ type: "text", value: "b" }] },
+        { type: "paragraph", position: { start: { line: 3 }, end: { line: 3 } }, children: [{ type: "text", value: "a" }] },
+        { type: "paragraph", position: { start: { line: 6 }, end: { line: 6 } }, children: [{ type: "text", value: "b" }] },
       ],
     };
-    applyBlankLinesToAst(ast as never, "a\n\n\nb\n\n");
-    // 1 extra empty paragraph between a and b, plus 1 trailing empty paragraph for EOF double newline
-    expect(ast.children.map((c) => c.type)).toEqual(["paragraph", "paragraph", "paragraph", "paragraph"]);
+    applyBlankLinesToAst(ast as never, "\n\na\n\n\nb\n  \n\n");
+    // 2 leading empty paras, a, 1 middle empty para, b, 2 trailing empty paras
+    expect(ast.children.map((c) => c.type)).toEqual(["paragraph", "paragraph", "paragraph", "paragraph", "paragraph", "paragraph", "paragraph"]);
+    expect(ast.children[0]!.children).toEqual([]);
     expect(ast.children[1]!.children).toEqual([]);
     expect(ast.children[3]!.children).toEqual([]);
+    expect(ast.children[5]!.children).toEqual([]);
+    expect(ast.children[6]!.children).toEqual([]);
+  });
+
+  test("applyBlankLinesToAst handles pure-blank documents", () => {
+    const empty = { type: "root", children: [] as unknown[] };
+    applyBlankLinesToAst(empty as never, "\n\n");
+    expect(empty.children.length).toBe(3);
+  });
+
+  test("matchStandaloneHtmlSnippet matches standalone closed/void HTML only", () => {
+    expect(matchStandaloneHtmlSnippet('<div style="color:red">hi</div>')).toBe('<div style="color:red">hi</div>');
+    expect(matchStandaloneHtmlSnippet("<br/>")).toBe("<br/>");
+    expect(matchStandaloneHtmlSnippet("<!-- note -->")).toBe("<!-- note -->");
+    expect(matchStandaloneHtmlSnippet("100 > 50 且 20 < 40 <div>")).toBeNull();
+    expect(matchStandaloneHtmlSnippet("<script>alert(1)</script>")).toBeNull();
   });
 });
