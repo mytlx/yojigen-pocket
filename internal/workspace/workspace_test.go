@@ -86,7 +86,7 @@ func TestStore(t *testing.T) {
 func TestNaturalSort(t *testing.T) {
 	dir := t.TempDir()
 	s := &Store{Dir: filepath.Join(dir, "notes"), Exts: []string{".md"}}
-	for _, name := range []string{"笔记20.md", "笔记3.md", "笔记10.md", "笔记1.md", "笔记2.md", "笔记03.md", "a20b.md", "a3b.md"} {
+	for _, name := range []string{"2026-11-16 笔记 10.md", "2026-11-16 笔记 3.md", "2026-11-16 笔记.md", "笔记20.md", "笔记3.md", "笔记10.md", "笔记1.md", "笔记2.md", "笔记03.md", "a20b.md", "a3b.md"} {
 		if _, err := s.CreateFile("", name, ""); err != nil {
 			t.Fatal(err)
 		}
@@ -104,7 +104,7 @@ func TestNaturalSort(t *testing.T) {
 	for i, n := range tree {
 		got[i] = n.Name
 	}
-	want := []string{"第1章", "第2章", "第10章", "a3b.md", "a20b.md", "笔记1.md", "笔记2.md", "笔记3.md", "笔记03.md", "笔记10.md", "笔记20.md"}
+	want := []string{"第1章", "第2章", "第10章", "2026-11-16 笔记.md", "2026-11-16 笔记 3.md", "2026-11-16 笔记 10.md", "a3b.md", "a20b.md", "笔记1.md", "笔记2.md", "笔记3.md", "笔记03.md", "笔记10.md", "笔记20.md"}
 	if len(got) != len(want) {
 		t.Fatalf("数量不对: got=%v want=%v", got, want)
 	}

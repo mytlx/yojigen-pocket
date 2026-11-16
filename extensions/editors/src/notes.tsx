@@ -32,6 +32,7 @@ import {
   Quote,
   RotateCcw,
   Search,
+  Sparkles,
   SpellCheck,
   SquareArrowOutUpRight,
   Table,
@@ -43,7 +44,7 @@ import { CodeEditor, linkOpener } from "./code/editor";
 import { Btn, Empty, Seg } from "../../../src/features/ui";
 import { frontSummary, joinFrontmatter, splitFrontmatter } from "./notes/frontmatter";
 import { defaultShortcuts, noteLineKeys, shortcutOf, type NoteShortcuts } from "./notes/shortcuts";
-import { outlineOf } from "./notes/outline";
+import { outlineOf, outlineTree, type OutlineNode } from "./notes/outline";
 import { RichEditor } from "./notes/rich";
 import {
   DEFAULT_OUTLINE_W,
@@ -197,9 +198,11 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
   const [frontOpen, setFrontOpen] = useState(false);
+  const [outlineCollapsed, setOutlineCollapsed] = useState<Record<string, boolean>>({});
   const richScroll = useRef(0); // 所见即所得编辑器重建后要恢复到的滚动位置
   const notesRef = useRef<HTMLDivElement>(null);
   const sideListRef = useRef<HTMLDivElement>(null);
+  const renameRef = useRef<HTMLInputElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>();
@@ -255,6 +258,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       setDirty(false);
       setSaved("");
       setFrontOpen(false);
+      setOutlineCollapsed({});
       // 把它所在的文件夹都展开。
       setOpen((o) => {
         const next = { ...o };
@@ -723,7 +727,35 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     }
   };
 
+  useEffect(() => {
+    if (!renaming) return;
+    let raf1 = 0;
+    let raf2 = 0;
+    const focusRename = () => {
+      const el = renameRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(0, el.value.length, "forward");
+    };
+    raf1 = requestAnimationFrame(() => {
+      focusRename();
+      raf2 = requestAnimationFrame(focusRename);
+    });
+    const onOutsideMouseDown = (e: MouseEvent) => {
+      if (!(e.target as Element)?.closest?.(".fx-side-rename")) {
+        renameRef.current?.blur();
+      }
+    };
+    document.addEventListener("mousedown", onOutsideMouseDown, true);
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      document.removeEventListener("mousedown", onOutsideMouseDown, true);
+    };
+  }, [renaming]);
+
   const stats = useMemo(() => count(content), [content]);
+  const outlineNodes = useMemo(() => outlineTree(headings), [headings]);
   const searchMatcher = useMemo(() => compileFileSearch(filter, searchRegex), [filter, searchRegex]);
   const matches = useMemo(
     () => (searchMatcher ? all.filter((n) => !n.isDir && (searchMatcher.test(n.name) || searchMatcher.test(stem(n.name)))) : null),
@@ -804,6 +836,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     onMoveToRoot: (p) => void move(p, ""),
     onCopyName: (node) => void ctx.copy(node.isDir ? node.name : stem(node.name), "已复制文件名"),
     onCopyPath: (p) => void ctx.copy(p, "已复制路径"),
+    onCopyFullPath: (p) => void Notes.abs(p).then((abs) => ctx.copy(abs, "已复制完整路径"), fail),
     onCopyContent: (p) => {
       if (p === state.current.path) void ctx.copy(state.current.content, "已复制 Markdown");
       else void Notes.read(p).then((text) => ctx.copy(text, "已复制 Markdown"), fail);
@@ -850,12 +883,11 @@ export function NotesTool({ input, ctx }: FeatureProps) {
           {n.isDir ? <Folder size={13} /> : <FileText size={13} />}
           {renaming === n.path ? (
             <input
+              ref={renameRef}
               class="fx-side-rename"
               defaultValue={n.isDir ? n.name : stem(n.name)}
-              autoFocus
               spellcheck={false}
               onClick={(e) => e.stopPropagation()}
-              onFocus={(e) => (e.target as HTMLInputElement).select()}
               onBlur={(e) => void rename(n.path, (e.target as HTMLInputElement).value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -920,8 +952,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
           <label class={`fx-side-search${searchMatcher?.invalid ? " is-invalid" : ""}`}>
             <Search size={12} />
             <input
-              placeholder="搜索文件名（支持 * ? 和 /正则/）"
-              title="支持通配符 *（任意字符）、?（单字符）和 /正则表达式/"
+              placeholder="搜索笔记"
               value={filter}
               spellcheck={false}
               onInput={(e) => setFilter((e.target as HTMLInputElement).value)}
@@ -1091,8 +1122,12 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                       <span>拼写检查</span>
                       {prefs.spell && <Check size={12} class="fx-menu-check" />}
                     </button>
-                    <button type="button" role="menuitemcheckbox" aria-checked={prefs.revealSource} class="fx-menu-item" onClick={() => updatePrefs({ revealSource: !prefs.revealSource })}>
-                      <Code size={14} /><span>光标所在块显示 Markdown 源码</span>{prefs.revealSource && <Check size={12} />}
+                    <div class="fx-menu-label">阅读编辑模式</div>
+                    <button type="button" role="menuitemradio" aria-checked={!prefs.revealSource} class="fx-menu-item" onClick={() => updatePrefs({ revealSource: false })}>
+                      <Sparkles size={14} /><span>实时渲染（Typora 行内与前缀）</span>{!prefs.revealSource && <Check size={12} class="fx-menu-check" />}
+                    </button>
+                    <button type="button" role="menuitemradio" aria-checked={prefs.revealSource} class="fx-menu-item" onClick={() => updatePrefs({ revealSource: true })}>
+                      <Code size={14} /><span>整块源码（段落 / 列表 / 引用）</span>{prefs.revealSource && <Check size={12} class="fx-menu-check" />}
                     </button>
                     <div class="fx-menu-sep" />
                     <div class="fx-menu-label">
@@ -1217,7 +1252,56 @@ export function NotesTool({ input, ctx }: FeatureProps) {
           </Btn>
         </div>
         <div class="fx-side-list">
-          {headings.length ? headings.map((h, index) => <button type="button" key={`${h.from}-${index}`} style={{ paddingLeft: `${10 + (h.level - 1) * 12}px` }} onClick={() => jumpHeading(index)} title={h.text}>{h.text || "（空标题）"}</button>) : <div class="fx-side-empty">使用 # 标题后会显示在这里</div>}
+          {outlineNodes.length ? (
+            <div class="pocket-outline-tree">
+              {(() => {
+                const renderNodes = (nodes: OutlineNode[]) =>
+                  nodes.map((node) => {
+                    const nodeKey = `${node.heading.level}:${node.index}`;
+                    const hasChildren = node.children.length > 0;
+                    const collapsed = !!outlineCollapsed[nodeKey];
+                    const toggle = () => setOutlineCollapsed((prev) => ({ ...prev, [nodeKey]: !prev[nodeKey] }));
+                    return (
+                      <div key={`${node.heading.from}-${node.index}`} class="pocket-outline-node">
+                        <div class="pocket-outline-row">
+                          {hasChildren ? (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              class="pocket-outline-toggle"
+                              aria-label={collapsed ? "展开子标题" : "折叠子标题"}
+                              aria-expanded={!collapsed}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggle();
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  toggle();
+                                }
+                              }}
+                            >
+                              {collapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+                            </span>
+                          ) : (
+                            <span class="pocket-outline-spacer" />
+                          )}
+                          <button type="button" class="pocket-outline-label" onClick={() => jumpHeading(node.index)} title={node.heading.text}>
+                            {node.heading.text || "（空标题）"}
+                          </button>
+                        </div>
+                        {hasChildren && !collapsed && <div class="pocket-outline-children">{renderNodes(node.children)}</div>}
+                      </div>
+                    );
+                  });
+                return renderNodes(outlineNodes);
+              })()}
+            </div>
+          ) : (
+            <div class="fx-side-empty">使用 # 标题后会显示在这里</div>
+          )}
         </div>
       </nav>
       {sideMenu && (

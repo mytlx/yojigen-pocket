@@ -282,10 +282,15 @@ const pluginRuntime = `(() => {
     storageQueue = next.catch(() => {});
     return next;
   };
-  // Esc 返回、分离窗口的快捷键：页面自己没处理（没有 preventDefault）时才交给宿主。
+  // Esc 返回（仅主窗口面板有效，独立窗口按 Esc 不关闭）、分离窗口快捷键：页面自己没处理时才交给宿主。
   window.addEventListener("keydown", (e) => {
     if (e.defaultPrevented || e.isComposing) return;
-    if (e.key === "Escape") { e.preventDefault(); post({ __pocket: true, method: "back" }); return; }
+    if (e.key === "Escape") {
+      if (context && (context.detached || context.float)) return;
+      e.preventDefault();
+      post({ __pocket: true, method: "back" });
+      return;
+    }
     const k = context && context.detachKey;
     if (k && e.key.toLowerCase() === k.key && !!k.mod === (e.metaKey || e.ctrlKey) && !!k.shift === e.shiftKey && !!k.alt === e.altKey) {
       e.preventDefault();
@@ -328,6 +333,7 @@ const pluginRuntime = `(() => {
       move: (root, path, dir) => call("fs.move", root, path, dir),
       delete: (root, path) => call("fs.delete", root, path),
       reveal: (root, path = "") => call("fs.reveal", root, path),
+      abs: (root, path = "") => call("fs.abs", root, path),
       open: (root, path) => call("fs.open", root, path),
       openWith: (root, path) => call("fs.openWith", root, path),
       pick: (exts = []) => call("fs.pick", exts),

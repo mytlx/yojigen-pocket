@@ -160,6 +160,68 @@ export function filterDirPaths(tree: TreeNode[], paths: string[]): string[] {
   return paths.filter((p) => dirs.has(p));
 }
 
+/** 按自然序比较两个字符串（连续数字按数值大小比较）。 */
+export function naturalCompare(a: string, b: string): number {
+  const ra = Array.from(a);
+  const rb = Array.from(b);
+  let ia = 0;
+  let ib = 0;
+  let zeroTie = 0;
+  let caseTie = 0;
+  const isDigit = (c: string) => c >= "0" && c <= "9";
+
+  while (ia < ra.length && ib < rb.length) {
+    if (isDigit(ra[ia]!) && isDigit(rb[ib]!)) {
+      let ja = ia;
+      let jb = ib;
+      while (ja < ra.length && isDigit(ra[ja]!)) ja++;
+      while (jb < rb.length && isDigit(rb[jb]!)) jb++;
+      let za = ia;
+      let zb = ib;
+      while (za < ja && ra[za] === "0") za++;
+      while (zb < jb && rb[zb] === "0") zb++;
+      const la = ja - za;
+      const lb = jb - zb;
+      if (la !== lb) return la - lb;
+      for (let k = 0; k < la; k++) {
+        if (ra[za + k] !== rb[zb + k]) return ra[za + k]! < rb[zb + k]! ? -1 : 1;
+      }
+      if (zeroTie === 0 && ja - ia !== jb - ib) zeroTie = ja - ia < jb - ib ? -1 : 1;
+      ia = ja;
+      ib = jb;
+      continue;
+    }
+    const ca = ra[ia]!.toLowerCase();
+    const cb = rb[ib]!.toLowerCase();
+    if (ca !== cb) return ca < cb ? -1 : 1;
+    if (caseTie === 0 && ra[ia] !== rb[ib]) caseTie = ra[ia]! < rb[ib]! ? -1 : 1;
+    ia++;
+    ib++;
+  }
+  if (ia !== ra.length || ib !== rb.length) return ia === ra.length ? -1 : 1;
+  return zeroTie || caseTie;
+}
+
+function splitExt(name: string): [string, string] {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+}
+
+/** 递归排序文件树：文件夹在前，同类型内按去掉扩展名后的自然数字顺序排列。 */
+export function sortTreeNodes<T extends TreeNode>(nodes: T[]): T[] {
+  return [...nodes]
+    .map((n) => (n.isDir && n.children ? { ...n, children: sortTreeNodes(n.children) } : n))
+    .sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      if (!a.isDir) {
+        const [sa, ea] = splitExt(a.name);
+        const [sb, eb] = splitExt(b.name);
+        return naturalCompare(sa, sb) || naturalCompare(ea, eb);
+      }
+      return naturalCompare(a.name, b.name);
+    });
+}
+
 /** 收集目标文件夹及其全部嵌套子文件夹路径。 */
 export function collectNestedDirs(tree: TreeNode[], roots: string[]): string[] {
   const rootSet = new Set(roots);

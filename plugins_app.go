@@ -306,6 +306,11 @@ func (h *pluginHost) fs(ctx context.Context, m providers.Manifest, id, name stri
 		return p, changed("rename", args.str(1), p, err)
 	case "delete":
 		return nil, changed("delete", args.str(1), "", trash(s, args.str(1)))
+	case "abs":
+		if strings.TrimSpace(args.str(1)) == "" {
+			return filepath.Clean(s.Dir), nil
+		}
+		return s.Abs(args.str(1))
 	case "reveal", "open", "openWith":
 		if strings.TrimSpace(args.str(1)) == "" {
 			if _, err := s.Tree(); err != nil { // 顺便保证目录存在

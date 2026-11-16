@@ -1,4 +1,5 @@
 import { pocket, type FileNode, type Language, type PocketContext, type RunEvent } from "../../sdk/pocket";
+import { sortTreeNodes } from "./notes/sidebar";
 
 /** 这个扩展里的页面和宿主打交道的地方。页面只用这里的东西，不直接碰 window.pocket。 */
 
@@ -34,11 +35,13 @@ const today = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-/** 只留文件夹和 .md 文件。 */
+/** 只留文件夹和 .md 文件，并做自然数字排序。 */
 function onlyMarkdown(nodes: Node[]): Node[] {
-  return nodes
-    .filter((n) => n.isDir || n.name.toLowerCase().endsWith(".md"))
-    .map((n) => (n.isDir ? { ...n, children: onlyMarkdown(n.children ?? []) } : n));
+  return sortTreeNodes(
+    nodes
+      .filter((n) => n.isDir || n.name.toLowerCase().endsWith(".md"))
+      .map((n) => (n.isDir ? { ...n, children: onlyMarkdown(n.children ?? []) } : n)),
+  );
 }
 
 /** 别的页面（同一个扩展的另一个窗口）改了文件。 */
@@ -69,6 +72,7 @@ export const Notes = {
   move: (path: string, dir: string) => pocket.fs.move(NOTES, path, dir),
   delete: (path: string) => pocket.fs.delete(NOTES, path),
   reveal: (path: string) => pocket.fs.reveal(NOTES, path),
+  abs: (path: string) => pocket.fs.abs(NOTES, path),
   open: (path: string) => pocket.fs.open(NOTES, path),
   openWith: (path: string) => pocket.fs.openWith(NOTES, path),
   saveAs: (name: string, content: string) => pocket.fs.saveAs(name, content),

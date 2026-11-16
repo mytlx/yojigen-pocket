@@ -75,6 +75,9 @@ export function PluginFrame(props: PluginFrameProps) {
       const reply = (payload: object) => (e.source as Window).postMessage({ __pocketReply: true, id, ...payload }, "*");
       switch (method) {
         case "back":
+          if (!p.detached) p.onClose();
+          reply({});
+          return;
         case "ui.close":
           p.onClose();
           reply({});
@@ -166,7 +169,7 @@ export function PluginFrame(props: PluginFrameProps) {
       class={props.class ?? "pk-frame"}
       style={props.style}
       src={props.html ? undefined : props.url}
-      srcDoc={props.html ? escapeBridge + props.html : undefined}
+      srcDoc={props.html ? (props.detached ? props.html : escapeBridge + props.html) : undefined}
       sandbox={props.plugin ? "allow-scripts allow-forms allow-same-origin allow-modals allow-popups allow-downloads" : "allow-scripts allow-forms"}
       allow="clipboard-read; clipboard-write"
       title={props.title}

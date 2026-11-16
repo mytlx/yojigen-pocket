@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { EditorView as PMView } from "@milkdown/kit/prose/view";
 import { ArrowDown, ArrowUp, Check, Code, Copy, Heading1, Heading2, Heading3, Heading4, List, ListChecks, ListOrdered, Pilcrow, Quote, Trash2 } from "lucide-preact";
 import { blockSourcePlugin } from "./blocksource";
+import { configureBlankLines, remarkBlankLines } from "./blanklines";
+import { configurePocketHtml, pocketHtmlPlugins } from "./htmlrender";
+import { liveInlinePlugin } from "./liveinline";
 import { previewDocument } from "./html-preview";
 import { noteLineKeys, type NoteShortcuts } from "./shortcuts";
 import { languages } from "../code/languages";
@@ -124,6 +127,7 @@ export function RichEditor(props: RichProps) {
               listGroup: { label: "列表", bulletList: { label: "无序列表" }, orderedList: { label: "有序列表" }, taskList: { label: "待办" } },
               advancedGroup: { label: "更多", image: { label: "图片" }, codeBlock: { label: "代码块" }, table: { label: "表格" }, math: { label: "公式" } },
               blockHandle: {
+                getOffset: () => 8,
                 // 手柄每次挪到一个块旁边都会问一下放哪儿：顺便记下它指着的是哪个块，点手柄时要用。
                 getPlacement: ({ active: block, blockDom }) => {
                   active.current = block.$pos.pos;
@@ -145,9 +149,14 @@ export function RichEditor(props: RichProps) {
             // 单个波浪线留给下标（H~2~O），删除线用两个。
             ctx.set(remarkGFMPlugin.options.key, { singleTilde: false });
             marks.configurePocketMarks(ctx);
+            configureBlankLines(ctx);
+            configurePocketHtml(ctx);
           })
           .use(marks.pocketMarks)
+          .use(pocketHtmlPlugins)
+          .use(remarkBlankLines)
           .use(toc.tocPlugin)
+          .use(liveInlinePlugin(() => ({ enabled: !latest.current.revealSource })))
           .use(blockSourcePlugin(() => ({ enabled: latest.current.revealSource, shortcuts: latest.current.shortcuts })));
         // 保存时 [TOC] 会被转义成 \[TOC]（方括号在 Markdown 里有含义），别的编辑器就不认了：改回去。
         crepe.on((l) => l.markdownUpdated((_ctx, md) => latest.current.onChange(leading + md.replace(/^\\\[(toc)\]$/gim, "[$1]"))));
@@ -193,6 +202,11 @@ export function RichEditor(props: RichProps) {
   useEffect(() => {
     if (props.htmlPreview && pm.current) setPreview(previewDocument(pm.current.state.doc, document.documentElement.dataset.theme === "dark"));
   }, [props.htmlPreview]);
+
+  useEffect(() => {
+    const view = pm.current;
+    if (view) view.dispatch(view.state.tr.setMeta("pocket-mode-switch", props.revealSource));
+  }, [props.revealSource]);
 
   // 点块手柄（六个点的那个）打开块菜单；Ctrl / ⌘ + 点击链接用系统浏览器打开。
   useEffect(() => {

@@ -83,6 +83,7 @@ export interface Pocket {
     move(root: string, path: string, dir: string): Promise<string>;
     delete(root: string, path: string): Promise<void>;
     reveal(root: string, path?: string): Promise<void>;
+    abs(root: string, path?: string): Promise<string>;
     open(root: string, path: string): Promise<void>;
     openWith(root: string, path: string): Promise<void>;
     pick(exts?: string[]): Promise<{ name: string; path: string; text?: string; base64?: string } | null>;

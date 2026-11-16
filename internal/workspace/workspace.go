@@ -136,13 +136,21 @@ func (s *Store) list(r *os.Root, dir string, depth int) ([]Node, error) {
 		if out[i].IsDir != out[j].IsDir {
 			return out[i].IsDir
 		}
-		return naturalLess(out[i].Name, out[j].Name)
+		if !out[i].IsDir {
+			extI, extJ := filepath.Ext(out[i].Name), filepath.Ext(out[j].Name)
+			stemI, stemJ := strings.TrimSuffix(out[i].Name, extI), strings.TrimSuffix(out[j].Name, extJ)
+			if cmp := naturalCompare(stemI, stemJ); cmp != 0 {
+				return cmp < 0
+			}
+			return naturalCompare(extI, extJ) < 0
+		}
+		return naturalCompare(out[i].Name, out[j].Name) < 0
 	})
 	return out, nil
 }
 
-// naturalLess 按自然序比较文件名：连续 ASCII 数字按数值大小比较，其余字符按小写进行比较。
-func naturalLess(a, b string) bool {
+// naturalCompare 按自然序比较名称：连续 ASCII 数字按数值大小比较，其余字符按小写进行比较。
+func naturalCompare(a, b string) int {
 	ra, rb := []rune(a), []rune(b)
 	ia, ib := 0, 0
 	var zeroTie, caseTie int
@@ -165,11 +173,17 @@ func naturalLess(a, b string) bool {
 				zb++
 			}
 			if la, lb := ja-za, jb-zb; la != lb {
-				return la < lb
+				if la < lb {
+					return -1
+				}
+				return 1
 			}
 			for k := 0; k < ja-za; k++ {
 				if ra[za+k] != rb[zb+k] {
-					return ra[za+k] < rb[zb+k]
+					if ra[za+k] < rb[zb+k] {
+						return -1
+					}
+					return 1
 				}
 			}
 			if zeroTie == 0 && (ja-ia) != (jb-ib) {
@@ -184,7 +198,10 @@ func naturalLess(a, b string) bool {
 		}
 		la, lb := unicode.ToLower(ra[ia]), unicode.ToLower(rb[ib])
 		if la != lb {
-			return la < lb
+			if la < lb {
+				return -1
+			}
+			return 1
 		}
 		if caseTie == 0 && ra[ia] != rb[ib] {
 			if ra[ia] < rb[ib] {
@@ -197,12 +214,15 @@ func naturalLess(a, b string) bool {
 		ib++
 	}
 	if ia != len(ra) || ib != len(rb) {
-		return ia == len(ra)
+		if ia == len(ra) {
+			return -1
+		}
+		return 1
 	}
 	if zeroTie != 0 {
-		return zeroTie < 0
+		return zeroTie
 	}
-	return caseTie < 0
+	return caseTie
 }
 
 // Read 读一个文件。

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { splitFrontmatter, joinFrontmatter } from "../../extensions/editors/src/notes/frontmatter";
-import { outlineOf } from "../../extensions/editors/src/notes/outline";
+import { applyBlankLinesToAst } from "../../extensions/editors/src/notes/blanklines";
+import { outlineOf, outlineTree } from "../../extensions/editors/src/notes/outline";
 import { defaultShortcuts, insertLine, lineAction, shortcutOf } from "../../extensions/editors/src/notes/shortcuts";
 import {
   DEFAULT_OUTLINE_W,
@@ -13,6 +14,7 @@ import {
   filterDirPaths,
   normalizeDeleteTargets,
   selectRange,
+  sortTreeNodes,
   visibleTreePaths,
 } from "../../extensions/editors/src/notes/sidebar";
 import { highlightJSON } from "../../src/features/ui";
@@ -147,5 +149,44 @@ describe("notes sidebar multi-select, delete normalization, and resizable widths
     ];
     expect(filterDirPaths(tree, ["A", "root.md", "B"])).toEqual(["A", "B"]);
     expect(collectNestedDirs(tree, ["A", "B"])).toEqual(["A", "A/A1", "B", "B/B1"]);
+  });
+
+  test("sortTreeNodes orders stems naturally matching Windows Explorer", () => {
+    const sorted = sortTreeNodes([
+      { path: "2026-11-16 笔记 10.md", name: "2026-11-16 笔记 10.md", isDir: false },
+      { path: "2026-11-16 笔记 3.md", name: "2026-11-16 笔记 3.md", isDir: false },
+      { path: "2026-11-16 笔记.md", name: "2026-11-16 笔记.md", isDir: false },
+      { path: "第10章", name: "第10章", isDir: true, children: [{ path: "第10章/20.md", name: "20.md", isDir: false }, { path: "第10章/3.md", name: "3.md", isDir: false }] },
+      { path: "第2章", name: "第2章", isDir: true, children: [] },
+    ]);
+    expect(sorted.map((n) => n.name)).toEqual(["第2章", "第10章", "2026-11-16 笔记.md", "2026-11-16 笔记 3.md", "2026-11-16 笔记 10.md"]);
+    expect(sorted[1]!.children!.map((c) => c.name)).toEqual(["3.md", "20.md"]);
+  });
+
+  test("outlineTree builds collapsible hierarchy preserving original flat index", () => {
+    const flat = outlineOf("# A\n\n## A1\n\n#### A1a\n\n## A2\n\n# B\n");
+    const roots = outlineTree(flat);
+    expect(roots.length).toBe(2);
+    expect(roots[0]!.heading.text).toBe("A");
+    expect(roots[0]!.index).toBe(0);
+    expect(roots[0]!.children.map((c) => [c.heading.text, c.index])).toEqual([["A1", 1], ["A2", 3]]);
+    expect(roots[0]!.children[0]!.children.map((c) => [c.heading.text, c.index])).toEqual([["A1a", 2]]);
+    expect(roots[1]!.heading.text).toBe("B");
+    expect(roots[1]!.index).toBe(4);
+  });
+
+  test("applyBlankLinesToAst restores extra blank lines between blocks and at EOF", () => {
+    const ast = {
+      type: "root",
+      children: [
+        { type: "paragraph", position: { start: { line: 1 }, end: { line: 1 } }, children: [{ type: "text", value: "a" }] },
+        { type: "paragraph", position: { start: { line: 4 }, end: { line: 4 } }, children: [{ type: "text", value: "b" }] },
+      ],
+    };
+    applyBlankLinesToAst(ast as never, "a\n\n\nb\n\n");
+    // 1 extra empty paragraph between a and b, plus 1 trailing empty paragraph for EOF double newline
+    expect(ast.children.map((c) => c.type)).toEqual(["paragraph", "paragraph", "paragraph", "paragraph"]);
+    expect(ast.children[1]!.children).toEqual([]);
+    expect(ast.children[3]!.children).toEqual([]);
   });
 });

@@ -37,6 +37,7 @@ export interface SideMenuActions {
   onMoveToRoot: (path: string) => void;
   onCopyName: (node: FileNode) => void;
   onCopyPath: (path: string) => void;
+  onCopyFullPath: (path: string) => void;
   onCopyContent: (path: string) => void;
   onOpenOutside: (path: string, how: "open" | "openWith" | "reveal") => void;
   onRevealRoot: () => void;
@@ -150,6 +151,8 @@ export function SideContextMenu(props: {
           )}
           <div class="fx-menu-sep" />
           <MenuItem icon={<Copy size={14} />} label="复制文件夹名" onClick={run(() => actions.onCopyName(menu.node))} />
+          <MenuItem icon={<Copy size={14} />} label="复制相对路径" onClick={run(() => actions.onCopyPath(menu.node.path))} />
+          <MenuItem icon={<Copy size={14} />} label="复制完整路径" onClick={run(() => actions.onCopyFullPath(menu.node.path))} />
           <MenuItem icon={<Pencil size={14} />} label="重命名" onClick={run(() => actions.onRename(menu.node.path))} />
           <MenuItem icon={<FolderOpen size={14} />} label="在文件夹中显示" onClick={run(() => actions.onOpenOutside(menu.node.path, "reveal"))} />
           <div class="fx-menu-sep" />
@@ -175,6 +178,7 @@ export function SideContextMenu(props: {
             <div class="fx-menu-sep" />
             <MenuItem icon={<Copy size={14} />} label="复制文件名" onClick={run(() => actions.onCopyName(menu.node))} />
             <MenuItem icon={<Copy size={14} />} label="复制相对路径" onClick={run(() => actions.onCopyPath(menu.node.path))} />
+            <MenuItem icon={<Copy size={14} />} label="复制完整路径" onClick={run(() => actions.onCopyFullPath(menu.node.path))} />
             <MenuItem icon={<Copy size={14} />} label="复制 Markdown 内容" onClick={run(() => actions.onCopyContent(menu.node.path))} />
             <div class="fx-menu-sep" />
             <MenuItem icon={<ExternalLink size={14} />} label="用默认应用打开" onClick={run(() => actions.onOpenOutside(menu.node.path, "open"))} />

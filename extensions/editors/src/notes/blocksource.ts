@@ -24,7 +24,8 @@ interface BlockTarget {
 }
 
 const key = new PluginKey<Editing | null>("pocket-block-source");
-const BLOCK_EDITABLE = new Set(["paragraph", "heading"]);
+const BLOCK_EDITABLE = new Set(["paragraph", "heading", "blockquote", "bullet_list", "ordered_list"]);
+const CONTAINER_BLOCKS = new Set(["blockquote", "bullet_list", "ordered_list"]);
 const EXCLUDED_ANCESTORS = new Set(["table", "table_row", "table_cell", "table_header", "code_block"]);
 let sequence = 0;
 
@@ -32,20 +33,17 @@ function clampPos(doc: PMNode, pos: number): number {
   return Math.max(0, Math.min(pos, doc.content.size));
 }
 
-/** 向上查找离 pos 最近的独立文本块（段落或标题），不把整棵列表或引用包进来；表格和代码块除外。 */
+/** 整块源码模式：按顶层块选中（段落、标题、整块列表、整块引用）；表格和代码块保留原编辑器。 */
 function findBlockTarget(doc: PMNode, pos: number): BlockTarget | null {
   const $pos = doc.resolve(clampPos(doc, pos));
+  if (!$pos.depth) return null;
   for (let d = $pos.depth; d >= 1; d--) {
     if (EXCLUDED_ANCESTORS.has($pos.node(d).type.name)) return null;
   }
-  for (let d = $pos.depth; d >= 1; d--) {
-    const node = $pos.node(d);
-    if (BLOCK_EDITABLE.has(node.type.name)) {
-      const from = $pos.before(d);
-      return { from, to: from + node.nodeSize, node, depth: d };
-    }
-  }
-  return null;
+  const node = $pos.node(1);
+  if (!BLOCK_EDITABLE.has(node.type.name)) return null;
+  const from = $pos.before(1);
+  return { from, to: from + node.nodeSize, node, depth: 1 };
 }
 
 /** 向上查找最近的特定祖先节点深度（例如 list_item 或 blockquote）。 */
@@ -165,19 +163,6 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
       return true;
     };
 
-    const findInnerEditable = (doc: PMNode, from: number, spanEnd: number): BlockTarget | null => {
-      let inner: BlockTarget | null = null;
-      doc.nodesBetween(clampPos(doc, from), clampPos(doc, spanEnd), (node, pos) => {
-        if (inner || EXCLUDED_ANCESTORS.has(node.type.name)) return false;
-        if (BLOCK_EDITABLE.has(node.type.name)) {
-          inner = { from: pos, to: pos + node.nodeSize, node, depth: doc.resolve(pos + 1).depth };
-          return false;
-        }
-        return true;
-      });
-      return inner;
-    };
-
     return new Plugin<Editing | null>({
       key,
       state: {
@@ -205,7 +190,8 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
           }
           const target = findBlockTarget(view.state.doc, selection.$from.pos);
           if (dismissedFrom !== null && target?.from !== dismissedFrom) dismissedFrom = null;
-          if (!pointerDown && view.hasFocus() && !key.getState(view.state)) {
+          const cur = key.getState(view.state);
+          if (!pointerDown && view.hasFocus() && (!cur || !target || cur.from !== target.from)) {
             activateAtSelection(view, selection.$from.pos);
           }
         },
@@ -279,18 +265,7 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
                   const nextTo = current.to + delta;
                   const first = replacement[0];
 
-                  // 在普通段落里敲 "- " / "1. " / "> " 等容器语法时，实时转成对应容器并追踪其内部文本块（类 Typora）。
-                  const $start = tr.doc.resolve(clampPos(tr.doc, current.from + 1));
-                  if ($start.depth === 1 && first && !BLOCK_EDITABLE.has(first.type.name) && replacement.length === 1) {
-                    const inner = findInnerEditable(tr.doc, current.from, nextTo);
-                    if (inner && ["bullet_list", "ordered_list", "blockquote"].includes(first.type.name)) {
-                      const nextSource = serializeBlock(view.state, inner.node);
-                      const nextEditing: Editing = { from: inner.from, to: inner.to, source: nextSource, cursor: nextSource.length, id: ++sequence };
-                      tr.setSelection(TextSelection.create(tr.doc, clampPos(tr.doc, inner.from + 1 + inner.node.content.size)));
-                      tr.setMeta(key, nextEditing);
-                      view.dispatch(tr);
-                      return true;
-                    }
+                  if (first && EXCLUDED_ANCESTORS.has(first.type.name)) {
                     tr.setSelection(Selection.near(tr.doc.resolve(clampPos(tr.doc, current.from + 1))));
                     tr.setMeta(key, null);
                     view.dispatch(tr);
@@ -490,9 +465,14 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
                   if (e.isComposing) return;
 
                   if (e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                    const current = key.getState(view.state);
+                    const curType = current ? view.state.doc.nodeAt(current.from)?.type.name : "";
                     e.preventDefault();
                     if (e.shiftKey) {
                       area.setRangeText("\\\n", area.selectionStart, area.selectionEnd, "end");
+                      syncContent(area.value);
+                    } else if (curType && CONTAINER_BLOCKS.has(curType)) {
+                      area.setRangeText("\n", area.selectionStart, area.selectionEnd, "end");
                       syncContent(area.value);
                     } else {
                       handleEnterSplit();
