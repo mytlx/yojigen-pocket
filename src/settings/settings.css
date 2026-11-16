@@ -578,13 +578,14 @@ body,
   opacity: 0.5;
 }
 .st-modules-grid {
-  grid-template-columns: minmax(0, 1fr) 64px 56px 72px 40px;
+  grid-template-columns: minmax(0, 1fr) 96px 56px 72px 40px;
+}
+.st-modules-grid .st-input,
+.st-web-grid .st-input {
+  width: 100%;
 }
 .st-web-grid {
   grid-template-columns: 72px 120px minmax(0, 1fr) 40px 28px;
-}
-.st-web-grid .st-input {
-  width: 100%;
 }
 .st-module-name {
   display: flex;

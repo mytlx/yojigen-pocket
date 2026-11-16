@@ -57,7 +57,7 @@ export function Modules({ info, config, update }: SectionProps) {
                   ))}
                 </div>
               </div>
-              <Text value={mod.prefix} width={84} mono placeholder="无" onChange={(v) => update((x) => (x.modules[m.id]!.prefix = v.trim().split(/[\s,，]+/).filter(Boolean).join(" ")))} />
+              <Text value={mod.prefix} mono placeholder="无" onChange={(v) => update((x) => (x.modules[m.id]!.prefix = v.trim().split(/[\s,，]+/).filter(Boolean).join(" ")))} />
               <Toggle label={`${m.title}参与全局搜索`} checked={mod.global} onChange={(v) => update((x) => (x.modules[m.id]!.global = v))} />
               <select
                 class="st-select"
