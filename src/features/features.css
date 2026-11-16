@@ -129,7 +129,7 @@
   padding: 5px 6px 5px 10px;
   border-top: 0.5px solid var(--line);
 }
-.fx-code .fx-key {
+.fx-code .fx-json-key {
   color: #a1408c;
 }
 .fx-code .fx-str {
@@ -142,7 +142,7 @@
 .fx-code .fx-null {
   color: #c2410c;
 }
-:root[data-theme="dark"] .fx-code .fx-key {
+:root[data-theme="dark"] .fx-code .fx-json-key {
   color: #f0a3e0;
 }
 :root[data-theme="dark"] .fx-code .fx-str {

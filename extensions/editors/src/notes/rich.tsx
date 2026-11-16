@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { EditorView as PMView } from "@milkdown/kit/prose/view";
 import { ArrowDown, ArrowUp, Check, Code, Copy, Heading1, Heading2, Heading3, Heading4, List, ListChecks, ListOrdered, Pilcrow, Quote, Trash2 } from "lucide-preact";
+import { blockSourcePlugin } from "./blocksource";
+import { previewDocument } from "./html-preview";
+import { noteLineKeys, type NoteShortcuts } from "./shortcuts";
 import { languages } from "../code/languages";
 import { type BlockKind, canMove, convertible, duplicateBlock, kindOf, moveBlock, removeBlock, turnInto } from "./blockops";
 
 export interface RichProps {
   value: string;
+  revealSource: boolean;
+  shortcuts: NoteShortcuts;
+  htmlPreview: boolean;
   onChange: (md: string) => void;
   spellcheck: boolean;
   /** Ctrl / ⌘ + 点击链接。 */
@@ -41,6 +47,7 @@ export function RichEditor(props: RichProps) {
   latest.current = props;
   const pm = useRef<PMView | null>(null);
   const active = useRef(-1); // 块手柄当前指着的块
+  const [preview, setPreview] = useState("");
   const [failed, setFailed] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
 
@@ -76,9 +83,10 @@ export function RichEditor(props: RichProps) {
             }),
           );
 
+        const leading = /^(?:[ \t]*\r?\n)+/.exec(latest.current.value)?.[0] ?? "";
         const crepe = new Crepe({
           root: host.current,
-          defaultValue: latest.current.value,
+          defaultValue: latest.current.value.slice(leading.length),
           features: {
             [Crepe.Feature.Latex]: true,
             [Crepe.Feature.AI]: false,
@@ -89,7 +97,7 @@ export function RichEditor(props: RichProps) {
             [Crepe.Feature.Placeholder]: { text: "写点什么…  输入 / 插入标题、列表、表格、代码块" },
             [Crepe.Feature.CodeMirror]: {
               languages: codeLanguages,
-              theme: [cm.noteCodeTheme, cm.pocketHighlight],
+              theme: [cm.noteCodeTheme, cm.pocketHighlight, noteLineKeys(() => latest.current.shortcuts)],
               searchPlaceholder: "搜索语言",
               noResultText: "没有匹配的语言",
               copyText: "复制",
@@ -138,9 +146,10 @@ export function RichEditor(props: RichProps) {
             marks.configurePocketMarks(ctx);
           })
           .use(marks.pocketMarks)
-          .use(toc.tocPlugin);
+          .use(toc.tocPlugin)
+          .use(blockSourcePlugin(() => ({ enabled: latest.current.revealSource, shortcuts: latest.current.shortcuts })));
         // 保存时 [TOC] 会被转义成 \[TOC]（方括号在 Markdown 里有含义），别的编辑器就不认了：改回去。
-        crepe.on((l) => l.markdownUpdated((_ctx, md) => latest.current.onChange(md.replace(/^\\\[(toc)\]$/gim, "[$1]"))));
+        crepe.on((l) => l.markdownUpdated((_ctx, md) => latest.current.onChange(leading + md.replace(/^\\\[(toc)\]$/gim, "[$1]"))));
         await crepe.create();
         if (!alive) {
           void crepe.destroy();
@@ -148,11 +157,19 @@ export function RichEditor(props: RichProps) {
         }
         const view = crepe.editor.ctx.get(editorViewCtx);
         pm.current = view;
+        const refreshPreview = () => {
+          if (latest.current.htmlPreview) setPreview(previewDocument(view.state.doc, document.documentElement.dataset.theme === "dark"));
+        };
+        refreshPreview();
+        crepe.on((l) => l.markdownUpdated(() => refreshPreview()));
+        const themeWatch = new MutationObserver(refreshPreview);
+        themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
         view.dom.setAttribute("spellcheck", String(latest.current.spellcheck));
         // 自动化测试靠它读写编辑器里的内容。
         (host.current as unknown as { __pm: PMView }).__pm = view;
         if (latest.current.scrollTop) host.current.scrollTop = latest.current.scrollTop;
         destroy = () => {
+          themeWatch.disconnect();
           pm.current = null;
           void crepe.destroy();
         };
@@ -169,6 +186,10 @@ export function RichEditor(props: RichProps) {
   useEffect(() => {
     pm.current?.dom.setAttribute("spellcheck", String(props.spellcheck));
   }, [props.spellcheck]);
+
+  useEffect(() => {
+    if (props.htmlPreview && pm.current) setPreview(previewDocument(pm.current.state.doc, document.documentElement.dataset.theme === "dark"));
+  }, [props.htmlPreview]);
 
   // 点块手柄（六个点的那个）打开块菜单；Ctrl / ⌘ + 点击链接用系统浏览器打开。
   useEffect(() => {
@@ -202,7 +223,8 @@ export function RichEditor(props: RichProps) {
   if (failed) return <div class="pk-empty">所见即所得编辑器加载失败（{failed}），可以先切到源码模式。</div>;
   return (
     <>
-      <div class="fx-notes-rich" ref={host} />
+      <div class="fx-notes-rich" ref={host} style={props.htmlPreview ? { display: "none" } : undefined} />
+      {props.htmlPreview && <iframe class="pocket-html-preview" title="Markdown HTML/CSS 预览" sandbox="" srcDoc={preview} />}
       {menu && pm.current && <BlockMenu view={pm.current} at={menu} onClose={() => setMenu(null)} />}
     </>
   );

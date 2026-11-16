@@ -8,6 +8,7 @@ export interface Split {
   /** frontmatter 的内容（不含两条 ---）；没有时是 null。 */
   front: string | null;
   body: string;
+  header?: string;
 }
 
 const re = /^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(?:\r?\n|$)/;
@@ -19,12 +20,13 @@ export function splitFrontmatter(md: string): Split {
   // 开头是分割线、后面又有一条分割线的普通文档不算：第一行得像一个 YAML 键（或注释）。
   const first = front.split(/\r?\n/).find((l) => l.trim() !== "");
   if (first !== undefined && !/^(#|[^\s:#][^:]*:(\s|$))/.test(first)) return { front: null, body: md };
-  return { front, body: md.slice(m[0].length).replace(/^(\r?\n)+/, "") };
+  return { front, body: md.slice(m[0].length), header: m[0] };
 }
 
-export function joinFrontmatter(front: string | null, body: string): string {
+export function joinFrontmatter(front: string | null, body: string, original?: Split): string {
   if (front === null) return body;
-  return `---\n${front.replace(/\s+$/, "")}${front.trim() ? "\n" : ""}---\n\n${body}`;
+  if (original?.front === front && original.header) return original.header + (body && !original.header.endsWith("\n") ? "\n" : "") + body;
+  return `---\n${front.replace(/\s+$/, "")}${front.trim() ? "\n" : ""}---\n${body}`;
 }
 
 /** 给折叠着的属性块用的一行摘要：列出键名。 */

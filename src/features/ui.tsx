@@ -130,7 +130,7 @@ export function highlightJSON(text: string): string {
     /("(?:\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(?:true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
     (m) => {
       let cls = "fx-num";
-      if (m.startsWith('"')) cls = m.trimEnd().endsWith(":") ? "fx-key" : "fx-str";
+      if (m.startsWith('"')) cls = m.trimEnd().endsWith(":") ? "fx-json-key" : "fx-str";
       else if (m === "true" || m === "false") cls = "fx-bool";
       else if (m === "null") cls = "fx-null";
       return `<span class="${cls}">${m}</span>`;

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { EditorView } from "@codemirror/view";
-import { Bold, Check, ChevronDown, ChevronRight, Clock, Code, Copy, ExternalLink, FileOutput, FileText, Folder, FolderOpen, FolderPlus, Heading, Italic, Link, List, ListChecks, MoreHorizontal, Palette, Pencil, Plus, Quote, Search, SpellCheck, SquareArrowOutUpRight, Table, Trash2 } from "lucide-preact";
+import { EditorView } from "@codemirror/view";
+import { PanelLeftClose, PanelLeftOpen, ListTree, Keyboard, Eye, Bold, Check, ChevronDown, ChevronRight, Clock, Code, Copy, ExternalLink, FileOutput, FileText, Folder, FolderOpen, FolderPlus, Heading, Italic, Link, List, ListChecks, MoreHorizontal, Palette, Pencil, Plus, Quote, Search, SpellCheck, SquareArrowOutUpRight, Table, Trash2 } from "lucide-preact";
 import { Notes, openExternal, type FeatureProps, type FsChange, type Node } from "./host";
 import { CodeEditor, linkOpener } from "./code/editor";
 import { Btn, Empty, Seg } from "../../../src/features/ui";
 import { frontSummary, joinFrontmatter, splitFrontmatter } from "./notes/frontmatter";
+import { defaultShortcuts, noteLineKeys, shortcutOf, type NoteShortcuts } from "./notes/shortcuts";
+import { outlineOf } from "./notes/outline";
 import { RichEditor } from "./notes/rich";
 import "./notes/notes.css";
 
@@ -49,8 +51,12 @@ interface Prefs {
   /** 拼写检查（单词下面的红色波浪线）。默认关。 */
   spell: boolean;
   codeTheme: string;
+  sidebarHidden: boolean;
+  outline: boolean;
+  revealSource: boolean;
+  shortcuts: NoteShortcuts;
 }
-const defaultPrefs: Prefs = { spell: false, codeTheme: "auto" };
+const defaultPrefs: Prefs = { spell: false, codeTheme: "auto", sidebarHidden: false, outline: false, revealSource: true, shortcuts: defaultShortcuts };
 
 /** 一段文字的指纹：判断“这段内容是不是刚才已经存成笔记了”。 */
 function fingerprint(text: string) {
@@ -78,6 +84,10 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const [loaded, setLoaded] = useState(false);
   const [prefs, setPrefs] = useState<Prefs>(defaultPrefs);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [shortcutOpen, setShortcutOpen] = useState(false);
+  const [htmlPreview, setHtmlPreview] = useState(false);
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
   const [frontOpen, setFrontOpen] = useState(false);
   const richScroll = useRef(0); // 所见即所得编辑器重建后要恢复到的滚动位置
   const body = useRef<HTMLDivElement>(null);
@@ -103,8 +113,11 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     const s = state.current;
     if (!s.path || !s.dirty) return Promise.resolve();
     return Notes.write(s.path, s.content).then(() => {
-      setDirty(false);
-      setSaved(stamp().slice(11));
+      if (state.current.path === s.path && state.current.content === s.content) {
+        state.current = { ...state.current, dirty: false };
+        setDirty(false);
+        setSaved(stamp().slice(11));
+      }
     }, fail);
   }, []);
 
@@ -181,7 +194,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   useEffect(() => {
     void Promise.all([Notes.tree(), Notes.getMode(), Notes.getPrefs<Partial<Prefs>>(), Notes.getLast()]).then(([t, savedMode, savedPrefs, last]) => {
       if (savedMode === "source" || savedMode === "rich") setMode(savedMode);
-      if (savedPrefs && typeof savedPrefs === "object") setPrefs((p) => ({ ...p, ...savedPrefs }));
+      if (savedPrefs && typeof savedPrefs === "object") setPrefs((p) => ({ ...p, ...savedPrefs, shortcuts: { ...defaultShortcuts, ...savedPrefs.shortcuts } }));
       const list = t ?? [];
       setTree(list);
       setLoaded(true);
@@ -253,6 +266,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
 
   const edit = (text: string) => {
     if (text === state.current.content) return;
+    state.current = { ...state.current, content: text, dirty: true };
     setContent(text);
     setDirty(true);
     clearTimeout(timer.current);
@@ -406,11 +420,24 @@ export function NotesTool({ input, ctx }: FeatureProps) {
 
   // 所见即所得模式下，frontmatter 摘出来单独编辑，编辑器只管正文。
   const split = useMemo(() => splitFrontmatter(content), [content]);
-  const front = useRef(split.front);
-  front.current = split.front;
+  const front = useRef(split);
+  front.current = split;
   const openLinkRef = useRef(openLink);
   openLinkRef.current = openLink;
-  const sourceExtensions = useMemo(() => [linkOpener((href) => openLinkRef.current(href))], []);
+  const sourceExtensions = useMemo(() => [linkOpener((href) => openLinkRef.current(href)), noteLineKeys(() => prefsRef.current.shortcuts)], []);
+  const headings = useMemo(() => outlineOf(split.body), [split.body]);
+  const jumpHeading = (index: number) => {
+    const heading = headings[index];
+    if (!heading) return;
+    if (mode === "source" && view.current) {
+      const at = content.length - split.body.length + heading.from;
+      view.current.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: "start" }) });
+      view.current.focus();
+    } else {
+      setHtmlPreview(false);
+      requestAnimationFrame(() => body.current?.querySelectorAll<HTMLElement>(".ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6")[index]?.scrollIntoView({ block: "start", behavior: "smooth" }));
+    }
+  };
 
   const stats = useMemo(() => count(content), [content]);
   const q = filter.trim().toLowerCase();
@@ -494,7 +521,13 @@ export function NotesTool({ input, ctx }: FeatureProps) {
 
   return (
     <div class="fx-page fx-notes">
-      <aside class="fx-out fx-side">
+      <div class="pocket-note-rail">
+        <Btn small ghost icon title={prefs.sidebarHidden ? "展开文件栏" : "收起文件栏"} onClick={() => updatePrefs({ sidebarHidden: !prefs.sidebarHidden })}>
+          {prefs.sidebarHidden ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+        </Btn>
+        {prefs.sidebarHidden && <Btn small ghost icon title="新建笔记" onClick={() => void newNote()}><Plus size={16} /></Btn>}
+      </div>
+      <aside class="fx-out fx-side" hidden={prefs.sidebarHidden}>
         <div class="fx-side-head">
           <label class="fx-side-search">
             <Search size={12} />
@@ -544,6 +577,8 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       ) : (
         <div class="fx-notes-main">
           <div class="fx-notes-head">
+            <Btn small ghost icon title="大纲" on={prefs.outline} onClick={() => updatePrefs({ outline: !prefs.outline })}><ListTree size={15} /></Btn>
+            <Btn small ghost icon title="自定义笔记快捷键" onClick={() => setShortcutOpen(!shortcutOpen)}><Keyboard size={15} /></Btn>
             <input
               class="fx-notes-title"
               value={title}
@@ -595,6 +630,9 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                     <span>拼写检查</span>
                     {prefs.spell && <Check size={12} class="fx-menu-check" />}
                   </button>
+                  <button type="button" role="menuitemcheckbox" aria-checked={prefs.revealSource} class="fx-menu-item" onClick={() => updatePrefs({ revealSource: !prefs.revealSource })}>
+                    <Code size={14} /><span>点击块显示 Markdown 源码</span>{prefs.revealSource && <Check size={12} />}
+                  </button>
                   <div class="fx-menu-sep" />
                   <div class="fx-menu-label">
                     <Palette size={12} /> 代码块配色
@@ -609,8 +647,26 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                 </div>
               )}
             </div>
+            {mode === "rich" && <Btn small ghost icon title="HTML/CSS 预览" on={htmlPreview} onClick={() => setHtmlPreview(!htmlPreview)}><Eye size={15} /></Btn>}
             <Seg value={mode} options={[{ value: "rich", label: "所见即所得" }, { value: "source", label: "源码" }]} onChange={switchMode} />
           </div>
+          {shortcutOpen && <div class="pocket-note-shortcuts" role="region" aria-label="笔记快捷键设置">
+            {(["above", "below"] as const).map((action) => <label key={action}>
+              <span>{action === "above" ? "在上方插入新行" : "在下方插入新行"}</span>
+              <input readOnly value={prefs.shortcuts[action]} aria-label={action === "above" ? "上方插行快捷键" : "下方插行快捷键"} title="点击后按下新快捷键，Esc 取消" onKeyDown={(e) => {
+                e.preventDefault(); e.stopPropagation();
+                if (e.key === "Escape") { (e.target as HTMLInputElement).blur(); return; }
+                if (e.isComposing) return;
+                const key = shortcutOf(e);
+                if (!key) return;
+                if (!e.ctrlKey && !e.metaKey && !e.altKey) return ctx.toast("快捷键需要包含 Ctrl、⌘ 或 Alt", true);
+                if (key === prefs.shortcuts[action === "above" ? "below" : "above"]) return ctx.toast("两个动作不能使用同一个快捷键", true);
+                updatePrefs({ shortcuts: { ...prefs.shortcuts, [action]: key } });
+              }} />
+            </label>)}
+            <Btn small onClick={() => updatePrefs({ shortcuts: defaultShortcuts })}>恢复默认</Btn>
+            <Btn small onClick={() => setShortcutOpen(false)}>完成</Btn>
+          </div>}
           {mode === "source" && (
             <div class="fx-notes-bar">
               <Btn small ghost icon title="标题" onClick={() => prefixLines("## ")}><Heading size={14} /></Btn>
@@ -637,7 +693,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                   spellcheck={false}
                   rows={Math.min(10, Math.max(2, split.front.split("\n").length))}
                   value={split.front}
-                  onInput={(e) => edit(joinFrontmatter((e.target as HTMLTextAreaElement).value, split.body))}
+                  onInput={(e) => edit(joinFrontmatter((e.target as HTMLTextAreaElement).value, split.body, split))}
                 />
               )}
             </div>
@@ -647,7 +703,10 @@ export function NotesTool({ input, ctx }: FeatureProps) {
               <RichEditor
                 key={`${path}#${nonce}`}
                 value={split.body}
-                onChange={(md) => edit(joinFrontmatter(front.current, md))}
+                revealSource={prefs.revealSource}
+                shortcuts={prefs.shortcuts}
+                htmlPreview={htmlPreview}
+                onChange={(md) => edit(joinFrontmatter(front.current.front, md, front.current))}
                 spellcheck={prefs.spell}
                 onOpenLink={openLink}
                 onToast={ctx.toast}
@@ -667,6 +726,10 @@ export function NotesTool({ input, ctx }: FeatureProps) {
           </div>
         </div>
       )}
+      {prefs.outline && path && <nav class="fx-out pocket-note-outline" aria-label="笔记大纲">
+        <div class="fx-side-head">大纲 <span class="fx-spacer" /><Btn small ghost icon title="收起大纲" onClick={() => updatePrefs({ outline: false })}><ChevronRight size={14} /></Btn></div>
+        <div class="fx-side-list">{headings.length ? headings.map((h, index) => <button type="button" key={`${h.from}-${index}`} style={{ paddingLeft: `${10 + (h.level - 1) * 12}px` }} onClick={() => jumpHeading(index)} title={h.text}>{h.text || "（空标题）"}</button>) : <div class="fx-side-empty">使用 # 标题后会显示在这里</div>}</div>
+      </nav>}
     </div>
   );
 }
