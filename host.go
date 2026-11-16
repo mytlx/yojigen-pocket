@@ -275,6 +275,45 @@ const pluginRuntime = `(() => {
     pending.set(id, { resolve, reject });
     post({ __pocket: true, id, method, args });
   });
+  // 把 localStorage 镜像到宿主的插件存储里：Windows 下每次启动回环端口不同，
+  // 靠它在模块脚本运行前同步恢复 localStorage，扩展用 localStorage 或 pocket.storage 都不会在重启后丢状态。
+  let migrateLS = null;
+  try {
+    const ls = window.localStorage;
+    const initLS = window.__pocketLocalStorage;
+    delete window.__pocketLocalStorage;
+    const setOrig = Storage.prototype.setItem;
+    const removeOrig = Storage.prototype.removeItem;
+    const clearOrig = Storage.prototype.clear;
+    const syncLS = () => {
+      const snap = {};
+      for (let i = 0; i < ls.length; i++) {
+        const k = ls.key(i);
+        if (k !== null) snap[k] = ls.getItem(k);
+      }
+      call("setStorage", "__localStorage", snap).catch(() => {});
+    };
+    if (initLS && typeof initLS === "object") {
+      clearOrig.call(ls);
+      for (const [k, v] of Object.entries(initLS)) {
+        if (typeof v === "string") setOrig.call(ls, k, v);
+      }
+    } else if (ls.length > 0) {
+      migrateLS = syncLS;
+    }
+    Storage.prototype.setItem = function (k, v) {
+      setOrig.call(this, k, v);
+      if (this === ls) syncLS();
+    };
+    Storage.prototype.removeItem = function (k) {
+      removeOrig.call(this, k);
+      if (this === ls) syncLS();
+    };
+    Storage.prototype.clear = function () {
+      clearOrig.call(this);
+      if (this === ls) syncLS();
+    };
+  } catch {}
   // Esc 返回、分离窗口的快捷键：页面自己没处理（没有 preventDefault）时才交给宿主。
   window.addEventListener("keydown", (e) => {
     if (e.defaultPrevented || e.isComposing) return;
@@ -356,16 +395,52 @@ const pluginRuntime = `(() => {
     context = c;
     pocket.context = c;
     applyTheme(c.theme);
+    if (migrateLS) migrateLS();
     resolveReady(c);
     emit("enter", c);
   });
 })();`
 
+// pluginRuntimeScript 返回注入给指定扩展的运行时脚本，头部带上该扩展已保存的 localStorage 快照。
+func (a *App) pluginRuntimeScript(id string) string {
+	var saved any
+	if id != "" {
+		saved, _ = a.pluginStorageGet(id, "__localStorage")
+	}
+	raw, err := json.Marshal(saved)
+	if err != nil {
+		raw = []byte("null")
+	}
+	return "window.__pocketLocalStorage = " + string(raw) + ";\n" + pluginRuntime
+}
+
+// setPluginCORS 只对扩展自身的源（pocketplugin://<id> 或 http://<id>.pocketplugin.localhost[:port]）开放跨域读取，
+// 供构建工具生成的 <script type="module" crossorigin> 和 <link rel="stylesheet" crossorigin> 使用。
+func setPluginCORS(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return
+	}
+	host := strings.ToLower(u.Hostname())
+	if u.Scheme == "pocketplugin" || (u.Scheme == "http" && strings.HasSuffix(host, ".pocketplugin.localhost")) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
+	}
+}
+
 // servePlugin 提供插件的文件。地址的 host 部分是插件 ID。
 func (a *App) servePlugin(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*") // 构建工具给脚本加的 crossorigin 属性需要它
+	setPluginCORS(w, r)
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	id := strings.ToLower(r.URL.Hostname())
@@ -378,7 +453,8 @@ func (a *App) servePlugin(w http.ResponseWriter, r *http.Request) {
 	id = strings.TrimSuffix(id, ".pocketplugin.localhost")
 	if r.URL.Path == "/__pocket.js" {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		_, _ = w.Write([]byte(pluginRuntime))
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(a.pluginRuntimeScript(id)))
 		return
 	}
 	dir, ok := a.plugins.DirOf(id)
@@ -410,7 +486,6 @@ func (a *App) servePlugin(w http.ResponseWriter, r *http.Request) {
 	// 不用 mygo.FileServer：它和 http.FileServer 一样会把 /index.html 重定向到 /，
 	// 而自定义协议的 iframe 不跟随重定向，页面会是空白。
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Access-Control-Allow-Origin", "*") // 构建工具给脚本加的 crossorigin 属性需要它
 	http.ServeContent(w, r, name, info.ModTime(), f)
 }
 
