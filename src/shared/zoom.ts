@@ -54,6 +54,23 @@ export function installZoom(doc: Document = document) {
   const zoom: Record<Kind, number> = { rich: load("rich"), code: load("code"), text: load("text") };
   root.style.setProperty("--zoom-rich", String(zoom.rich));
   root.style.setProperty("--zoom-code", String(zoom.code));
+  // 扩展页面走本机回环随机端口时，重启后端口会变，同时存一份到宿主的插件存储里。
+  const extStorage = (view as unknown as { pocket?: { storage?: { get(k: string): Promise<unknown>; set(k: string, v: unknown): Promise<void> } } } | null)?.pocket?.storage;
+  if (extStorage) {
+    for (const k of ["rich", "code", "text"] as const) {
+      void extStorage
+        .get(key(k))
+        .then((raw) => {
+          const v = Number(raw);
+          if (v >= MIN && v <= MAX && v !== zoom[k]) {
+            zoom[k] = v;
+            if (k === "text") doc.querySelectorAll<HTMLElement>("textarea").forEach((t) => applyText(t, v));
+            else root.style.setProperty(`--zoom-${k}`, String(v));
+          }
+        })
+        .catch(() => undefined);
+    }
+  }
 
   let badge: HTMLDivElement | null = null;
   let badgeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -77,6 +94,9 @@ export function installZoom(doc: Document = document) {
       else localStorage.setItem(key(kind), String(next));
     } catch {
       /* 存不了就只在这次生效 */
+    }
+    if (extStorage) {
+      void extStorage.set(key(kind), next === 1 ? null : next).catch(() => undefined);
     }
     if (kind === "text") doc.querySelectorAll<HTMLElement>("textarea").forEach((t) => applyText(t, next));
     else {

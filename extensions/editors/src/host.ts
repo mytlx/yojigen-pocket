@@ -71,6 +71,14 @@ export const Notes = {
   open: (path: string) => pocket.fs.open(NOTES, path),
   openWith: (path: string) => pocket.fs.openWith(NOTES, path),
   saveAs: (name: string, content: string) => pocket.fs.saveAs(name, content),
+  getMode: () => pocket.storage.get<string>("notes.mode").catch(() => null),
+  setMode: (mode: string) => void pocket.storage.set("notes.mode", mode).catch(() => undefined),
+  getPrefs: <T>() => pocket.storage.get<T>("notes.prefs").catch(() => null),
+  setPrefs: (prefs: unknown) => void pocket.storage.set("notes.prefs", prefs).catch(() => undefined),
+  getLast: () => pocket.storage.get<string>("notes.last").catch(() => null),
+  setLast: (path: string) => void pocket.storage.set("notes.last", path).catch(() => undefined),
+  getImported: () => pocket.storage.get<{ sig: string; path: string }>("notes.imported").catch(() => null),
+  setImported: (v: { sig: string; path: string }) => void pocket.storage.set("notes.imported", v).catch(() => undefined),
   /** 笔记目录里的文件有变化（包括自己这个页面引起的）。 */
   onChange: (fn: (change: FsChange) => void) => pocket.on("fs", ((change: FsChange) => void (change.root === NOTES && fn(change))) as (data: never) => void),
 };
@@ -94,4 +102,6 @@ export const Scratch = {
   run: (request: { lang: string; code: string; stdin?: string; timeout?: number }, onEvent: (e: RunEvent) => void) => pocket.runner.run(request, onEvent),
   stop: () => pocket.runner.stop(),
   format: (lang: string, code: string) => pocket.runner.format(lang, code),
+  getLast: () => pocket.storage.get<string>("scratch.last").catch(() => null),
+  setLast: (path: string) => void pocket.storage.set("scratch.last", path).catch(() => undefined),
 };

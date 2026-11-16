@@ -275,45 +275,13 @@ const pluginRuntime = `(() => {
     pending.set(id, { resolve, reject });
     post({ __pocket: true, id, method, args });
   });
-  // 把 localStorage 镜像到宿主的插件存储里：Windows 下每次启动回环端口不同，
-  // 靠它在模块脚本运行前同步恢复 localStorage，扩展用 localStorage 或 pocket.storage 都不会在重启后丢状态。
-  let migrateLS = null;
-  try {
-    const ls = window.localStorage;
-    const initLS = window.__pocketLocalStorage;
-    delete window.__pocketLocalStorage;
-    const setOrig = Storage.prototype.setItem;
-    const removeOrig = Storage.prototype.removeItem;
-    const clearOrig = Storage.prototype.clear;
-    const syncLS = () => {
-      const snap = {};
-      for (let i = 0; i < ls.length; i++) {
-        const k = ls.key(i);
-        if (k !== null) snap[k] = ls.getItem(k);
-      }
-      call("setStorage", "__localStorage", snap).catch(() => {});
-    };
-    if (initLS && typeof initLS === "object") {
-      clearOrig.call(ls);
-      for (const [k, v] of Object.entries(initLS)) {
-        if (typeof v === "string") setOrig.call(ls, k, v);
-      }
-    } else if (ls.length > 0) {
-      migrateLS = syncLS;
-    }
-    Storage.prototype.setItem = function (k, v) {
-      setOrig.call(this, k, v);
-      if (this === ls) syncLS();
-    };
-    Storage.prototype.removeItem = function (k) {
-      removeOrig.call(this, k);
-      if (this === ls) syncLS();
-    };
-    Storage.prototype.clear = function () {
-      clearOrig.call(this);
-      if (this === ls) syncLS();
-    };
-  } catch {}
+  // 串行发送 setStorage：后端每次 IPC 调用在独立 goroutine 里执行，排队发送保证同一页面连续写入时顺序不乱。
+  let storageQueue = Promise.resolve();
+  const setStorageQueued = (key, value) => {
+    const next = storageQueue.then(() => call("setStorage", String(key), value));
+    storageQueue = next.catch(() => {});
+    return next;
+  };
   // Esc 返回、分离窗口的快捷键：页面自己没处理（没有 preventDefault）时才交给宿主。
   window.addEventListener("keydown", (e) => {
     if (e.defaultPrevented || e.isComposing) return;
@@ -341,7 +309,7 @@ const pluginRuntime = `(() => {
     notify: (title, body) => call("notify", String(title), String(body ?? "")),
     hide: () => call("hide"),
     getStorage: (key) => call("getStorage", String(key)),
-    setStorage: (key, value) => call("setStorage", String(key), value),
+    setStorage: setStorageQueued,
     ui: {
       toast: (text, error) => call("ui.toast", String(text), !!error),
       copy: (text, label) => call("ui.copy", String(text), label),
@@ -349,7 +317,7 @@ const pluginRuntime = `(() => {
       detach: () => call("ui.detach"),
       remember: (value) => call("ui.remember", String(value ?? "")),
     },
-    storage: { get: (key) => call("getStorage", String(key)), set: (key, value) => call("setStorage", String(key), value) },
+    storage: { get: (key) => call("getStorage", String(key)), set: setStorageQueued },
     fs: {
       tree: (root = "") => call("fs.tree", root),
       read: (root, path) => call("fs.read", root, path),
@@ -395,30 +363,16 @@ const pluginRuntime = `(() => {
     context = c;
     pocket.context = c;
     applyTheme(c.theme);
-    if (migrateLS) migrateLS();
     resolveReady(c);
     emit("enter", c);
   });
 })();`
 
-// pluginRuntimeScript 返回注入给指定扩展的运行时脚本，头部带上该扩展已保存的 localStorage 快照。
-func (a *App) pluginRuntimeScript(id string) string {
-	var saved any
-	if id != "" {
-		saved, _ = a.pluginStorageGet(id, "__localStorage")
-	}
-	raw, err := json.Marshal(saved)
-	if err != nil {
-		raw = []byte("null")
-	}
-	return "window.__pocketLocalStorage = " + string(raw) + ";\n" + pluginRuntime
-}
-
-// setPluginCORS 只对扩展自身的源（pocketplugin://<id> 或 http://<id>.pocketplugin.localhost[:port]）开放跨域读取，
-// 供构建工具生成的 <script type="module" crossorigin> 和 <link rel="stylesheet" crossorigin> 使用。
-func setPluginCORS(w http.ResponseWriter, r *http.Request) {
+// setPluginCORS 只对当前被请求扩展自身的源（pocketplugin://<id> 或 http://<id>.pocketplugin.localhost[:port]）开放跨域读取，
+// 供构建工具生成的 <script type="module" crossorigin> 和 <link rel="stylesheet" crossorigin> 使用，拒绝其他扩展或外部站点。
+func setPluginCORS(w http.ResponseWriter, r *http.Request, id string) {
 	origin := r.Header.Get("Origin")
-	if origin == "" {
+	if origin == "" || id == "" {
 		return
 	}
 	u, err := url.Parse(origin)
@@ -426,7 +380,7 @@ func setPluginCORS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host := strings.ToLower(u.Hostname())
-	if u.Scheme == "pocketplugin" || (u.Scheme == "http" && strings.HasSuffix(host, ".pocketplugin.localhost")) {
+	if (u.Scheme == "pocketplugin" && host == id) || (u.Scheme == "http" && host == id+".pocketplugin.localhost") {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
 	}
@@ -434,15 +388,6 @@ func setPluginCORS(w http.ResponseWriter, r *http.Request) {
 
 // servePlugin 提供插件的文件。地址的 host 部分是插件 ID。
 func (a *App) servePlugin(w http.ResponseWriter, r *http.Request) {
-	setPluginCORS(w, r)
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	id := strings.ToLower(r.URL.Hostname())
 	if id == "" {
 		id = strings.ToLower(r.Host)
@@ -451,15 +396,24 @@ func (a *App) servePlugin(w http.ResponseWriter, r *http.Request) {
 		id = h
 	}
 	id = strings.TrimSuffix(id, ".pocketplugin.localhost")
-	if r.URL.Path == "/__pocket.js" {
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write([]byte(a.pluginRuntimeScript(id)))
+	setPluginCORS(w, r, id)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	dir, ok := a.plugins.DirOf(id)
 	if !ok {
 		http.NotFound(w, r)
+		return
+	}
+	if r.URL.Path == "/__pocket.js" {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(pluginRuntime))
 		return
 	}
 	root, err := os.OpenRoot(dir) // os.Root 保证路径逃不出插件目录，符号链接也不行

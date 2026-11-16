@@ -50,15 +50,7 @@ interface Prefs {
   spell: boolean;
   codeTheme: string;
 }
-const prefsKey = "pocket.notes.prefs";
-const loadPrefs = (): Prefs => {
-  const base: Prefs = { spell: false, codeTheme: "auto" };
-  try {
-    return { ...base, ...(JSON.parse(localStorage.getItem(prefsKey) ?? "{}") as Partial<Prefs>) };
-  } catch {
-    return base;
-  }
-};
+const defaultPrefs: Prefs = { spell: false, codeTheme: "auto" };
 
 /** 一段文字的指纹：判断“这段内容是不是刚才已经存成笔记了”。 */
 function fingerprint(text: string) {
@@ -74,13 +66,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const [path, setPath] = useState("");
   const [content, setContent] = useState("");
   const [nonce, setNonce] = useState(0); // 换一篇、或源码模式改过内容后，让所见即所得编辑器重建
-  const [mode, setMode] = useState<Mode>(() => {
-    try {
-      return localStorage.getItem("pocket.notes.mode") === "source" ? "source" : "rich";
-    } catch {
-      return "rich";
-    }
-  });
+  const [mode, setMode] = useState<Mode>("rich");
   const [title, setTitle] = useState("");
   const [saved, setSaved] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -90,7 +76,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [cursor, setCursor] = useState({ line: 1, col: 1, selected: 0 });
   const [loaded, setLoaded] = useState(false);
-  const [prefs, setPrefs] = useState(loadPrefs);
+  const [prefs, setPrefs] = useState<Prefs>(defaultPrefs);
   const [menuOpen, setMenuOpen] = useState(false);
   const [frontOpen, setFrontOpen] = useState(false);
   const richScroll = useRef(0); // 所见即所得编辑器重建后要恢复到的滚动位置
@@ -103,11 +89,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const updatePrefs = (patch: Partial<Prefs>) => {
     setPrefs((p) => {
       const next = { ...p, ...patch };
-      try {
-        localStorage.setItem(prefsKey, JSON.stringify(next));
-      } catch {
-        /* 存不了就只在这次生效 */
-      }
+      Notes.setPrefs(next);
       return next;
     });
   };
@@ -148,11 +130,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
         }
         return next;
       });
-      try {
-        localStorage.setItem("pocket.notes.last", p);
-      } catch {
-        /* 存不了也不影响使用 */
-      }
+      Notes.setLast(p);
     } catch (e) {
       fail(e as Error);
     }
@@ -186,22 +164,13 @@ export function NotesTool({ input, ctx }: FeatureProps) {
    * 同一段内容可能被带进来不止一次（面板重新打开、分离成独立窗口），已经存过就打开那一篇，不再新建。
    */
   const importText = async (text: string, files: Node[]) => {
-    const key = "pocket.notes.imported";
     const sig = fingerprint(text);
-    try {
-      const prev = JSON.parse(localStorage.getItem(key) ?? "null") as { sig: string; path: string } | null;
-      if (prev?.sig === sig && files.some((f) => f.path === prev.path)) return void openNote(prev.path);
-    } catch {
-      /* 记录坏了就当没存过 */
-    }
+    const prev = await Notes.getImported();
+    if (prev?.sig === sig && files.some((f) => f.path === prev.path)) return void openNote(prev.path);
     try {
       const p = await Notes.newNote("");
       await Notes.write(p, text);
-      try {
-        localStorage.setItem(key, JSON.stringify({ sig, path: p }));
-      } catch {
-        /* 忽略 */
-      }
+      Notes.setImported({ sig, path: p });
       await refresh();
       await openNote(p);
     } catch (e) {
@@ -210,20 +179,16 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   };
 
   useEffect(() => {
-    void Notes.tree().then((t) => {
+    void Promise.all([Notes.tree(), Notes.getMode(), Notes.getPrefs<Partial<Prefs>>(), Notes.getLast()]).then(([t, savedMode, savedPrefs, last]) => {
+      if (savedMode === "source" || savedMode === "rich") setMode(savedMode);
+      if (savedPrefs && typeof savedPrefs === "object") setPrefs((p) => ({ ...p, ...savedPrefs }));
       const list = t ?? [];
       setTree(list);
       setLoaded(true);
       const files = flatten(list).filter((n) => !n.isDir);
-      let last = "";
-      try {
-        last = localStorage.getItem("pocket.notes.last") ?? "";
-      } catch {
-        /* 忽略 */
-      }
       if (input.trim()) void importText(input, files);
       else {
-        const first = files.find((f) => f.path === last) ?? [...files].sort((a, b) => b.modified - a.modified)[0];
+        const first = files.find((f) => f.path === (last ?? "")) ?? [...files].sort((a, b) => b.modified - a.modified)[0];
         if (first) void openNote(first.path);
       }
     });
@@ -297,18 +262,20 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const switchMode = (m: Mode) => {
     setMode(m);
     if (m === "rich") setNonce((n) => n + 1); // 带着源码模式里改过的内容重建
-    try {
-      localStorage.setItem("pocket.notes.mode", m);
-    } catch {
-      /* 忽略 */
-    }
+    Notes.setMode(m);
   };
 
   const applyPath = (from: string, to: string) => {
     // 改名或移动之后，当前打开的笔记如果在它下面，路径跟着变。
     const cur = state.current.path;
-    if (cur === from) setPath(to);
-    else if (cur.startsWith(from + "/")) setPath(to + cur.slice(from.length));
+    if (cur === from) {
+      setPath(to);
+      Notes.setLast(to);
+    } else if (cur.startsWith(from + "/")) {
+      const next = to + cur.slice(from.length);
+      setPath(next);
+      Notes.setLast(next);
+    }
   };
   const rename = async (p: string, name: string) => {
     setRenaming("");

@@ -93,11 +93,7 @@ export function ScratchTool({ input, ctx }: FeatureProps) {
       setLines([]);
       setExit(null);
       setPreview("");
-      try {
-        localStorage.setItem("pocket.scratch.last", p);
-      } catch {
-        /* 存不了也不影响使用 */
-      }
+      Scratch.setLast(p);
     } catch (e) {
       ctx.toast((e as Error).message, true);
     }
@@ -116,17 +112,11 @@ export function ScratchTool({ input, ctx }: FeatureProps) {
   };
 
   useEffect(() => {
-    void Promise.all([Scratch.languages(), Scratch.list()]).then(([ls, list]) => {
+    void Promise.all([Scratch.languages(), Scratch.list(), Scratch.getLast()]).then(([ls, list, last]) => {
       setLangs(ls ?? []);
       const all = (list ?? []).filter((n) => !n.isDir);
       setFiles(all);
-      let last = "";
-      try {
-        last = localStorage.getItem("pocket.scratch.last") ?? "";
-      } catch {
-        /* 忽略 */
-      }
-      const first = all.find((f) => f.path === last) ?? [...all].sort((a, b) => b.modified - a.modified)[0];
+      const first = all.find((f) => f.path === (last ?? "")) ?? [...all].sort((a, b) => b.modified - a.modified)[0];
       if (input.trim()) void create("text", input);
       else if (first) void open(first.path);
       else setLoaded(true);
@@ -192,6 +182,7 @@ export function ScratchTool({ input, ctx }: FeatureProps) {
     void Scratch.rename(path, stem + target.ext).then(
       (p) => {
         setPath(p);
+        Scratch.setLast(p);
         void refresh();
       },
       (e: Error) => ctx.toast(e.message, true),
@@ -202,7 +193,10 @@ export function ScratchTool({ input, ctx }: FeatureProps) {
     if (!name.trim() || name === p) return;
     void Scratch.rename(p, name).then(
       (np) => {
-        if (p === path) setPath(np);
+        if (p === path) {
+          setPath(np);
+          Scratch.setLast(np);
+        }
         void refresh();
       },
       (e: Error) => ctx.toast(e.message, true),
