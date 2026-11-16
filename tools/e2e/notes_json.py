@@ -63,7 +63,7 @@ check('快捷键持久化到宿主',json.loads(Path(HOME,'data/plugins/editors.j
 shot('notes-shortcuts')
 header='---\r\ntitle: 保留头部\r\n---\r\n\r\n\r\n'
 cm_type(0,header+'# 标题\n\n**原始内容**\n');wait(1)
-eclick_text('.fx-notes-head .ui-seg button','所见即所得');wait(.5)
+eclick_text('.fx-notes-head .ui-seg button','阅读');wait(.5)
 check('frontmatter 笔记重新加载',ewait_for('!!document.querySelector(".ProseMirror strong")'))
 ejs('(()=>{const v=document.querySelector(".fx-notes-rich").__pm;v.dispatch(v.state.tr.insertText(" 新内容",v.state.doc.content.size-1));return true})()');wait(1.2)
 # CodeMirror normalizes CRLF to LF; compare the exact prefix saved before rich editing.

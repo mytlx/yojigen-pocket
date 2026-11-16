@@ -7,7 +7,10 @@ import {
   DEFAULT_SIDEBAR_W,
   MIN_EDITOR_W,
   clampDragWidth,
+  collectNestedDirs,
+  compileFileSearch,
   computePanelWidths,
+  filterDirPaths,
   normalizeDeleteTargets,
   selectRange,
   visibleTreePaths,
@@ -98,5 +101,51 @@ describe("notes sidebar multi-select, delete normalization, and resizable widths
   test("clampDragWidth respects bounds and other panel width", () => {
     expect(clampDragWidth({ which: "sidebar", rawWidth: 999, containerWidth: 700, otherWidth: 180, otherOpen: true })).toBe(700 - 20 - MIN_EDITOR_W - 180);
     expect(clampDragWidth({ which: "outline", rawWidth: 50, containerWidth: 700, otherWidth: 210, otherOpen: true })).toBe(130);
+  });
+
+  test("compileFileSearch supports substring, wildcards (* and ?), and regex", () => {
+    const sub = compileFileSearch("周报", false)!;
+    expect(sub.invalid).toBe(false);
+    expect(sub.test("2026 周报.md")).toBe(true);
+    expect(sub.test("笔记.md")).toBe(false);
+
+    const globStar = compileFileSearch("笔记*", false)!;
+    expect(globStar.test("笔记20.md")).toBe(true);
+    expect(globStar.test("我的笔记20.md")).toBe(false);
+
+    const globQuestion = compileFileSearch("*笔记?", false)!;
+    expect(globQuestion.test("我的笔记3")).toBe(true);
+    expect(globQuestion.test("我的笔记20")).toBe(false);
+
+    const litRegex = compileFileSearch("/^笔记\\d+$/", false)!;
+    expect(litRegex.invalid).toBe(false);
+    expect(litRegex.test("笔记20")).toBe(true);
+    expect(litRegex.test("笔记abc")).toBe(false);
+
+    const forceRegex = compileFileSearch("笔记\\d+", true)!;
+    expect(forceRegex.invalid).toBe(false);
+    expect(forceRegex.test("我的笔记3")).toBe(true);
+
+    const badRegex = compileFileSearch("[unclosed", true)!;
+    expect(badRegex.invalid).toBe(true);
+    expect(badRegex.test("anything")).toBe(false);
+  });
+
+  test("filterDirPaths and collectNestedDirs handle multi-selected and nested folders", () => {
+    const tree = [
+      {
+        path: "A",
+        name: "A",
+        isDir: true,
+        children: [
+          { path: "A/A1", name: "A1", isDir: true, children: [{ path: "A/A1/note.md", name: "note.md", isDir: false }] },
+          { path: "A/a.md", name: "a.md", isDir: false },
+        ],
+      },
+      { path: "B", name: "B", isDir: true, children: [{ path: "B/B1", name: "B1", isDir: true, children: [] }] },
+      { path: "root.md", name: "root.md", isDir: false },
+    ];
+    expect(filterDirPaths(tree, ["A", "root.md", "B"])).toEqual(["A", "B"]);
+    expect(collectNestedDirs(tree, ["A", "B"])).toEqual(["A", "A/A1", "B", "B/B1"]);
   });
 });

@@ -56,9 +56,10 @@ export function RichEditor(props: RichProps) {
     let destroy: (() => void) | undefined;
     void (async () => {
       try {
-        const [{ Crepe }, { editorViewCtx }, { remarkGFMPlugin }, { LanguageDescription, LanguageSupport, Language }, cm, marks, toc] = await Promise.all([
+        const [{ Crepe }, { editorViewCtx }, { remarkPreserveEmptyLinePlugin }, { remarkGFMPlugin }, { LanguageDescription, LanguageSupport, Language }, cm, marks, toc] = await Promise.all([
           import("@milkdown/crepe"),
           import("@milkdown/kit/core"),
+          import("@milkdown/kit/preset/commonmark"),
           import("@milkdown/kit/preset/gfm"),
           import("@codemirror/language"),
           import("../code/editor"),
@@ -150,6 +151,8 @@ export function RichEditor(props: RichProps) {
           .use(blockSourcePlugin(() => ({ enabled: latest.current.revealSource, shortcuts: latest.current.shortcuts })));
         // 保存时 [TOC] 会被转义成 \[TOC]（方括号在 Markdown 里有含义），别的编辑器就不认了：改回去。
         crepe.on((l) => l.markdownUpdated((_ctx, md) => latest.current.onChange(leading + md.replace(/^\\\[(toc)\]$/gim, "[$1]"))));
+        // 不在空段落处写入 <br /> 占位，保持标准 Markdown 换行行为（类 Typora）。
+        await crepe.editor.remove(remarkPreserveEmptyLinePlugin);
         await crepe.create();
         if (!alive) {
           void crepe.destroy();
@@ -220,7 +223,7 @@ export function RichEditor(props: RichProps) {
     };
   }, []);
 
-  if (failed) return <div class="pk-empty">所见即所得编辑器加载失败（{failed}），可以先切到源码模式。</div>;
+  if (failed) return <div class="pk-empty">阅读模式编辑器加载失败（{failed}），可以先切到源码模式。</div>;
   return (
     <>
       <div class="fx-notes-rich" ref={host} style={props.htmlPreview ? { display: "none" } : undefined} />

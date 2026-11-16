@@ -82,3 +82,35 @@ func TestStore(t *testing.T) {
 		t.Fatal("删掉的文件不该还读得到")
 	}
 }
+
+func TestNaturalSort(t *testing.T) {
+	dir := t.TempDir()
+	s := &Store{Dir: filepath.Join(dir, "notes"), Exts: []string{".md"}}
+	for _, name := range []string{"笔记20.md", "笔记3.md", "笔记10.md", "笔记1.md", "笔记2.md", "笔记03.md", "a20b.md", "a3b.md"} {
+		if _, err := s.CreateFile("", name, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, folder := range []string{"第10章", "第2章", "第1章"} {
+		if _, err := s.CreateFolder("", folder); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tree, err := s.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, len(tree))
+	for i, n := range tree {
+		got[i] = n.Name
+	}
+	want := []string{"第1章", "第2章", "第10章", "a3b.md", "a20b.md", "笔记1.md", "笔记2.md", "笔记3.md", "笔记03.md", "笔记10.md", "笔记20.md"}
+	if len(got) != len(want) {
+		t.Fatalf("数量不对: got=%v want=%v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("自然排序不对:\n got=%v\nwant=%v", got, want)
+		}
+	}
+}

@@ -9,7 +9,7 @@
     {
       "id": "notes",
       "title": "Markdown 笔记",
-      "description": "随手记：文件夹和文件管理，所见即所得或源码编辑",
+      "description": "随手记：文件夹和文件管理，阅读或源码编辑",
       "icon": "svg:notebook",
       "category": "效率工具",
       "keywords": ["md", "note", "notes", "markdown", "bj", "biji", "笔记", "记事"],

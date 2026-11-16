@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Store 是一个目录里的文件库。
@@ -135,9 +136,73 @@ func (s *Store) list(r *os.Root, dir string, depth int) ([]Node, error) {
 		if out[i].IsDir != out[j].IsDir {
 			return out[i].IsDir
 		}
-		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+		return naturalLess(out[i].Name, out[j].Name)
 	})
 	return out, nil
+}
+
+// naturalLess 按自然序比较文件名：连续 ASCII 数字按数值大小比较，其余字符按小写进行比较。
+func naturalLess(a, b string) bool {
+	ra, rb := []rune(a), []rune(b)
+	ia, ib := 0, 0
+	var zeroTie, caseTie int
+	isAsciiDigit := func(r rune) bool { return r >= '0' && r <= '9' }
+
+	for ia < len(ra) && ib < len(rb) {
+		if isAsciiDigit(ra[ia]) && isAsciiDigit(rb[ib]) {
+			ja, jb := ia, ib
+			for ja < len(ra) && isAsciiDigit(ra[ja]) {
+				ja++
+			}
+			for jb < len(rb) && isAsciiDigit(rb[jb]) {
+				jb++
+			}
+			za, zb := ia, ib
+			for za < ja && ra[za] == '0' {
+				za++
+			}
+			for zb < jb && rb[zb] == '0' {
+				zb++
+			}
+			if la, lb := ja-za, jb-zb; la != lb {
+				return la < lb
+			}
+			for k := 0; k < ja-za; k++ {
+				if ra[za+k] != rb[zb+k] {
+					return ra[za+k] < rb[zb+k]
+				}
+			}
+			if zeroTie == 0 && (ja-ia) != (jb-ib) {
+				if (ja - ia) < (jb - ib) {
+					zeroTie = -1
+				} else {
+					zeroTie = 1
+				}
+			}
+			ia, ib = ja, jb
+			continue
+		}
+		la, lb := unicode.ToLower(ra[ia]), unicode.ToLower(rb[ib])
+		if la != lb {
+			return la < lb
+		}
+		if caseTie == 0 && ra[ia] != rb[ib] {
+			if ra[ia] < rb[ib] {
+				caseTie = -1
+			} else {
+				caseTie = 1
+			}
+		}
+		ia++
+		ib++
+	}
+	if ia != len(ra) || ib != len(rb) {
+		return ia == len(ra)
+	}
+	if zeroTie != 0 {
+		return zeroTie < 0
+	}
+	return caseTie < 0
 }
 
 // Read 读一个文件。

@@ -102,3 +102,86 @@ export function normalizeDeleteTargets(paths: string[]): string[] {
   }
   return out;
 }
+
+export interface FileSearchMatcher {
+  test: (name: string) => boolean;
+  invalid: boolean;
+}
+
+/**
+ * 编译文件搜索匹配器：
+ * - forceRegex 为 true 或形如 /pattern/flags 时按正则表达式匹配；
+ * - 包含 * 或 ? 时按通配符（* 匹配任意长度，? 匹配单字符）匹配；
+ * - 其余按不区分大小写的子串匹配。
+ */
+export function compileFileSearch(raw: string, forceRegex: boolean): FileSearchMatcher | null {
+  const q = raw.trim();
+  if (!q) return null;
+
+  const compileRegex = (pattern: string, flags: string): FileSearchMatcher => {
+    try {
+      const normalizedFlags = flags.includes("i") ? flags : `${flags}i`;
+      const re = new RegExp(pattern, normalizedFlags.replace(/g/g, ""));
+      return { test: (name) => re.test(name), invalid: false };
+    } catch {
+      return { test: () => false, invalid: true };
+    }
+  };
+
+  if (forceRegex) return compileRegex(q, "i");
+
+  const literalRegex = /^\/(.+)\/([a-z]*)$/i.exec(q);
+  if (literalRegex) return compileRegex(literalRegex[1]!, literalRegex[2] ?? "");
+
+  if (/[*?]/.test(q)) {
+    const escaped = q
+      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*/g, ".*")
+      .replace(/\?/g, ".");
+    const re = new RegExp(`^${escaped}$`, "i");
+    return { test: (name) => re.test(name), invalid: false };
+  }
+
+  const lower = q.toLowerCase();
+  return { test: (name) => name.toLowerCase().includes(lower), invalid: false };
+}
+
+/** 从选中路径集合中挑出属于文件夹的路径。 */
+export function filterDirPaths(tree: TreeNode[], paths: string[]): string[] {
+  const dirs = new Set<string>();
+  const mark = (nodes: TreeNode[]) => {
+    for (const n of nodes) {
+      if (!n.isDir) continue;
+      dirs.add(n.path);
+      if (n.children) mark(n.children);
+    }
+  };
+  mark(tree);
+  return paths.filter((p) => dirs.has(p));
+}
+
+/** 收集目标文件夹及其全部嵌套子文件夹路径。 */
+export function collectNestedDirs(tree: TreeNode[], roots: string[]): string[] {
+  const rootSet = new Set(roots);
+  const out: string[] = [];
+  const collectSubtree = (nodes: TreeNode[]) => {
+    for (const n of nodes) {
+      if (!n.isDir) continue;
+      out.push(n.path);
+      if (n.children) collectSubtree(n.children);
+    }
+  };
+  const walk = (nodes: TreeNode[]) => {
+    for (const n of nodes) {
+      if (!n.isDir) continue;
+      if (rootSet.has(n.path)) {
+        out.push(n.path);
+        if (n.children) collectSubtree(n.children);
+      } else if (n.children) {
+        walk(n.children);
+      }
+    }
+  };
+  walk(tree);
+  return Array.from(new Set(out));
+}

@@ -22,19 +22,20 @@ import { Btn } from "../../../../src/features/ui";
 
 export type SideMenuTarget =
   | { kind: "empty"; x: number; y: number }
-  | { kind: "dir"; node: FileNode; x: number; y: number }
+  | { kind: "dir"; node: FileNode; nestedDirs: string[]; x: number; y: number }
   | { kind: "file"; node: FileNode; x: number; y: number }
-  | { kind: "batch"; paths: string[]; x: number; y: number };
+  | { kind: "batch"; paths: string[]; dirRoots: string[]; nestedDirs: string[]; x: number; y: number };
 
 export interface SideMenuActions {
   onNewNote: (dir: string) => void;
   onNewFolder: (dir: string) => void;
   onExpandAll: (expand: boolean) => void;
-  onToggleDir: (path: string) => void;
+  onSetDirsOpen: (roots: string[], expand: boolean) => void;
   onOpenNote: (path: string) => void;
   onRename: (path: string) => void;
   onDuplicate: (path: string) => void;
   onMoveToRoot: (path: string) => void;
+  onCopyName: (node: FileNode) => void;
   onCopyPath: (path: string) => void;
   onCopyContent: (path: string) => void;
   onOpenOutside: (path: string, how: "open" | "openWith" | "reveal") => void;
@@ -141,12 +142,14 @@ export function SideContextMenu(props: {
         <>
           <MenuItem icon={<Plus size={14} />} label="在此新建笔记" onClick={run(() => actions.onNewNote(menu.node.path))} />
           <MenuItem icon={<FolderPlus size={14} />} label="在此新建子文件夹" onClick={run(() => actions.onNewFolder(menu.node.path))} />
-          <MenuItem
-            icon={props.openDirs[menu.node.path] ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />}
-            label={props.openDirs[menu.node.path] ? "收起文件夹" : "展开文件夹"}
-            onClick={run(() => actions.onToggleDir(menu.node.path))}
-          />
+          {(!props.openDirs[menu.node.path] || menu.nestedDirs.some((d) => !props.openDirs[d])) && (
+            <MenuItem icon={<ChevronsUpDown size={14} />} label="展开文件夹" onClick={run(() => actions.onSetDirsOpen([menu.node.path], true))} />
+          )}
+          {props.openDirs[menu.node.path] && (
+            <MenuItem icon={<ChevronsDownUp size={14} />} label="收起文件夹" onClick={run(() => actions.onSetDirsOpen([menu.node.path], false))} />
+          )}
           <div class="fx-menu-sep" />
+          <MenuItem icon={<Copy size={14} />} label="复制文件夹名" onClick={run(() => actions.onCopyName(menu.node))} />
           <MenuItem icon={<Pencil size={14} />} label="重命名" onClick={run(() => actions.onRename(menu.node.path))} />
           <MenuItem icon={<FolderOpen size={14} />} label="在文件夹中显示" onClick={run(() => actions.onOpenOutside(menu.node.path, "reveal"))} />
           <div class="fx-menu-sep" />
@@ -154,31 +157,49 @@ export function SideContextMenu(props: {
         </>
       )}
 
-      {menu.kind === "file" && (
-        <>
-          {menu.node.path !== props.currentPath && (
-            <MenuItem icon={<FileText size={14} />} label="打开笔记" onClick={run(() => actions.onOpenNote(menu.node.path))} />
-          )}
-          <MenuItem icon={<Pencil size={14} />} label="重命名" onClick={run(() => actions.onRename(menu.node.path))} />
-          <MenuItem icon={<CopyPlus size={14} />} label="创建副本" onClick={run(() => actions.onDuplicate(menu.node.path))} />
-          {menu.node.path.includes("/") && (
-            <MenuItem icon={<FolderUp size={14} />} label="移到根目录" onClick={run(() => actions.onMoveToRoot(menu.node.path))} />
-          )}
-          <div class="fx-menu-sep" />
-          <MenuItem icon={<Copy size={14} />} label="复制相对路径" onClick={run(() => actions.onCopyPath(menu.node.path))} />
-          <MenuItem icon={<Copy size={14} />} label="复制 Markdown 内容" onClick={run(() => actions.onCopyContent(menu.node.path))} />
-          <div class="fx-menu-sep" />
-          <MenuItem icon={<ExternalLink size={14} />} label="用默认应用打开" onClick={run(() => actions.onOpenOutside(menu.node.path, "open"))} />
-          <MenuItem icon={<SquareArrowOutUpRight size={14} />} label="用其他应用打开…" onClick={run(() => actions.onOpenOutside(menu.node.path, "openWith"))} />
-          <MenuItem icon={<FolderOpen size={14} />} label="在文件夹中显示" onClick={run(() => actions.onOpenOutside(menu.node.path, "reveal"))} />
-          <div class="fx-menu-sep" />
-          <MenuItem icon={<Trash2 size={14} />} label="删除（移到废纸篓）" hint="Del" danger onClick={run(() => actions.onDelete([menu.node.path]))} />
-        </>
-      )}
+      {menu.kind === "file" && (() => {
+        const parentDir = menu.node.path.includes("/") ? menu.node.path.slice(0, menu.node.path.lastIndexOf("/")) : "";
+        return (
+          <>
+            {menu.node.path !== props.currentPath && (
+              <MenuItem icon={<FileText size={14} />} label="打开笔记" onClick={run(() => actions.onOpenNote(menu.node.path))} />
+            )}
+            <MenuItem icon={<Plus size={14} />} label="新建文件" onClick={run(() => actions.onNewNote(parentDir))} />
+            <MenuItem icon={<FolderPlus size={14} />} label="新建文件夹" onClick={run(() => actions.onNewFolder(parentDir))} />
+            <div class="fx-menu-sep" />
+            <MenuItem icon={<Pencil size={14} />} label="重命名" onClick={run(() => actions.onRename(menu.node.path))} />
+            <MenuItem icon={<CopyPlus size={14} />} label="创建副本" onClick={run(() => actions.onDuplicate(menu.node.path))} />
+            {menu.node.path.includes("/") && (
+              <MenuItem icon={<FolderUp size={14} />} label="移到根目录" onClick={run(() => actions.onMoveToRoot(menu.node.path))} />
+            )}
+            <div class="fx-menu-sep" />
+            <MenuItem icon={<Copy size={14} />} label="复制文件名" onClick={run(() => actions.onCopyName(menu.node))} />
+            <MenuItem icon={<Copy size={14} />} label="复制相对路径" onClick={run(() => actions.onCopyPath(menu.node.path))} />
+            <MenuItem icon={<Copy size={14} />} label="复制 Markdown 内容" onClick={run(() => actions.onCopyContent(menu.node.path))} />
+            <div class="fx-menu-sep" />
+            <MenuItem icon={<ExternalLink size={14} />} label="用默认应用打开" onClick={run(() => actions.onOpenOutside(menu.node.path, "open"))} />
+            <MenuItem icon={<SquareArrowOutUpRight size={14} />} label="用其他应用打开…" onClick={run(() => actions.onOpenOutside(menu.node.path, "openWith"))} />
+            <MenuItem icon={<FolderOpen size={14} />} label="在文件夹中显示" onClick={run(() => actions.onOpenOutside(menu.node.path, "reveal"))} />
+            <div class="fx-menu-sep" />
+            <MenuItem icon={<Trash2 size={14} />} label="删除（移到废纸篓）" hint="Del" danger onClick={run(() => actions.onDelete([menu.node.path]))} />
+          </>
+        );
+      })()}
 
       {menu.kind === "batch" && (
         <>
           <div class="fx-menu-label">已选中 {menu.paths.length} 项</div>
+          {menu.dirRoots.length > 0 && (
+            <>
+              {menu.nestedDirs.some((d) => !props.openDirs[d]) && (
+                <MenuItem icon={<ChevronsUpDown size={14} />} label="展开选中文件夹" onClick={run(() => actions.onSetDirsOpen(menu.dirRoots, true))} />
+              )}
+              {menu.nestedDirs.some((d) => !!props.openDirs[d]) && (
+                <MenuItem icon={<ChevronsDownUp size={14} />} label="收起选中文件夹" onClick={run(() => actions.onSetDirsOpen(menu.dirRoots, false))} />
+              )}
+              <div class="fx-menu-sep" />
+            </>
+          )}
           <MenuItem
             icon={<Trash2 size={14} />}
             label={`批量删除（${menu.paths.length} 项）`}

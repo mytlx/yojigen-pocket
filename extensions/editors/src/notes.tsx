@@ -49,7 +49,10 @@ import {
   DEFAULT_OUTLINE_W,
   DEFAULT_SIDEBAR_W,
   clampDragWidth,
+  collectNestedDirs,
+  compileFileSearch,
   computePanelWidths,
+  filterDirPaths,
   normalizeDeleteTargets,
   selectRange,
   visibleTreePaths,
@@ -169,12 +172,16 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const [saved, setSaved] = useState("");
   const [dirty, setDirty] = useState(false);
   const [filter, setFilter] = useState("");
+  const [searchRegex, setSearchRegex] = useState(false);
   const [renaming, setRenaming] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [anchorPath, setAnchorPath] = useState("");
+  const [ctxTarget, setCtxTarget] = useState("");
   const [sideMenu, setSideMenu] = useState<SideMenuTarget | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState("");
   const [pendingDelete, setPendingDelete] = useState<PendingDeleteItem[] | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const confirmTimer = useRef<ReturnType<typeof setTimeout>>();
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [cursor, setCursor] = useState({ line: 1, col: 1, selected: 0 });
   const [loaded, setLoaded] = useState(false);
@@ -472,7 +479,45 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       fail(e as Error);
     }
   };
+  const removePaths = async (paths: string[]) => {
+    const removed: string[] = [];
+    for (const p of paths) {
+      if (state.current.path === p || state.current.path.startsWith(p + "/")) {
+        clearTimeout(timer.current);
+        state.current = { ...state.current, path: "", content: "", dirty: false };
+        setPath("");
+        setContent("");
+        setDirty(false);
+      }
+      await Notes.delete(p);
+      removed.push(p);
+    }
+    return removed;
+  };
+  const finalizeDeleted = async (removed: string[]) => {
+    if (removed.length === 0) return;
+    setSelected((sel) => sel.filter((p) => !removed.some((r) => p === r || p.startsWith(r + "/"))));
+    await refresh();
+    ctx.toast(removed.length === 1 ? "已移到废纸篓" : `已将 ${removed.length} 项移到废纸篓`);
+  };
+  const deleteInline = async (p: string) => {
+    clearTimeout(confirmTimer.current);
+    setConfirmDelete("");
+    try {
+      const removed = await removePaths([p]);
+      await finalizeDeleted(removed);
+    } catch (e) {
+      fail(e as Error);
+    }
+  };
+  const askInlineDelete = (p: string) => {
+    clearTimeout(confirmTimer.current);
+    setConfirmDelete(p);
+    confirmTimer.current = setTimeout(() => setConfirmDelete((cur) => (cur === p ? "" : cur)), 2500);
+  };
   const requestDelete = (paths: string[]) => {
+    clearTimeout(confirmTimer.current);
+    setConfirmDelete("");
     const targets = normalizeDeleteTargets(paths);
     if (!targets.length) return;
     const byPath = new Map(all.map((n) => [n.path, n]));
@@ -487,30 +532,16 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     const items = pendingDelete;
     if (!items || items.length === 0 || deleting) return;
     setDeleting(true);
-    const removed: string[] = [];
+    let removed: string[] = [];
     try {
-      for (const it of items) {
-        if (state.current.path === it.path || state.current.path.startsWith(it.path + "/")) {
-          clearTimeout(timer.current);
-          state.current = { ...state.current, path: "", content: "", dirty: false };
-          setPath("");
-          setContent("");
-          setDirty(false);
-        }
-        await Notes.delete(it.path);
-        removed.push(it.path);
-      }
+      removed = await removePaths(items.map((it) => it.path));
     } catch (e) {
       fail(e as Error);
     } finally {
       setDeleting(false);
       setPendingDelete(null);
     }
-    if (removed.length > 0) {
-      setSelected((sel) => sel.filter((p) => !removed.some((r) => p === r || p.startsWith(r + "/"))));
-      await refresh();
-      ctx.toast(removed.length === 1 ? "已移到废纸篓" : `已将 ${removed.length} 项移到废纸篓`);
-    }
+    await finalizeDeleted(removed);
   };
 
   /** 源码模式的工具栏：给选中的文字两边加符号，或者在行首加前缀。 */
@@ -693,11 +724,26 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   };
 
   const stats = useMemo(() => count(content), [content]);
-  const q = filter.trim().toLowerCase();
-  const matches = q ? all.filter((n) => !n.isDir && n.name.toLowerCase().includes(q)) : null;
+  const searchMatcher = useMemo(() => compileFileSearch(filter, searchRegex), [filter, searchRegex]);
+  const matches = useMemo(
+    () => (searchMatcher ? all.filter((n) => !n.isDir && (searchMatcher.test(n.name) || searchMatcher.test(stem(n.name)))) : null),
+    [all, searchMatcher],
+  );
   const visiblePaths = useMemo(() => visibleTreePaths(tree, open, matches), [tree, open, matches]);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
 
+  const setDirsOpen = (roots: string[], expand: boolean) => {
+    const targets = collectNestedDirs(tree, roots);
+    if (targets.length === 0) return;
+    setOpen((o) => {
+      const next = { ...o };
+      for (const d of targets) {
+        if (expand) next[d] = true;
+        else delete next[d];
+      }
+      return next;
+    });
+  };
   const expandAllDirs = (expand: boolean) => {
     if (!expand) {
       setOpen({});
@@ -737,23 +783,26 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     e.stopPropagation();
     sideListRef.current?.focus();
     if (selectedSet.has(n.path) && selected.length > 1) {
-      setSideMenu({ kind: "batch", paths: selected, x: e.clientX, y: e.clientY });
+      const dirRoots = filterDirPaths(tree, selected);
+      setCtxTarget("");
+      setSideMenu({ kind: "batch", paths: selected, dirRoots, nestedDirs: collectNestedDirs(tree, dirRoots), x: e.clientX, y: e.clientY });
       return;
     }
-    setSelected([n.path]);
-    setAnchorPath(n.path);
-    setSideMenu({ kind: n.isDir ? "dir" : "file", node: n, x: e.clientX, y: e.clientY });
+    setCtxTarget(n.path);
+    if (n.isDir) setSideMenu({ kind: "dir", node: n, nestedDirs: collectNestedDirs(tree, [n.path]), x: e.clientX, y: e.clientY });
+    else setSideMenu({ kind: "file", node: n, x: e.clientX, y: e.clientY });
   };
 
   const sideMenuActions: SideMenuActions = {
     onNewNote: (dir) => void newNote(dir),
     onNewFolder: (dir) => void newFolder(dir),
     onExpandAll: expandAllDirs,
-    onToggleDir: (p) => setOpen((o) => ({ ...o, [p]: !o[p] })),
+    onSetDirsOpen: setDirsOpen,
     onOpenNote: (p) => void openNote(p),
     onRename: (p) => setRenaming(p),
     onDuplicate: (p) => void duplicateNote(p),
     onMoveToRoot: (p) => void move(p, ""),
+    onCopyName: (node) => void ctx.copy(node.isDir ? node.name : stem(node.name), "已复制文件名"),
     onCopyPath: (p) => void ctx.copy(p, "已复制路径"),
     onCopyContent: (p) => {
       if (p === state.current.path) void ctx.copy(state.current.content, "已复制 Markdown");
@@ -771,10 +820,12 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     const active = n.path === path;
     const picked = selectedSet.has(n.path) && (selected.length > 1 || n.isDir || !active);
     const expanded = !!open[n.path];
+    const confirming = confirmDelete === n.path;
+    const ctxFocused = ctxTarget === n.path;
     return (
       <div key={n.path}>
         <div
-          class={`fx-side-item${active ? " is-selected" : ""}${picked ? " is-picked" : ""}${dragOver === n.path ? " is-drop" : ""}`}
+          class={`fx-side-item${active ? " is-selected" : ""}${picked ? " is-picked" : ""}${ctxFocused ? " is-ctx-target" : ""}${confirming ? " is-confirming" : ""}${dragOver === n.path ? " is-drop" : ""}`}
           style={{ paddingLeft: `${8 + depth * 14}px` }}
           draggable={renaming !== n.path}
           onDragStart={(e) => e.dataTransfer?.setData("text/pocket-note", n.path)}
@@ -826,8 +877,13 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                 <button type="button" class="fx-side-del" title="改名" onClick={() => setRenaming(n.path)}>
                   <Pencil size={11} />
                 </button>
-                <button type="button" class="fx-side-del" title="删除（移到废纸篓）" onClick={() => requestDelete([n.path])}>
-                  <Trash2 size={12} />
+                <button
+                  type="button"
+                  class={`fx-side-del${confirming ? " is-confirm" : ""}`}
+                  title={confirming ? "再点一次确认移到废纸篓" : "删除（移到废纸篓）"}
+                  onClick={() => (confirming ? void deleteInline(n.path) : askInlineDelete(n.path))}
+                >
+                  {confirming ? "确认" : <Trash2 size={12} />}
                 </button>
               </span>
             </>
@@ -861,9 +917,28 @@ export function NotesTool({ input, ctx }: FeatureProps) {
           </Btn>
         </div>
         <div class="fx-side-search-row">
-          <label class="fx-side-search">
+          <label class={`fx-side-search${searchMatcher?.invalid ? " is-invalid" : ""}`}>
             <Search size={12} />
-            <input placeholder="搜索笔记" value={filter} spellcheck={false} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} />
+            <input
+              placeholder="搜索文件名（支持 * ? 和 /正则/）"
+              title="支持通配符 *（任意字符）、?（单字符）和 /正则表达式/"
+              value={filter}
+              spellcheck={false}
+              onInput={(e) => setFilter((e.target as HTMLInputElement).value)}
+            />
+            <button
+              type="button"
+              class={`fx-side-regex${searchRegex ? " is-active" : ""}`}
+              title="使用正则表达式搜索"
+              aria-label="使用正则表达式搜索"
+              aria-pressed={searchRegex}
+              onClick={(e) => {
+                e.preventDefault();
+                setSearchRegex((v) => !v);
+              }}
+            >
+              .*
+            </button>
             {filter && (
               <button type="button" class="fx-side-clear" title="清空搜索" aria-label="清空搜索" onClick={() => setFilter("")}>
                 <X size={12} />
@@ -876,12 +951,15 @@ export function NotesTool({ input, ctx }: FeatureProps) {
           tabIndex={0}
           class={`fx-side-list${dragOver === "" ? " is-drop" : ""}`}
           onClick={(e) => {
+            setConfirmDelete("");
             if (e.target === e.currentTarget) setSelected(path ? [path] : []);
           }}
           onContextMenu={(e) => {
             if ((e.target as Element)?.closest?.(".fx-side-rename")) return;
             e.preventDefault();
             sideListRef.current?.focus();
+            setCtxTarget("");
+            setConfirmDelete("");
             setSideMenu({ kind: "empty", x: e.clientX, y: e.clientY });
           }}
           onKeyDown={(e) => {
@@ -1014,7 +1092,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                       {prefs.spell && <Check size={12} class="fx-menu-check" />}
                     </button>
                     <button type="button" role="menuitemcheckbox" aria-checked={prefs.revealSource} class="fx-menu-item" onClick={() => updatePrefs({ revealSource: !prefs.revealSource })}>
-                      <Code size={14} /><span>点击块显示 Markdown 源码</span>{prefs.revealSource && <Check size={12} />}
+                      <Code size={14} /><span>光标所在块显示 Markdown 源码</span>{prefs.revealSource && <Check size={12} />}
                     </button>
                     <div class="fx-menu-sep" />
                     <div class="fx-menu-label">
@@ -1031,7 +1109,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                 )}
               </div>
               {mode === "rich" && <Btn small ghost icon title="HTML/CSS 预览" on={htmlPreview} onClick={() => setHtmlPreview(!htmlPreview)}><Eye size={15} /></Btn>}
-              <Seg value={mode} options={[{ value: "rich", label: "所见即所得" }, { value: "source", label: "源码" }]} onChange={switchMode} />
+              <Seg value={mode} options={[{ value: "rich", label: "阅读" }, { value: "source", label: "源码" }]} onChange={switchMode} />
               {!prefs.outline && (
                 <Btn small ghost icon title="大纲" onClick={() => updatePrefs({ outline: true })}>
                   <ListTree size={15} />
@@ -1150,7 +1228,10 @@ export function NotesTool({ input, ctx }: FeatureProps) {
           hasDirs={hasDirs}
           canResetWidths={canResetWidths}
           actions={sideMenuActions}
-          onClose={() => setSideMenu(null)}
+          onClose={() => {
+            setSideMenu(null);
+            setCtxTarget("");
+          }}
         />
       )}
       {pendingDelete && (
