@@ -650,10 +650,153 @@
   cursor: text;
 }
 
-/* 笔记导航与可编辑的块源码。 */
-.fx-notes > .fx-side[hidden] { display: none; }
-.pocket-note-rail { display: flex; flex-direction: column; flex: none; gap: 5px; }
-.pocket-note-outline { flex: none; width: clamp(130px, 18vw, 220px); min-height: 0; }
+/* 笔记导航、可调三栏、右键菜单与确认弹窗。 */
+.fx-notes {
+  gap: 0;
+}
+.fx-notes > .fx-side,
+.fx-notes > .pocket-note-outline {
+  flex: none;
+  min-height: 0;
+  overflow: hidden;
+  transition: width var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out), border-color var(--dur-fast);
+}
+.fx-notes > .fx-side[hidden],
+.fx-notes > .pocket-note-outline[hidden],
+.fx-notes-resizer[hidden] {
+  display: none;
+}
+.fx-notes > .fx-side.is-collapsed,
+.fx-notes > .pocket-note-outline.is-collapsed {
+  width: 0 !important;
+  opacity: 0;
+  border-color: transparent;
+  pointer-events: none;
+}
+.fx-notes.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.fx-notes.is-resizing > .fx-side,
+.fx-notes.is-resizing > .pocket-note-outline,
+.fx-notes.is-resizing > .fx-notes-resizer {
+  transition: none !important;
+}
+.fx-notes.is-resizing .fx-notes-body,
+.fx-notes.is-resizing .pocket-html-preview {
+  pointer-events: none;
+}
+
+.fx-notes-resizer {
+  position: relative;
+  flex: none;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+  transition: width var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+.fx-notes-resizer::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 50%;
+  width: 2px;
+  border-radius: 2px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background var(--dur-fast);
+}
+.fx-notes-resizer:hover::after,
+.fx-notes-resizer.is-active::after {
+  background: var(--accent);
+}
+.fx-notes-resizer.is-collapsed {
+  width: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 文件栏头部两行结构：第一行工具栏，第二行独占搜索框。 */
+.fx-notes .fx-side-toolbar {
+  min-height: 34px;
+  padding: 0 6px;
+  gap: 4px;
+  white-space: nowrap;
+}
+.fx-side-search-row {
+  flex: none;
+  padding: 6px 8px;
+  border-bottom: 0.5px solid var(--line);
+}
+.fx-side-search-row .fx-side-search {
+  width: 100%;
+  height: 28px;
+  margin-left: 0;
+  padding: 0 6px 0 8px;
+  border-radius: 7px;
+  background: var(--well);
+  box-shadow: inset 0 0 0 0.5px var(--line);
+  transition: box-shadow var(--dur-fast);
+}
+.fx-side-search-row .fx-side-search:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.fx-side-clear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 4px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.fx-side-clear:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.fx-notes .fx-side-list {
+  outline: none;
+}
+.fx-side-item.is-picked {
+  background: rgba(var(--accent-rgb), 0.14);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.45);
+}
+.fx-notes .fx-side-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  white-space: nowrap;
+}
+.fx-side-selcount {
+  font-size: 11px;
+  color: var(--accent);
+}
+.fx-notes-empty-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
+}
+
+/* 大纲栏与编辑器快捷键、块源码。 */
+.pocket-note-outline {
+  flex: none;
+  min-height: 0;
+}
+.pocket-note-outline .fx-side-head {
+  min-height: 34px;
+  padding: 0 6px 0 11px;
+  white-space: nowrap;
+  font-weight: 600;
+}
 .pocket-note-outline button { text-align: left; }
 .pocket-note-outline .fx-side-list > button { display: block; width: 100%; padding: 7px 10px; border: 0; background: transparent; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .pocket-note-outline .fx-side-list > button:hover { background: var(--hover); color: var(--text); }
@@ -663,4 +806,94 @@
 .pocket-block-source { display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 6px; background: var(--well); color: var(--text); font: 14px/1.7 var(--font-mono); white-space: pre-wrap; outline: none; }
 .pocket-html-preview { border: 0; width: 100%; height: 100%; flex: 1; background: var(--card); }
 .fx-notes-head { flex-wrap: wrap; }
+.fx-notes-head-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
 .fx-notes-title { min-width: 100px; }
+
+/* 文件栏右键菜单 */
+.fx-side-menu {
+  position: fixed;
+  min-width: 196px;
+}
+.fx-menu-kbd {
+  flex: none;
+  margin-left: 8px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--well);
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+}
+
+/* 统一删除二次确认对话框 */
+.fx-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.32);
+  animation: q-fade-up 120ms var(--ease-out);
+}
+.fx-confirm-dialog {
+  width: min(360px, 100%);
+  padding: 16px;
+  border-radius: 13px;
+  background: var(--note-float, var(--card-solid));
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.28), 0 0 0 0.5px var(--line-strong);
+  color: var(--text);
+}
+.fx-confirm-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.fx-confirm-desc {
+  margin-top: 8px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+.fx-confirm-desc p {
+  margin: 0;
+}
+.fx-confirm-list {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  list-style: none;
+  border-radius: 8px;
+  background: var(--well);
+  font-size: 12px;
+  color: var(--text);
+}
+.fx-confirm-list li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.65;
+}
+.fx-confirm-list li.is-more {
+  color: var(--text-3);
+}
+.fx-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.fx-confirm-actions .ui-btn.is-primary.is-danger {
+  background: var(--danger);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 1px 2px rgba(212, 49, 43, 0.35);
+}
+.fx-confirm-actions .ui-btn.is-primary.is-danger:hover:not(:disabled) {
+  background: var(--danger);
+  filter: brightness(1.08);
+}

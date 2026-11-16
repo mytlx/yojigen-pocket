@@ -1,6 +1,43 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { EditorView } from "@codemirror/view";
-import { PanelLeftClose, PanelLeftOpen, ListTree, Keyboard, Eye, Bold, Check, ChevronDown, ChevronRight, Clock, Code, Copy, ExternalLink, FileOutput, FileText, Folder, FolderOpen, FolderPlus, Heading, Italic, Link, List, ListChecks, MoreHorizontal, Palette, Pencil, Plus, Quote, Search, SpellCheck, SquareArrowOutUpRight, Table, Trash2 } from "lucide-preact";
+import {
+  Bold,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Code,
+  Copy,
+  ExternalLink,
+  Eye,
+  FileOutput,
+  FileText,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Heading,
+  Italic,
+  Keyboard,
+  Link,
+  List,
+  ListChecks,
+  ListTree,
+  MoreHorizontal,
+  Palette,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  Pencil,
+  Plus,
+  Quote,
+  RotateCcw,
+  Search,
+  SpellCheck,
+  SquareArrowOutUpRight,
+  Table,
+  Trash2,
+  X,
+} from "lucide-preact";
 import { Notes, openExternal, type FeatureProps, type FsChange, type Node } from "./host";
 import { CodeEditor, linkOpener } from "./code/editor";
 import { Btn, Empty, Seg } from "../../../src/features/ui";
@@ -8,7 +45,51 @@ import { frontSummary, joinFrontmatter, splitFrontmatter } from "./notes/frontma
 import { defaultShortcuts, noteLineKeys, shortcutOf, type NoteShortcuts } from "./notes/shortcuts";
 import { outlineOf } from "./notes/outline";
 import { RichEditor } from "./notes/rich";
+import {
+  DEFAULT_OUTLINE_W,
+  DEFAULT_SIDEBAR_W,
+  clampDragWidth,
+  computePanelWidths,
+  normalizeDeleteTargets,
+  selectRange,
+  visibleTreePaths,
+} from "./notes/sidebar";
+import { DeleteConfirmModal, SideContextMenu, type PendingDeleteItem, type SideMenuActions, type SideMenuTarget } from "./notes/sidemenu";
 import "./notes/notes.css";
+
+const PANEL_ANIM_MS = 140;
+
+/** 管理可收起侧栏的挂载与滑入/滑出动画状态；初始化加载完成前直接贴合当前状态不闪烁。 */
+function useAnimatedPanel(open: boolean, animate: boolean) {
+  const [mounted, setMounted] = useState(open);
+  const [shown, setShown] = useState(open);
+  const readyRef = useRef(false);
+
+  useEffect(() => {
+    if (!animate && !readyRef.current) {
+      setMounted(open);
+      setShown(open);
+      return;
+    }
+    readyRef.current = true;
+    if (open) {
+      setMounted(true);
+      let raf2 = 0;
+      const raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => setShown(true));
+      });
+      return () => {
+        cancelAnimationFrame(raf1);
+        cancelAnimationFrame(raf2);
+      };
+    }
+    setShown(false);
+    const t = setTimeout(() => setMounted(false), PANEL_ANIM_MS);
+    return () => clearTimeout(t);
+  }, [open, animate]);
+
+  return { mounted, shown };
+}
 
 type Mode = "rich" | "source";
 
@@ -53,10 +134,21 @@ interface Prefs {
   codeTheme: string;
   sidebarHidden: boolean;
   outline: boolean;
+  sidebarWidth: number;
+  outlineWidth: number;
   revealSource: boolean;
   shortcuts: NoteShortcuts;
 }
-const defaultPrefs: Prefs = { spell: false, codeTheme: "auto", sidebarHidden: false, outline: false, revealSource: true, shortcuts: defaultShortcuts };
+const defaultPrefs: Prefs = {
+  spell: false,
+  codeTheme: "auto",
+  sidebarHidden: false,
+  outline: false,
+  sidebarWidth: DEFAULT_SIDEBAR_W,
+  outlineWidth: DEFAULT_OUTLINE_W,
+  revealSource: true,
+  shortcuts: defaultShortcuts,
+};
 
 /** 一段文字的指纹：判断“这段内容是不是刚才已经存成笔记了”。 */
 function fingerprint(text: string) {
@@ -78,7 +170,11 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const [dirty, setDirty] = useState(false);
   const [filter, setFilter] = useState("");
   const [renaming, setRenaming] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [anchorPath, setAnchorPath] = useState("");
+  const [sideMenu, setSideMenu] = useState<SideMenuTarget | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PendingDeleteItem[] | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [cursor, setCursor] = useState({ line: 1, col: 1, selected: 0 });
   const [loaded, setLoaded] = useState(false);
@@ -86,26 +182,43 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [shortcutOpen, setShortcutOpen] = useState(false);
   const [htmlPreview, setHtmlPreview] = useState(false);
+  const [resizing, setResizing] = useState<"sidebar" | "outline" | null>(null);
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const containerWidthRef = useRef(0);
+  containerWidthRef.current = containerWidth;
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
   const [frontOpen, setFrontOpen] = useState(false);
   const richScroll = useRef(0); // 所见即所得编辑器重建后要恢复到的滚动位置
+  const notesRef = useRef<HTMLDivElement>(null);
+  const sideListRef = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const state = useRef({ path, content, dirty, mode });
   state.current = { path, content, dirty, mode };
 
-  const updatePrefs = (patch: Partial<Prefs>) => {
+  const updatePrefs = useCallback((patch: Partial<Prefs>) => {
     setPrefs((p) => {
       const next = { ...p, ...patch };
       Notes.setPrefs(next);
       return next;
     });
-  };
+  }, []);
 
   const all = useMemo(() => flatten(tree), [tree]);
-  const refresh = () => Notes.tree().then((t) => setTree(t ?? []));
+  const hasDirs = useMemo(() => all.some((n) => n.isDir), [all]);
+  const refresh = useCallback(
+    () =>
+      Notes.tree().then((t) => {
+        const list = t ?? [];
+        setTree(list);
+        const valid = new Set(flatten(list).map((n) => n.path));
+        setSelected((sel) => sel.filter((p) => valid.has(p)));
+      }),
+    [],
+  );
   const fail = (e: Error) => ctx.toast(e.message, true);
 
   const flush = useCallback(() => {
@@ -126,6 +239,8 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     try {
       const text = await Notes.read(p);
       setPath(p);
+      setSelected([p]);
+      setAnchorPath(p);
       setContent(text);
       setTitle(stem(p.slice(p.lastIndexOf("/") + 1)));
       richScroll.current = 0;
@@ -149,12 +264,14 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     }
   };
 
-  /** 新建时放在哪：选中的是文件夹就放里面，否则和当前笔记放一起。 */
+  /** 新建时放在哪：和当前笔记放一起。 */
   const targetDir = () => dirOf(path);
   const newNote = async (dir = targetDir(), text = "") => {
     try {
+      setFilter("");
       const p = await Notes.newNote(dir);
       if (text) await Notes.write(p, text);
+      if (dir) setOpen((o) => ({ ...o, [dir]: true }));
       await refresh();
       await openNote(p);
     } catch (e) {
@@ -163,10 +280,27 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   };
   const newFolder = async (dir = targetDir()) => {
     try {
+      setFilter("");
       const p = await Notes.newFolder(dir);
       await refresh();
       setOpen((o) => ({ ...o, [p]: true, ...(dir ? { [dir]: true } : {}) }));
+      setSelected([p]);
+      setAnchorPath(p);
       setRenaming(p);
+    } catch (e) {
+      fail(e as Error);
+    }
+  };
+  const duplicateNote = async (target: string) => {
+    if (target === state.current.path) await flush();
+    try {
+      const text = await Notes.read(target);
+      const dir = dirOf(target);
+      const base = stem(target.slice(target.lastIndexOf("/") + 1));
+      setFilter("");
+      const created = await Notes.createNote(dir, `${base} 副本`, text);
+      await refresh();
+      await openNote(created);
     } catch (e) {
       fail(e as Error);
     }
@@ -194,7 +328,15 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   useEffect(() => {
     void Promise.all([Notes.tree(), Notes.getMode(), Notes.getPrefs<Partial<Prefs>>(), Notes.getLast()]).then(([t, savedMode, savedPrefs, last]) => {
       if (savedMode === "source" || savedMode === "rich") setMode(savedMode);
-      if (savedPrefs && typeof savedPrefs === "object") setPrefs((p) => ({ ...p, ...savedPrefs, shortcuts: { ...defaultShortcuts, ...savedPrefs.shortcuts } }));
+      if (savedPrefs && typeof savedPrefs === "object") {
+      setPrefs((p) => ({
+        ...p,
+        ...savedPrefs,
+        sidebarWidth: savedPrefs.sidebarWidth ?? DEFAULT_SIDEBAR_W,
+        outlineWidth: savedPrefs.outlineWidth ?? DEFAULT_OUTLINE_W,
+        shortcuts: { ...defaultShortcuts, ...savedPrefs.shortcuts },
+      }));
+    }
       const list = t ?? [];
       setTree(list);
       setLoaded(true);
@@ -280,16 +422,16 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   };
 
   const applyPath = (from: string, to: string) => {
-    // 改名或移动之后，当前打开的笔记如果在它下面，路径跟着变。
+    const remap = (p: string) => (p === from ? to : p.startsWith(from + "/") ? to + p.slice(from.length) : p);
+    // 改名或移动之后，当前打开的笔记和选中状态如果在它下面，路径跟着变。
     const cur = state.current.path;
-    if (cur === from) {
-      setPath(to);
-      Notes.setLast(to);
-    } else if (cur.startsWith(from + "/")) {
-      const next = to + cur.slice(from.length);
+    if (cur === from || cur.startsWith(from + "/")) {
+      const next = remap(cur);
       setPath(next);
       Notes.setLast(next);
     }
+    setSelected((sel) => sel.map(remap));
+    setAnchorPath((a) => remap(a));
   };
   const rename = async (p: string, name: string) => {
     setRenaming("");
@@ -299,6 +441,18 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     try {
       const np = await Notes.rename(p, name.trim());
       applyPath(p, np);
+      if (node.isDir) {
+        setOpen((o) => {
+          const next = { ...o };
+          for (const [k, v] of Object.entries(o)) {
+            if (k === p || k.startsWith(p + "/")) {
+              delete next[k];
+              next[np + k.slice(p.length)] = v;
+            }
+          }
+          return next;
+        });
+      }
       if (p === path) setTitle(stem(np.slice(np.lastIndexOf("/") + 1)));
       await refresh();
     } catch (e) {
@@ -307,7 +461,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     }
   };
   const move = async (p: string, dir: string) => {
-    if (dirOf(p) === dir || p === dir) return;
+    if (dirOf(p) === dir || p === dir || (dir && dir.startsWith(p + "/"))) return;
     if (p === path) await flush();
     try {
       const np = await Notes.move(p, dir);
@@ -318,20 +472,44 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       fail(e as Error);
     }
   };
-  const remove = async (p: string) => {
-    setConfirmDelete("");
+  const requestDelete = (paths: string[]) => {
+    const targets = normalizeDeleteTargets(paths);
+    if (!targets.length) return;
+    const byPath = new Map(all.map((n) => [n.path, n]));
+    setPendingDelete(
+      targets.map((p) => {
+        const node = byPath.get(p);
+        return { path: p, label: node ? (node.isDir ? node.name : stem(node.name)) : p, isDir: !!node?.isDir };
+      }),
+    );
+  };
+  const confirmBatchDelete = async () => {
+    const items = pendingDelete;
+    if (!items || items.length === 0 || deleting) return;
+    setDeleting(true);
+    const removed: string[] = [];
     try {
-      await Notes.delete(p);
-      if (path === p || path.startsWith(p + "/")) {
-        clearTimeout(timer.current);
-        setPath("");
-        setContent("");
-        setDirty(false);
+      for (const it of items) {
+        if (state.current.path === it.path || state.current.path.startsWith(it.path + "/")) {
+          clearTimeout(timer.current);
+          state.current = { ...state.current, path: "", content: "", dirty: false };
+          setPath("");
+          setContent("");
+          setDirty(false);
+        }
+        await Notes.delete(it.path);
+        removed.push(it.path);
       }
-      await refresh();
-      ctx.toast("已移到废纸篓");
     } catch (e) {
       fail(e as Error);
+    } finally {
+      setDeleting(false);
+      setPendingDelete(null);
+    }
+    if (removed.length > 0) {
+      setSelected((sel) => sel.filter((p) => !removed.some((r) => p === r || p.startsWith(r + "/"))));
+      await refresh();
+      ctx.toast(removed.length === 1 ? "已移到废纸篓" : `已将 ${removed.length} 项移到废纸篓`);
     }
   };
 
@@ -401,11 +579,10 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       fail(e as Error);
     }
   };
-  const openOutside = (how: "open" | "openWith" | "reveal") => {
+  const openOutside = (how: "open" | "openWith" | "reveal", target = path) => {
     setMenuOpen(false);
-    void flush()
-      .then(() => Notes[how](path))
-      .catch(fail);
+    const ready = target === state.current.path ? flush() : Promise.resolve();
+    void ready.then(() => Notes[how](target)).catch(fail);
   };
 
   // 点菜单外面关掉菜单。
@@ -417,6 +594,82 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     document.addEventListener("mousedown", away, true);
     return () => document.removeEventListener("mousedown", away, true);
   }, [menuOpen]);
+
+  // 监测整体容器宽度，窗口缩窄时自动钳位左右两栏宽而不破坏已保存的偏好宽度。
+  useEffect(() => {
+    const el = notesRef.current;
+    if (!el) return;
+    const measure = () => {
+      const cs = getComputedStyle(el);
+      const w = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      setContainerWidth(Math.max(0, Math.round(w)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const sidebarOpen = !prefs.sidebarHidden;
+  const outlineOpen = prefs.outline && !!path;
+  const sideAnim = useAnimatedPanel(sidebarOpen, loaded);
+  const outlineAnim = useAnimatedPanel(outlineOpen, loaded);
+
+  const savedSideW = prefs.sidebarWidth || DEFAULT_SIDEBAR_W;
+  const savedOutlineW = prefs.outlineWidth || DEFAULT_OUTLINE_W;
+  const canResetWidths = savedSideW !== DEFAULT_SIDEBAR_W || savedOutlineW !== DEFAULT_OUTLINE_W;
+  const widths = computePanelWidths({
+    containerWidth,
+    sidebarOpen,
+    outlineOpen,
+    sidebarWidth: resizing === "sidebar" && dragWidth !== null ? dragWidth : savedSideW,
+    outlineWidth: resizing === "outline" && dragWidth !== null ? dragWidth : savedOutlineW,
+  });
+
+  const resetWidths = () => {
+    setMenuOpen(false);
+    updatePrefs({ sidebarWidth: DEFAULT_SIDEBAR_W, outlineWidth: DEFAULT_OUTLINE_W });
+    ctx.toast("已恢复默认栏宽");
+  };
+
+  const startResize = (which: "sidebar" | "outline", e: PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const handle = e.currentTarget as HTMLElement;
+    handle.setPointerCapture?.(e.pointerId);
+    const startX = e.clientX;
+    const startW = which === "sidebar" ? widths.sidebar : widths.outline;
+    const otherW = which === "sidebar" ? widths.outline : widths.sidebar;
+    const otherOpen = which === "sidebar" ? outlineOpen : sidebarOpen;
+    let latest = startW;
+    setResizing(which);
+    setDragWidth(startW);
+
+    const onMove = (ev: PointerEvent) => {
+      const delta = which === "sidebar" ? ev.clientX - startX : startX - ev.clientX;
+      latest = clampDragWidth({
+        which,
+        rawWidth: startW + delta,
+        containerWidth: containerWidthRef.current,
+        otherWidth: otherW,
+        otherOpen,
+      });
+      setDragWidth(latest);
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      setResizing(null);
+      setDragWidth(null);
+      if (latest !== startW) {
+        updatePrefs(which === "sidebar" ? { sidebarWidth: latest } : { outlineWidth: latest });
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  };
 
   // 所见即所得模式下，frontmatter 摘出来单独编辑，编辑器只管正文。
   const split = useMemo(() => splitFrontmatter(content), [content]);
@@ -442,14 +695,86 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const stats = useMemo(() => count(content), [content]);
   const q = filter.trim().toLowerCase();
   const matches = q ? all.filter((n) => !n.isDir && n.name.toLowerCase().includes(q)) : null;
+  const visiblePaths = useMemo(() => visibleTreePaths(tree, open, matches), [tree, open, matches]);
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+
+  const expandAllDirs = (expand: boolean) => {
+    if (!expand) {
+      setOpen({});
+      return;
+    }
+    const next: Record<string, boolean> = {};
+    for (const n of all) if (n.isDir) next[n.path] = true;
+    setOpen(next);
+  };
+
+  const handleItemClick = (n: Node, e: MouseEvent) => {
+    if (renaming === n.path) return;
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      sideListRef.current?.focus();
+      setSelected((sel) => (sel.includes(n.path) ? sel.filter((p) => p !== n.path) : [...sel, n.path]));
+      setAnchorPath(n.path);
+      return;
+    }
+    if (e.shiftKey) {
+      e.preventDefault();
+      sideListRef.current?.focus();
+      const anchor = anchorPath || path || n.path;
+      setSelected(selectRange(visiblePaths, anchor, n.path));
+      if (!anchorPath) setAnchorPath(anchor);
+      return;
+    }
+    setSelected([n.path]);
+    setAnchorPath(n.path);
+    if (n.isDir) setOpen((o) => ({ ...o, [n.path]: !open[n.path] }));
+    else if (n.path !== path) void openNote(n.path);
+  };
+
+  const handleItemContextMenu = (n: Node, e: MouseEvent) => {
+    if ((e.target as Element)?.closest?.(".fx-side-rename")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    sideListRef.current?.focus();
+    if (selectedSet.has(n.path) && selected.length > 1) {
+      setSideMenu({ kind: "batch", paths: selected, x: e.clientX, y: e.clientY });
+      return;
+    }
+    setSelected([n.path]);
+    setAnchorPath(n.path);
+    setSideMenu({ kind: n.isDir ? "dir" : "file", node: n, x: e.clientX, y: e.clientY });
+  };
+
+  const sideMenuActions: SideMenuActions = {
+    onNewNote: (dir) => void newNote(dir),
+    onNewFolder: (dir) => void newFolder(dir),
+    onExpandAll: expandAllDirs,
+    onToggleDir: (p) => setOpen((o) => ({ ...o, [p]: !o[p] })),
+    onOpenNote: (p) => void openNote(p),
+    onRename: (p) => setRenaming(p),
+    onDuplicate: (p) => void duplicateNote(p),
+    onMoveToRoot: (p) => void move(p, ""),
+    onCopyPath: (p) => void ctx.copy(p, "已复制路径"),
+    onCopyContent: (p) => {
+      if (p === state.current.path) void ctx.copy(state.current.content, "已复制 Markdown");
+      else void Notes.read(p).then((text) => ctx.copy(text, "已复制 Markdown"), fail);
+    },
+    onOpenOutside: (p, how) => openOutside(how, p),
+    onRevealRoot: () => void Notes.reveal(""),
+    onRefresh: () => void refresh(),
+    onResetWidths: resetWidths,
+    onDelete: requestDelete,
+    onClearSelection: () => setSelected(path ? [path] : []),
+  };
 
   const item = (n: Node, depth: number) => {
-    const selected = n.path === path;
+    const active = n.path === path;
+    const picked = selectedSet.has(n.path) && (selected.length > 1 || n.isDir || !active);
     const expanded = !!open[n.path];
     return (
       <div key={n.path}>
         <div
-          class={`fx-side-item${selected ? " is-selected" : ""}${dragOver === n.path ? " is-drop" : ""}`}
+          class={`fx-side-item${active ? " is-selected" : ""}${picked ? " is-picked" : ""}${dragOver === n.path ? " is-drop" : ""}`}
           style={{ paddingLeft: `${8 + depth * 14}px` }}
           draggable={renaming !== n.path}
           onDragStart={(e) => e.dataTransfer?.setData("text/pocket-note", n.path)}
@@ -467,7 +792,8 @@ export function NotesTool({ input, ctx }: FeatureProps) {
             const from = e.dataTransfer?.getData("text/pocket-note");
             if (from) void move(from, n.path);
           }}
-          onClick={() => (n.isDir ? setOpen((o) => ({ ...o, [n.path]: !expanded })) : !selected && void openNote(n.path))}
+          onClick={(e) => handleItemClick(n, e as unknown as MouseEvent)}
+          onContextMenu={(e) => handleItemContextMenu(n, e as unknown as MouseEvent)}
         >
           {n.isDir ? (expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />) : <span class="fx-side-indent" />}
           {n.isDir ? <Folder size={13} /> : <FileText size={13} />}
@@ -491,23 +817,19 @@ export function NotesTool({ input, ctx }: FeatureProps) {
           ) : (
             <>
               <span class="fx-side-name" title={n.name}>{n.isDir ? n.name : stem(n.name)}</span>
-              {confirmDelete === n.path ? (
-                <Btn small danger onClick={() => void remove(n.path)}>删除</Btn>
-              ) : (
-                <span class="fx-side-tools" onClick={(e) => e.stopPropagation()}>
-                  {n.isDir && (
-                    <button type="button" class="fx-side-del" title="在这个文件夹里新建笔记" onClick={() => { setOpen((o) => ({ ...o, [n.path]: true })); void newNote(n.path); }}>
-                      <Plus size={12} />
-                    </button>
-                  )}
-                  <button type="button" class="fx-side-del" title="改名" onClick={() => setRenaming(n.path)}>
-                    <Pencil size={11} />
+              <span class="fx-side-tools" onClick={(e) => e.stopPropagation()}>
+                {n.isDir && (
+                  <button type="button" class="fx-side-del" title="在这个文件夹里新建笔记" onClick={() => { setOpen((o) => ({ ...o, [n.path]: true })); void newNote(n.path); }}>
+                    <Plus size={12} />
                   </button>
-                  <button type="button" class="fx-side-del" title="删除（移到废纸篓）" onClick={() => { setConfirmDelete(n.path); setTimeout(() => setConfirmDelete((c) => (c === n.path ? "" : c)), 2500); }}>
-                    <Trash2 size={12} />
-                  </button>
-                </span>
-              )}
+                )}
+                <button type="button" class="fx-side-del" title="改名" onClick={() => setRenaming(n.path)}>
+                  <Pencil size={11} />
+                </button>
+                <button type="button" class="fx-side-del" title="删除（移到废纸篓）" onClick={() => requestDelete([n.path])}>
+                  <Trash2 size={12} />
+                </button>
+              </span>
             </>
           )}
         </div>
@@ -520,19 +842,17 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   };
 
   return (
-    <div class="fx-page fx-notes">
-      <div class="pocket-note-rail">
-        <Btn small ghost icon title={prefs.sidebarHidden ? "展开文件栏" : "收起文件栏"} onClick={() => updatePrefs({ sidebarHidden: !prefs.sidebarHidden })}>
-          {prefs.sidebarHidden ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-        </Btn>
-        {prefs.sidebarHidden && <Btn small ghost icon title="新建笔记" onClick={() => void newNote()}><Plus size={16} /></Btn>}
-      </div>
-      <aside class="fx-out fx-side" hidden={prefs.sidebarHidden}>
-        <div class="fx-side-head">
-          <label class="fx-side-search">
-            <Search size={12} />
-            <input placeholder="搜索笔记" value={filter} spellcheck={false} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} />
-          </label>
+    <div class={`fx-page fx-notes${resizing ? " is-resizing" : ""}`} ref={notesRef}>
+      <aside
+        class={`fx-out fx-side${sideAnim.shown ? "" : " is-collapsed"}`}
+        hidden={!sideAnim.mounted}
+        style={{ width: `${widths.sidebar}px` }}
+      >
+        <div class="fx-side-head fx-side-toolbar">
+          <Btn small ghost icon title="收起文件栏" onClick={() => updatePrefs({ sidebarHidden: true })}>
+            <PanelLeftClose size={15} />
+          </Btn>
+          <span class="fx-spacer" />
           <Btn small ghost icon title="新建文件夹" onClick={() => void newFolder()}>
             <FolderPlus size={14} />
           </Btn>
@@ -540,8 +860,41 @@ export function NotesTool({ input, ctx }: FeatureProps) {
             <Plus size={14} />
           </Btn>
         </div>
+        <div class="fx-side-search-row">
+          <label class="fx-side-search">
+            <Search size={12} />
+            <input placeholder="搜索笔记" value={filter} spellcheck={false} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} />
+            {filter && (
+              <button type="button" class="fx-side-clear" title="清空搜索" aria-label="清空搜索" onClick={() => setFilter("")}>
+                <X size={12} />
+              </button>
+            )}
+          </label>
+        </div>
         <div
+          ref={sideListRef}
+          tabIndex={0}
           class={`fx-side-list${dragOver === "" ? " is-drop" : ""}`}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSelected(path ? [path] : []);
+          }}
+          onContextMenu={(e) => {
+            if ((e.target as Element)?.closest?.(".fx-side-rename")) return;
+            e.preventDefault();
+            sideListRef.current?.focus();
+            setSideMenu({ kind: "empty", x: e.clientX, y: e.clientY });
+          }}
+          onKeyDown={(e) => {
+            if (renaming || pendingDelete || sideMenu) return;
+            if ((e.target as Element)?.closest?.("input, textarea, [contenteditable]")) return;
+            if (e.key === "Delete" || (ctx.platform === "darwin" && e.metaKey && e.key === "Backspace")) {
+              const targets = selected.length > 0 ? selected : path ? [path] : [];
+              if (targets.length > 0) {
+                e.preventDefault();
+                requestDelete(targets);
+              }
+            }
+          }}
           onDragOver={(e) => {
             e.preventDefault();
             setDragOver("");
@@ -561,24 +914,47 @@ export function NotesTool({ input, ctx }: FeatureProps) {
           <button type="button" class="fx-side-link" title="笔记就是这个文件夹里的 .md 文件" onClick={() => void Notes.reveal("")}>
             <FolderOpen size={12} /> 打开笔记文件夹
           </button>
+          {selected.length > 1 && <span class="fx-side-selcount">已选 {selected.length} 项</span>}
         </div>
       </aside>
+      <div
+        class={`fx-notes-resizer${sideAnim.shown ? "" : " is-collapsed"}${resizing === "sidebar" ? " is-active" : ""}`}
+        hidden={!sideAnim.mounted}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="调整文件栏宽度"
+        title="拖动调整宽度，双击恢复默认"
+        onPointerDown={(e) => startResize("sidebar", e as unknown as PointerEvent)}
+        onDblClick={() => updatePrefs({ sidebarWidth: DEFAULT_SIDEBAR_W })}
+      />
 
       {!path ? (
-        <div class="fx-out fx-grow-1 fx-scratch-empty">
-          {loaded && (
-            <Empty title="随手记点什么" desc="笔记自动保存成 Markdown 文件，文件名带着日期。">
-              <Btn primary onClick={() => void newNote("")}>
-                <Plus size={14} /> 新建笔记
+        <div class="fx-notes-main">
+          {prefs.sidebarHidden && (
+            <div class="fx-notes-empty-head">
+              <Btn small ghost icon title="展开文件栏" onClick={() => updatePrefs({ sidebarHidden: false })}>
+                <PanelLeftOpen size={15} />
               </Btn>
-            </Empty>
+            </div>
           )}
+          <div class="fx-out fx-grow-1 fx-scratch-empty">
+            {loaded && (
+              <Empty title="随手记点什么" desc="笔记自动保存成 Markdown 文件，文件名带着日期。">
+                <Btn primary onClick={() => void newNote("")}>
+                  <Plus size={14} /> 新建笔记
+                </Btn>
+              </Empty>
+            )}
+          </div>
         </div>
       ) : (
         <div class="fx-notes-main">
           <div class="fx-notes-head">
-            <Btn small ghost icon title="大纲" on={prefs.outline} onClick={() => updatePrefs({ outline: !prefs.outline })}><ListTree size={15} /></Btn>
-            <Btn small ghost icon title="自定义笔记快捷键" onClick={() => setShortcutOpen(!shortcutOpen)}><Keyboard size={15} /></Btn>
+            {prefs.sidebarHidden && (
+              <Btn small ghost icon title="展开文件栏" onClick={() => updatePrefs({ sidebarHidden: false })}>
+                <PanelLeftOpen size={15} />
+              </Btn>
+            )}
             <input
               class="fx-notes-title"
               value={title}
@@ -596,59 +972,72 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                 }
               }}
             />
-            <Btn small ghost icon title="插入当前时间" onClick={() => insert(stamp())}>
-              <Clock size={14} />
-            </Btn>
-            <Btn small ghost icon title="复制全文（Markdown）" onClick={() => void ctx.copy(content)}>
-              <Copy size={14} />
-            </Btn>
-            <div class="fx-notes-more">
-              <Btn small ghost icon title="更多：用其他应用打开、另存为、设置" onClick={() => setMenuOpen((o) => !o)}>
-                <MoreHorizontal size={14} />
+            <div class="fx-notes-head-tools">
+              <Btn small ghost icon title="自定义笔记快捷键" onClick={() => setShortcutOpen(!shortcutOpen)}><Keyboard size={15} /></Btn>
+              <Btn small ghost icon title="插入当前时间" onClick={() => insert(stamp())}>
+                <Clock size={14} />
               </Btn>
-              {menuOpen && (
-                <div class="fx-menu" role="menu">
-                  <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("open")}>
-                    <ExternalLink size={14} />
-                    <span>用默认应用打开</span>
-                  </button>
-                  <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("openWith")}>
-                    <SquareArrowOutUpRight size={14} />
-                    <span>用其他应用打开…</span>
-                  </button>
-                  <button type="button" role="menuitem" class="fx-menu-item" onClick={() => void saveAs()}>
-                    <FileOutput size={14} />
-                    <span>另存为…</span>
-                  </button>
-                  <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("reveal")}>
-                    <FolderOpen size={14} />
-                    <span>在文件夹中显示</span>
-                  </button>
-                  <div class="fx-menu-sep" />
-                  <button type="button" role="menuitemcheckbox" aria-checked={prefs.spell} class="fx-menu-item" onClick={() => updatePrefs({ spell: !prefs.spell })}>
-                    <SpellCheck size={14} />
-                    <span>拼写检查</span>
-                    {prefs.spell && <Check size={12} class="fx-menu-check" />}
-                  </button>
-                  <button type="button" role="menuitemcheckbox" aria-checked={prefs.revealSource} class="fx-menu-item" onClick={() => updatePrefs({ revealSource: !prefs.revealSource })}>
-                    <Code size={14} /><span>点击块显示 Markdown 源码</span>{prefs.revealSource && <Check size={12} />}
-                  </button>
-                  <div class="fx-menu-sep" />
-                  <div class="fx-menu-label">
-                    <Palette size={12} /> 代码块配色
-                  </div>
-                  {codeThemes.map((t) => (
-                    <button key={t.id} type="button" role="menuitemradio" aria-checked={prefs.codeTheme === t.id} class="fx-menu-item" onClick={() => updatePrefs({ codeTheme: t.id })}>
-                      <span class={`fx-code-swatch is-${t.id}`} />
-                      <span>{t.label}</span>
-                      {prefs.codeTheme === t.id && <Check size={12} class="fx-menu-check" />}
+              <Btn small ghost icon title="复制全文（Markdown）" onClick={() => void ctx.copy(content)}>
+                <Copy size={14} />
+              </Btn>
+              <div class="fx-notes-more">
+                <Btn small ghost icon title="更多：用其他应用打开、另存为、设置" onClick={() => setMenuOpen((o) => !o)}>
+                  <MoreHorizontal size={14} />
+                </Btn>
+                {menuOpen && (
+                  <div class="fx-menu" role="menu">
+                    <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("open")}>
+                      <ExternalLink size={14} />
+                      <span>用默认应用打开</span>
                     </button>
-                  ))}
-                </div>
+                    <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("openWith")}>
+                      <SquareArrowOutUpRight size={14} />
+                      <span>用其他应用打开…</span>
+                    </button>
+                    <button type="button" role="menuitem" class="fx-menu-item" onClick={() => void saveAs()}>
+                      <FileOutput size={14} />
+                      <span>另存为…</span>
+                    </button>
+                    <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("reveal")}>
+                      <FolderOpen size={14} />
+                      <span>在文件夹中显示</span>
+                    </button>
+                    <div class="fx-menu-sep" />
+                    <button type="button" role="menuitem" class="fx-menu-item" disabled={!canResetWidths} onClick={resetWidths}>
+                      <RotateCcw size={14} />
+                      <span>恢复默认栏宽</span>
+                    </button>
+                    <div class="fx-menu-sep" />
+                    <button type="button" role="menuitemcheckbox" aria-checked={prefs.spell} class="fx-menu-item" onClick={() => updatePrefs({ spell: !prefs.spell })}>
+                      <SpellCheck size={14} />
+                      <span>拼写检查</span>
+                      {prefs.spell && <Check size={12} class="fx-menu-check" />}
+                    </button>
+                    <button type="button" role="menuitemcheckbox" aria-checked={prefs.revealSource} class="fx-menu-item" onClick={() => updatePrefs({ revealSource: !prefs.revealSource })}>
+                      <Code size={14} /><span>点击块显示 Markdown 源码</span>{prefs.revealSource && <Check size={12} />}
+                    </button>
+                    <div class="fx-menu-sep" />
+                    <div class="fx-menu-label">
+                      <Palette size={12} /> 代码块配色
+                    </div>
+                    {codeThemes.map((t) => (
+                      <button key={t.id} type="button" role="menuitemradio" aria-checked={prefs.codeTheme === t.id} class="fx-menu-item" onClick={() => updatePrefs({ codeTheme: t.id })}>
+                        <span class={`fx-code-swatch is-${t.id}`} />
+                        <span>{t.label}</span>
+                        {prefs.codeTheme === t.id && <Check size={12} class="fx-menu-check" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {mode === "rich" && <Btn small ghost icon title="HTML/CSS 预览" on={htmlPreview} onClick={() => setHtmlPreview(!htmlPreview)}><Eye size={15} /></Btn>}
+              <Seg value={mode} options={[{ value: "rich", label: "所见即所得" }, { value: "source", label: "源码" }]} onChange={switchMode} />
+              {!prefs.outline && (
+                <Btn small ghost icon title="大纲" onClick={() => updatePrefs({ outline: true })}>
+                  <ListTree size={15} />
+                </Btn>
               )}
             </div>
-            {mode === "rich" && <Btn small ghost icon title="HTML/CSS 预览" on={htmlPreview} onClick={() => setHtmlPreview(!htmlPreview)}><Eye size={15} /></Btn>}
-            <Seg value={mode} options={[{ value: "rich", label: "所见即所得" }, { value: "source", label: "源码" }]} onChange={switchMode} />
           </div>
           {shortcutOpen && <div class="pocket-note-shortcuts" role="region" aria-label="笔记快捷键设置">
             {(["above", "below"] as const).map((action) => <label key={action}>
@@ -726,10 +1115,52 @@ export function NotesTool({ input, ctx }: FeatureProps) {
           </div>
         </div>
       )}
-      {prefs.outline && path && <nav class="fx-out pocket-note-outline" aria-label="笔记大纲">
-        <div class="fx-side-head">大纲 <span class="fx-spacer" /><Btn small ghost icon title="收起大纲" onClick={() => updatePrefs({ outline: false })}><ChevronRight size={14} /></Btn></div>
-        <div class="fx-side-list">{headings.length ? headings.map((h, index) => <button type="button" key={`${h.from}-${index}`} style={{ paddingLeft: `${10 + (h.level - 1) * 12}px` }} onClick={() => jumpHeading(index)} title={h.text}>{h.text || "（空标题）"}</button>) : <div class="fx-side-empty">使用 # 标题后会显示在这里</div>}</div>
-      </nav>}
+      <div
+        class={`fx-notes-resizer${outlineAnim.shown ? "" : " is-collapsed"}${resizing === "outline" ? " is-active" : ""}`}
+        hidden={!outlineAnim.mounted}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="调整大纲宽度"
+        title="拖动调整宽度，双击恢复默认"
+        onPointerDown={(e) => startResize("outline", e as unknown as PointerEvent)}
+        onDblClick={() => updatePrefs({ outlineWidth: DEFAULT_OUTLINE_W })}
+      />
+      <nav
+        class={`fx-out pocket-note-outline${outlineAnim.shown ? "" : " is-collapsed"}`}
+        aria-label="笔记大纲"
+        hidden={!outlineAnim.mounted}
+        style={{ width: `${widths.outline}px` }}
+      >
+        <div class="fx-side-head">
+          <span>大纲</span>
+          <span class="fx-spacer" />
+          <Btn small ghost icon title="收起大纲" onClick={() => updatePrefs({ outline: false })}>
+            <PanelRightClose size={14} />
+          </Btn>
+        </div>
+        <div class="fx-side-list">
+          {headings.length ? headings.map((h, index) => <button type="button" key={`${h.from}-${index}`} style={{ paddingLeft: `${10 + (h.level - 1) * 12}px` }} onClick={() => jumpHeading(index)} title={h.text}>{h.text || "（空标题）"}</button>) : <div class="fx-side-empty">使用 # 标题后会显示在这里</div>}
+        </div>
+      </nav>
+      {sideMenu && (
+        <SideContextMenu
+          menu={sideMenu}
+          currentPath={path}
+          openDirs={open}
+          hasDirs={hasDirs}
+          canResetWidths={canResetWidths}
+          actions={sideMenuActions}
+          onClose={() => setSideMenu(null)}
+        />
+      )}
+      {pendingDelete && (
+        <DeleteConfirmModal
+          items={pendingDelete}
+          busy={deleting}
+          onConfirm={() => void confirmBatchDelete()}
+          onCancel={() => !deleting && setPendingDelete(null)}
+        />
+      )}
     </div>
   );
 }

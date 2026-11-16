@@ -62,6 +62,7 @@ export const Notes = {
   write: (path: string, content: string) => pocket.fs.write(NOTES, path, content),
   /** 新笔记的名字带当天的日期，重名时宿主会自动加序号。 */
   newNote: (dir: string) => pocket.fs.createFile(NOTES, dir, `${today()} 笔记.md`, ""),
+  createNote: (dir: string, name: string, content = "") => pocket.fs.createFile(NOTES, dir, /\.md$/i.test(name) ? name : `${name}.md`, content),
   newFolder: (dir: string) => pocket.fs.createFolder(NOTES, dir, "新建文件夹"),
   /** 改名。笔记的名字不用带 .md，这里补上。 */
   rename: (path: string, name: string) => pocket.fs.rename(NOTES, path, /\.md$/i.test(path) && !/\.md$/i.test(name) ? `${name}.md` : name),

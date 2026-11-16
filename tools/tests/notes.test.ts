@@ -2,6 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { splitFrontmatter, joinFrontmatter } from "../../extensions/editors/src/notes/frontmatter";
 import { outlineOf } from "../../extensions/editors/src/notes/outline";
 import { defaultShortcuts, insertLine, lineAction, shortcutOf } from "../../extensions/editors/src/notes/shortcuts";
+import {
+  DEFAULT_OUTLINE_W,
+  DEFAULT_SIDEBAR_W,
+  MIN_EDITOR_W,
+  clampDragWidth,
+  computePanelWidths,
+  normalizeDeleteTargets,
+  selectRange,
+  visibleTreePaths,
+} from "../../extensions/editors/src/notes/sidebar";
 import { highlightJSON } from "../../src/features/ui";
 
 describe("notes source fidelity", () => {
@@ -38,4 +48,55 @@ test("JSON highlight does not share keyboard key layout or allow HTML", () => {
   expect(html).not.toContain('class="fx-key"');
   expect(html).toContain('class="fx-json-key"');
   expect(html).not.toContain("<script>");
+});
+
+describe("notes sidebar multi-select, delete normalization, and resizable widths", () => {
+  const sampleTree = [
+    {
+      path: "work",
+      name: "work",
+      isDir: true,
+      children: [
+        { path: "work/a.md", name: "a.md", isDir: false },
+        { path: "work/b.md", name: "b.md", isDir: false },
+      ],
+    },
+    { path: "workshop", name: "workshop", isDir: true, children: [{ path: "workshop/c.md", name: "c.md", isDir: false }] },
+    { path: "readme.md", name: "readme.md", isDir: false },
+  ];
+
+  test("visibleTreePaths respects collapsed/expanded dirs and search filter", () => {
+    expect(visibleTreePaths(sampleTree, {}, null)).toEqual(["work", "workshop", "readme.md"]);
+    expect(visibleTreePaths(sampleTree, { work: true }, null)).toEqual(["work", "work/a.md", "work/b.md", "workshop", "readme.md"]);
+    expect(visibleTreePaths(sampleTree, { work: true }, [{ path: "work/b.md", name: "b.md", isDir: false }])).toEqual(["work/b.md"]);
+  });
+
+  test("selectRange selects forward and backward ranges cleanly", () => {
+    const visible = ["work", "work/a.md", "work/b.md", "workshop", "readme.md"];
+    expect(selectRange(visible, "work/a.md", "workshop")).toEqual(["work/a.md", "work/b.md", "workshop"]);
+    expect(selectRange(visible, "workshop", "work")).toEqual(["work", "work/a.md", "work/b.md", "workshop"]);
+    expect(selectRange(visible, "missing", "readme.md")).toEqual(["readme.md"]);
+  });
+
+  test("normalizeDeleteTargets prunes descendants of selected dirs without colliding prefixes", () => {
+    expect(normalizeDeleteTargets(["work/a.md", "work", "workshop/c.md", "work/b.md", "work"])).toEqual(["work", "workshop/c.md"]);
+  });
+
+  test("computePanelWidths preserves editor minimum width in narrow windows", () => {
+    const wide = computePanelWidths({ containerWidth: 1000, sidebarOpen: true, outlineOpen: true, sidebarWidth: 280, outlineWidth: 220 });
+    expect(wide).toEqual({ sidebar: 280, outline: 220 });
+
+    const narrow = computePanelWidths({ containerWidth: 620, sidebarOpen: true, outlineOpen: true, sidebarWidth: 320, outlineWidth: 260 });
+    expect(narrow.sidebar + narrow.outline + 20 + MIN_EDITOR_W).toBeLessThanOrEqual(620);
+    expect(narrow.sidebar).toBeGreaterThanOrEqual(150);
+    expect(narrow.outline).toBeGreaterThanOrEqual(130);
+
+    const defaults = computePanelWidths({ containerWidth: 0, sidebarOpen: true, outlineOpen: true, sidebarWidth: 0, outlineWidth: 0 });
+    expect(defaults).toEqual({ sidebar: DEFAULT_SIDEBAR_W, outline: DEFAULT_OUTLINE_W });
+  });
+
+  test("clampDragWidth respects bounds and other panel width", () => {
+    expect(clampDragWidth({ which: "sidebar", rawWidth: 999, containerWidth: 700, otherWidth: 180, otherOpen: true })).toBe(700 - 20 - MIN_EDITOR_W - 180);
+    expect(clampDragWidth({ which: "outline", rawWidth: 50, containerWidth: 700, otherWidth: 210, otherOpen: true })).toBe(130);
+  });
 });
