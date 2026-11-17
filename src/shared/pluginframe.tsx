@@ -104,7 +104,7 @@ export function PluginFrame(props: PluginFrameProps) {
           void appInfo().then((info) =>
             reply({
               result: {
-                api: 1, plugin: p.plugin, tool: p.tool ?? "", input: p.input ?? "", args: p.args ?? {}, detached: !!p.detached, float: !!p.float,
+                api: 2, plugin: p.plugin, tool: p.tool ?? "", input: p.input ?? "", args: p.args ?? {}, detached: !!p.detached, float: !!p.float,
                 platform: info.platform, version: info.version, e2e: !!info.e2e, theme: themeSnapshot(), detachKey: parseDetachKey(p.detachKey),
               },
             }),

@@ -23,7 +23,7 @@ import (
 // 相当于只有一个工具。
 
 // APIVersion 是当前的扩展接口版本。清单里写的 api 比它大时，这个扩展不会被加载。
-const APIVersion = 1
+const APIVersion = 2
 
 // Manifest 是 plugin.json。
 type Manifest struct {
@@ -81,6 +81,8 @@ type MatchRule struct {
 
 // Permissions 声明扩展要用哪些宿主能力。没声明的调用会被拒绝；安装时会列给用户看。
 type Permissions struct {
+	// Peer permits IPv6 listening and authenticated transfers of user-selected files.
+	Peer bool `json:"peer,omitempty"`
 	// Dirs 是用户目录下的几个文件夹名（例如 notes），扩展可以读写里面的文件。自己的私有目录不用声明。
 	Dirs []string `json:"dirs,omitempty"`
 	// Fetch 是允许通过宿主发请求的域名；"*" 表示任意公网地址。本机和内网地址必须写明才行。

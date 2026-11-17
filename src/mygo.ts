@@ -572,6 +572,7 @@ export interface PayloadInfo {
 }
 
 export interface Permissions {
+  peer?: boolean;
   dirs?: string[];
   fetch?: string[];
   runner?: boolean;

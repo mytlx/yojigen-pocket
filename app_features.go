@@ -174,6 +174,9 @@ func (a *App) detach(req DetachRequest) (int, error) {
 		}
 	}
 	win := mygo.NewWindow(opts)
+	if req.Plugin != "" {
+		a.pluginHost.bindPeerWindow(req.Plugin, win)
+	}
 	id := win.ID()
 	d := &detachedWindow{win: win, key: key, info: WindowInfo{ID: id, Title: req.Title, Icon: req.Icon, Feature: req.Feature, Mode: req.Mode}}
 	a.detachedMu.Lock()

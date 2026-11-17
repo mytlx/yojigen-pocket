@@ -21,6 +21,7 @@ import (
 
 	"github.com/egoist/mygo"
 
+	"yojigen-pocket/internal/peer"
 	"yojigen-pocket/internal/providers"
 	"yojigen-pocket/internal/runner"
 	"yojigen-pocket/internal/store"
@@ -41,7 +42,10 @@ type PluginEventData struct {
 }
 
 type pluginHost struct {
-	a *App
+	a            *App
+	peerMu       sync.Mutex
+	peers        map[string]*peer.Service
+	peerStopping bool
 
 	mu      sync.Mutex
 	floats  map[string]*mygo.Window       // "扩展/工具" → 悬浮窗
@@ -108,6 +112,9 @@ func (h *pluginHost) call(ctx context.Context, id, tool, method string, raw []an
 	}
 	win := mygo.CallerWindow(ctx)
 
+	if name, isPeer := strings.CutPrefix(method, "peer."); isPeer {
+		return h.peerCall(m, id, name, args, win)
+	}
 	if name, isFS := strings.CutPrefix(method, "fs."); isFS {
 		return h.fs(ctx, m, id, name, args, win)
 	}
@@ -692,6 +699,9 @@ func (e *Extensions) Install(source string) (*providers.PluginInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("这不是一个能用的扩展包：%v", err)
 	}
+	if err := a.pluginHost.stopPeer(m.ID); err != nil {
+		return nil, err
+	}
 	target := filepath.Join(a.paths.Plugins, m.ID)
 	a.pluginHost.stop(m.ID, false)
 	if err := os.RemoveAll(target); err != nil {
@@ -776,6 +786,9 @@ func (e *Extensions) Uninstall(id string, removeData bool) error {
 	if !providers.ValidPluginID(id) {
 		return errors.New("扩展的 ID 不对")
 	}
+	if err := a.pluginHost.stopPeer(id); err != nil {
+		return err
+	}
 	a.pluginHost.stop(id, true)
 	if err := os.RemoveAll(filepath.Join(a.paths.Plugins, id)); err != nil {
 		return err
@@ -801,6 +814,11 @@ func (e *Extensions) Uninstall(id string, removeData bool) error {
 // SetEnabled 启用或停用一个扩展。停用后它不出现在搜索里，快捷键注销，窗口和后端进程都关掉。
 func (e *Extensions) SetEnabled(id string, enabled bool) error {
 	a := e.a
+	if !enabled {
+		if err := a.pluginHost.stopPeer(id); err != nil {
+			return err
+		}
+	}
 	err := a.config.Update(func(c *store.Config) {
 		c.DisabledPlugins = slices.DeleteFunc(c.DisabledPlugins, func(x string) bool { return x == id })
 		if !enabled {

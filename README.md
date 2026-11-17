@@ -60,6 +60,7 @@ uTools 很好用，但有些东西我想自己说了算：数据放在哪、界�
 
 - 写作与代码：Markdown 笔记（所见即所得，也能切到源码）、代码草稿（27 种语言高亮和格式化，装了环境的直接运行）、文本对比（两边直接改，差异实时标出来）
 - 桌面宠物：一只可以养的 3D 小狸猫
+- 口袋直传：IPv6 点对点文件传输，数字配对、加密传输、进度与本地记录（[使用说明](docs/peer.md)）
 
 所有功能页都可以拆成独立窗口，也都可以绑一个全局快捷键。完整的清单和用法在[使用手册](docs/guide.md)里。
 
@@ -91,7 +92,7 @@ uTools 很好用，但有些东西我想自己说了算：数据放在哪、界�
 | macOS 13 及以上（Intel 和 Apple 芯片通用） | `yojigen-pocket-x.y.z.dmg` |
 | Windows 10 / 11（x64） | `yojigen-pocket-setup-x.y.z-amd64.exe`，或免安装的 `…-windows-amd64-portable.zip` |
 | Windows 11（ARM） | `yojigen-pocket-setup-x.y.z-arm64.exe` |
-| 扩展包（两个系统通用，按需下载） | `editors-x.y.z.zip`（笔记、代码草稿、文本对比）、`pet-x.y.z.zip`（桌面宠物） |
+| 扩展包（两个系统通用，按需下载） | `editors-x.y.z.zip`（笔记、代码草稿、文本对比）、`pet-x.y.z.zip`（桌面宠物）、`peer-x.y.z.zip`（口袋直传） |
 
 > **macOS 提示“无法打开”或“已损坏”？** 安装包没有苹果的开发者签名。把应用拖进“应用程序”后，在终端里运行一次：
 >

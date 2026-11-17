@@ -47,7 +47,16 @@ func main() {
 	mygo.App.OnWindowAllClosed(func() {}) // 没有窗口也继续运行
 	mygo.App.OnSecondInstance(func([]string, string) { a.showPanel("") })
 	mygo.App.OnOpenURL(a.handleURL)
-	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { a.quitting.Store(true) })
+	mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
+		if a.pluginHost != nil {
+			if err := a.pluginHost.closePeersForQuit(); err != nil {
+				e.PreventDefault()
+				a.host.Notify("传输进行中", err.Error())
+				return
+			}
+		}
+		a.quitting.Store(true)
+	})
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
 		a.flush()
 		if a.pluginHost != nil {
