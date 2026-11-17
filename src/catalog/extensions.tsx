@@ -12,7 +12,7 @@ function permissionText(p: PluginInfo): string[] {
   if (perm.dirs?.length) out.push(`读写用户目录里的 ${perm.dirs.join("、")} 文件夹`);
   if (perm.fetch?.length) out.push(perm.fetch.includes("*") ? "访问任意网站" : `访问 ${perm.fetch.join("、")}`);
   if (perm.runner) out.push("运行和格式化代码");
-  if (perm.peer) out.push("IPv6 直连传输：监听端口，发送所选文件并接收对方文件");
+  if (perm.peer) out.push("点对点直传：监听端口与 UDP 打洞，发送所选文件并接收对方文件");
   if (perm.files) out.push("打开、另存你选择的文件");
   return out;
 }

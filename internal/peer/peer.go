@@ -39,19 +39,22 @@ type Identity struct {
 	Avatar int    `json:"avatar"`
 }
 type Snapshot struct {
-	Self      Identity  `json:"self"`
-	Addresses []string  `json:"addresses"`
-	Port      int       `json:"port"`
-	Folder    string    `json:"folder"`
-	State     string    `json:"state"`
-	Peer      *Identity `json:"peer,omitempty"`
-	Address   string    `json:"address,omitempty"`
-	Code      string    `json:"code,omitempty"`
-	Choices   []string  `json:"choices,omitempty"`
-	Expires   int64     `json:"expires,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	Busy      bool      `json:"busy"`
-	Records   []Record  `json:"records"`
+	Self        Identity       `json:"self"`
+	Addresses   []string       `json:"addresses"`
+	Port        int            `json:"port"`
+	DirectReady bool           `json:"directReady"`
+	Folder      string         `json:"folder"`
+	State       string         `json:"state"`
+	SessionMode string         `json:"sessionMode,omitempty"`
+	Peer        *Identity      `json:"peer,omitempty"`
+	Address     string         `json:"address,omitempty"`
+	Code        string         `json:"code,omitempty"`
+	Choices     []string       `json:"choices,omitempty"`
+	Expires     int64          `json:"expires,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	Busy        bool           `json:"busy"`
+	Punch       *PunchSnapshot `json:"punch,omitempty"`
+	Records     []Record       `json:"records"`
 }
 type Record struct {
 	ID        string  `json:"id"`
@@ -76,24 +79,28 @@ type Service struct {
 	folder, dataDir, lastError string
 	server                     *http.Server
 	listener                   net.Listener
+	punch                      *punchEngine
 	current                    *session
 	records                    []Record
 	closed                     bool
 	active                     int
 	port                       int
 	// Test-only settings, never set through the extension API.
-	allowLocal bool
+	allowLocal  bool
+	stunServers []string
 }
 type session struct {
 	service                   *Service
-	conn                      *websocket.Conn
+	conn                      transportConn
 	ctx                       context.Context
 	cancel                    context.CancelFunc
 	mu                        sync.Mutex // serializes protocol writes, not state (owned by service.mu)
 	remote                    Identity
+	mode                      string
 	address, state, sas, code string
 	choices                   []string
 	incoming                  bool
+	userCancelled             bool
 	expires                   time.Time
 	timer                     *time.Timer
 	sending                   bool
@@ -104,6 +111,7 @@ type session struct {
 type message struct {
 	Type     string   `json:"type"`
 	Identity Identity `json:"identity,omitempty"`
+	Auth     string   `json:"auth,omitempty"`
 	ID       string   `json:"id,omitempty"`
 	Name     string   `json:"name,omitempty"`
 	Size     int64    `json:"size,omitempty"`
@@ -124,26 +132,6 @@ func newIdentity() Identity {
 	b := []string{"水獭", "狐狸", "鲸鱼", "企鹅", "松鼠", "小熊", "海豹", "猫咪"}
 	i := randomN(len(b))
 	return Identity{fmt.Sprintf("%s%s %02d", a[randomN(len(a))], b[i], randomN(100)), i}
-}
-func publicIPv6(ip netip.Addr) bool {
-	return ip.Is6() && !ip.Is4In6() && ip.IsGlobalUnicast() && !ip.IsPrivate()
-}
-func Addresses() []string {
-	out := []string{}
-	interfaces, _ := net.Interfaces()
-	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addresses, _ := iface.Addrs()
-		for _, a := range addresses {
-			p, err := netip.ParsePrefix(a.String())
-			if err == nil && publicIPv6(p.Addr()) {
-				out = append(out, p.Addr().String())
-			}
-		}
-	}
-	return out
 }
 func New(cfg Config) (*Service, error) { return newService(cfg, false, Port) }
 func newService(cfg Config, local bool, port int) (*Service, error) {
@@ -234,8 +222,7 @@ func channelNumber(state *tls.ConnectionState) (string, error) {
 }
 func (s *Service) Snapshot() Snapshot {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	v := Snapshot{Self: s.self, Addresses: append([]string{}, s.addresses...), Port: s.port, Folder: s.folder, State: "idle", Error: s.lastError, Busy: s.active > 0, Records: append([]Record{}, s.records...)}
+	v := Snapshot{Self: s.self, Addresses: append([]string{}, s.addresses...), Port: s.port, DirectReady: s.listener != nil, Folder: s.folder, State: "idle", Error: s.lastError, Busy: s.active > 0, Records: append([]Record{}, s.records...)}
 	for i := range v.Records {
 		v.Records[i].Temp = ""
 	}
@@ -244,6 +231,7 @@ func (s *Service) Snapshot() Snapshot {
 	}
 	if p := s.current; p != nil {
 		v.State = p.state
+		v.SessionMode = p.mode
 		peer := p.remote
 		v.Peer = &peer
 		v.Address = p.address
@@ -251,6 +239,14 @@ func (s *Service) Snapshot() Snapshot {
 		v.Choices = append([]string{}, p.choices...)
 		if !p.expires.IsZero() {
 			v.Expires = p.expires.UnixMilli()
+		}
+	}
+	punch := s.punch
+	s.mu.Unlock()
+	if punch != nil {
+		v.Punch = punch.snapshot()
+		if v.State == "offline" && v.Punch.Ready {
+			v.State = "idle"
 		}
 	}
 	return v
@@ -291,13 +287,17 @@ func (s *Service) TryClose() error {
 		return ErrBusy
 	}
 	s.closed = true
-	p, server := s.current, s.server
+	p, server, punch := s.current, s.server, s.punch
+	s.punch = nil
 	if p != nil {
 		p.cancel()
 	}
 	s.mu.Unlock()
 	if p != nil {
 		p.closeConnection()
+	}
+	if punch != nil {
+		_ = punch.Close()
 	}
 	if server != nil {
 		_ = server.Close()
@@ -312,6 +312,7 @@ func (s *Service) Disconnect() error {
 	}
 	p := s.current
 	if p != nil {
+		p.userCancelled = true
 		p.cancel()
 	}
 	s.mu.Unlock()
@@ -324,6 +325,7 @@ func (s *Service) Cancel() {
 	s.mu.Lock()
 	p := s.current
 	if p != nil {
+		p.userCancelled = true
 		p.cancel()
 	}
 	s.mu.Unlock()
@@ -331,7 +333,7 @@ func (s *Service) Cancel() {
 		p.closeConnection()
 	}
 }
-func (p *session) attach(conn *websocket.Conn) {
+func (p *session) attach(conn transportConn) {
 	p.service.mu.Lock()
 	p.conn = conn
 	cancelled := p.ctx.Err() != nil
@@ -355,7 +357,7 @@ func (s *Service) makeSession(incoming bool, address string) (*session, error) {
 		return nil, errors.New("已有连接或请求，请先断开")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	p := &session{service: s, ctx: ctx, cancel: cancel, incoming: incoming, address: address, state: "connecting", ack: make(chan message, 4), done: make(chan struct{})}
+	p := &session{service: s, ctx: ctx, cancel: cancel, incoming: incoming, mode: "direct", address: address, state: "connecting", ack: make(chan message, 4), done: make(chan struct{})}
 	s.current = p
 	s.lastError = ""
 	return p, nil
@@ -382,7 +384,7 @@ func (p *session) writeControlLocked(m message) error {
 func (p *session) writeBytesLocked(kind websocket.MessageType, b []byte) error {
 	ctx, cancel := context.WithTimeout(p.ctx, 30*time.Second)
 	defer cancel()
-	return p.conn.Write(ctx, kind, b)
+	return p.conn.WriteMessage(ctx, kind, b)
 }
 func (p *session) deadline() {
 	s := p.service
@@ -445,19 +447,19 @@ func (s *Service) accept(w http.ResponseWriter, r *http.Request) {
 		p.finish(err)
 		return
 	}
-	p.attach(conn)
-	conn.SetReadLimit(128 << 10)
-	sas, err := channelNumber(r.TLS)
+	tc := newWSTransport(conn, r.TLS)
+	p.attach(tc)
+	sas, err := channelNumber(tc.TLSState())
 	if err != nil {
 		p.finish(err)
 		return
 	}
 	p.sas = sas
 	ctx, cancel := context.WithTimeout(p.ctx, 10*time.Second)
-	_, raw, err := conn.Read(ctx)
+	_, raw, err := tc.ReadMessage(ctx)
 	cancel()
 	var hello message
-	if err != nil || json.Unmarshal(raw, &hello) != nil || hello.Type != "hello" || !validIdentity(hello.Identity) {
+	if err != nil || unmarshalHello(raw, &hello) != nil {
 		p.finish(errors.New("无效连接请求"))
 		return
 	}
@@ -474,6 +476,13 @@ func (s *Service) accept(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	p.readLoop()
 }
+func unmarshalHello(raw []byte, out *message) error {
+	if len(raw) > 16<<10 || json.Unmarshal(raw, out) != nil || out.Type != "hello" || !validIdentity(out.Identity) {
+		return errors.New("无效连接请求")
+	}
+	return nil
+}
+
 func validIdentity(i Identity) bool {
 	return len([]rune(i.Name)) > 0 && len([]rune(i.Name)) <= 32 && !strings.ContainsAny(i.Name, "\r\n\x00") && i.Avatar >= 0 && i.Avatar < 8
 }
@@ -503,9 +512,9 @@ func (s *Service) connectTo(address string, targetPort int) error {
 			p.finish(fmt.Errorf("无法连接，请检查对方扩展和 IPv6 防火墙：%w", err))
 			return
 		}
-		p.attach(conn)
-		conn.SetReadLimit(128 << 10)
-		p.sas, err = channelNumber(response.TLS)
+		tc := newWSTransport(conn, response.TLS)
+		p.attach(tc)
+		p.sas, err = channelNumber(tc.TLSState())
 		if err != nil {
 			p.finish(err)
 			return
@@ -616,7 +625,7 @@ func (p *session) readLoop() {
 		}
 	}()
 	for {
-		kind, data, err := p.conn.Read(p.ctx)
+		kind, data, err := p.conn.ReadMessage(p.ctx)
 		if err != nil {
 			end = err
 			return

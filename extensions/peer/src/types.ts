@@ -5,11 +5,23 @@ export interface Transfer {
   status: "queued" | "transferring" | "verifying" | "completed" | "failed" | "interrupted";
   peer: string; started: number; finished?: number; path?: string; error?: string;
 }
+export interface PunchState {
+  ready: boolean;
+  preparing: boolean;
+  token?: string;
+  encrypted: boolean;
+  natType?: "unknown" | "cone" | "symmetric";
+  port?: number;
+  candidates?: string[];
+  stunError?: string;
+  error?: string;
+}
 export interface PeerState {
-  self: Identity; addresses: string[]; port: number; folder: string;
-  state: "offline" | "idle" | "connecting" | "waiting" | "request" | "verify" | "connected";
+  self: Identity; addresses: string[]; port: number; directReady: boolean; folder: string;
+  state: "offline" | "idle" | "punching" | "connecting" | "waiting" | "request" | "verify" | "connected";
+  sessionMode?: "direct" | "punch";
   peer?: Identity; address?: string; code?: string; choices?: string[]; expires?: number;
-  busy: boolean; error?: string; records: Transfer[];
+  busy: boolean; error?: string; punch?: PunchState; records: Transfer[];
 }
 export const avatars = ["🦦", "🦊", "🐳", "🐧", "🐿️", "🐻", "🦭", "🐱"];
 export function bytes(n: number): string {

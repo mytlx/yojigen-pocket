@@ -1,21 +1,45 @@
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { ArrowDownLeft, ArrowUpRight, Check, CheckCheck, ChevronRight, Copy, File, FolderOpen, History, Link2, LoaderCircle, LockKeyhole, Radio, RefreshCw, Send, ShieldCheck, Unplug, Upload, Wifi, X } from "lucide-preact";
+import { ArrowDownLeft, ArrowUpRight, Check, CheckCheck, ChevronRight, Copy, File, FolderOpen, History, KeyRound, Link2, LoaderCircle, LockKeyhole, Radio, RefreshCw, Send, ShieldCheck, Unplug, Upload, Wifi, X } from "lucide-preact";
 import { pocket } from "../../sdk/pocket";
-import { active, avatars, bytes, progress, type Identity, type PeerState, type Transfer } from "./types";
+import { active, avatars, bytes, progress, type Identity, type PeerState, type PunchState, type Transfer } from "./types";
 import "../../../src/shared/tokens.css";
 import "../../../src/shared/motion.css";
 import "../../../src/shared/controls.css";
 import "./peer.css";
 
+type ConnectMode = "direct" | "punch";
+
 const rpc = <T,>(method: string, ...args: unknown[]) => pocket.call(`peer.${method}`, ...args) as Promise<T>;
-const statusText: Record<PeerState["state"], string> = { offline: "等待 IPv6 网络", idle: "可以接收连接", connecting: "正在连接", waiting: "等待对方同意", request: "收到连接请求", verify: "核对连接数字", connected: "已建立安全连接" };
+const statusText: Record<PeerState["state"], string> = {
+  offline: "等待 IPv6 网络",
+  idle: "可以接收连接",
+  punching: "正在打洞穿透",
+  connecting: "正在连接",
+  waiting: "等待对方同意",
+  request: "收到连接请求",
+  verify: "核对连接数字",
+  connected: "已建立安全连接",
+};
+const natLabel: Record<NonNullable<PunchState["natType"]>, string> = {
+  cone: "锥形 NAT（可穿透）",
+  symmetric: "对称型 NAT（IPv4 受限）",
+  unknown: "NAT 类型未知",
+};
+
 function Avatar({ person, small = false }: { person: Identity; small?: boolean }) {
   return <span class={`peer-avatar tone-${person.avatar}${small ? " small" : ""}`} aria-label={`${person.name} 的头像`}>{avatars[person.avatar] ?? "🦦"}</span>;
 }
+
 function App() {
   const [state, setState] = useState<PeerState | null>(null);
+  const [mode, setMode] = useState<ConnectMode>("direct");
   const [address, setAddress] = useState("");
+  const [useSelfPin, setUseSelfPin] = useState(false);
+  const [selfPin, setSelfPin] = useState("");
+  const [peerToken, setPeerToken] = useState("");
+  const [peerPin, setPeerPin] = useState("");
+  const [peerNeedsPin, setPeerNeedsPin] = useState(false);
   const [notice, setNotice] = useState("");
   const [dismissedError, setDismissedError] = useState("");
   const [working, setWorking] = useState("");
@@ -25,6 +49,7 @@ function App() {
   const [copied, setCopied] = useState("");
   const [now, setNow] = useState(Date.now());
   const refresh = async () => setState(await rpc<PeerState>("state"));
+
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout>;
@@ -47,45 +72,142 @@ function App() {
     document.addEventListener("dragenter", enter); document.addEventListener("dragleave", leave); document.addEventListener("drop", drop);
     return () => { alive = false; clearTimeout(timer); clearInterval(tick); off(); document.removeEventListener("dragenter", enter); document.removeEventListener("dragleave", leave); document.removeEventListener("drop", drop); };
   }, []);
+
   useEffect(() => {
     if (state?.state === "request") void pocket.call("notify", "口袋直传 · 连接请求", `${state.peer?.name} 请求与您建立连接`).catch(() => undefined);
   }, [state?.state]);
+
+  useEffect(() => {
+    if (mode !== "punch" || !state) return;
+    const activePin = useSelfPin ? selfPin.trim() : "";
+    const timer = setTimeout(() => {
+      void rpc<PeerState>("punchPrepare", activePin, "", false)
+        .then(next => setState(next))
+        .catch((e: Error) => setNotice(e.message));
+    }, state.punch ? 220 : 0);
+    return () => clearTimeout(timer);
+  }, [mode, useSelfPin, selfPin]);
+
+  useEffect(() => {
+    const raw = peerToken.trim();
+    if (!raw.startsWith("PK2")) {
+      setPeerNeedsPin(false);
+      return;
+    }
+    let alive = true;
+    void rpc<{ encrypted: boolean }>("punchInspect", raw)
+      .then(res => { if (alive) setPeerNeedsPin(!!res.encrypted); })
+      .catch(() => { if (alive) setPeerNeedsPin(false); });
+    return () => { alive = false; };
+  }, [peerToken]);
+
   const act = async (name: string, ...args: unknown[]) => {
     setWorking(name); setNotice("");
     try {
       const result = await rpc<PeerState | null>(name, ...args);
-      if (name === "start" && result) { setState(result); if (result.error) setNotice(result.error); }
-      else await refresh();
-    } catch (e) { setNotice((e as Error).message); }
-    finally { setWorking(""); setConfirmCancel(false); }
+      if ((name === "start" || name === "punchPrepare") && result) {
+        setState(result);
+        if (result.error) setNotice(result.error);
+      } else {
+        await refresh();
+      }
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (msg.includes("提取码")) setPeerNeedsPin(true);
+      setNotice(msg);
+    } finally {
+      setWorking("");
+      setConfirmCancel(false);
+    }
   };
-  const copy = async (text: string) => { try { await pocket.ui.copy(text, "已复制 IPv6 地址"); setCopied(text); setTimeout(() => setCopied(""), 1800); } catch (e) { setNotice((e as Error).message); } };
+
+  const copy = async (text: string, label: string) => {
+    try {
+      await pocket.ui.copy(text, label);
+      setCopied(text);
+      setTimeout(() => setCopied(""), 1800);
+    } catch (e) {
+      setNotice((e as Error).message);
+    }
+  };
+
   const busy = state?.busy ?? false;
   const current = state?.records.filter(active) ?? [];
   const history = state?.records.filter(r => !active(r)) ?? [];
   const connected = state?.state === "connected";
   const remaining = state?.expires ? Math.max(0, Math.ceil((state.expires - now) / 1000)) : 0;
   const error = notice || (state?.error !== dismissedError ? state?.error : "");
+  const punch = state?.punch;
+  const idlePhase = state?.state === "idle" || state?.state === "offline";
+  const effectiveStatus = state
+    ? (mode === "punch" && state.state === "offline"
+      ? (punch?.ready ? "打洞通道就绪" : punch?.preparing ? "正在准备打洞" : "等待打洞准备")
+      : statusText[state.state])
+    : "正在准备";
+
   return <main class={`peer-app${dragging ? " is-dragging" : ""}`}>
     <header class="peer-heading">
       <div class="peer-brand"><span class="peer-brand-icon"><Send size={21} /></span><div><h1>口袋直传</h1><p>文件直达，距离不设限</p></div></div>
-      <span class={`peer-status ${connected ? "connected" : ""}`}><i />{state ? statusText[state.state] : "正在准备"}</span>
+      <span class={`peer-status ${connected ? "connected" : ""}`}><i />{effectiveStatus}</span>
     </header>
     {error && <div class="peer-notice" role="alert"><span>{error}</span><button aria-label="关闭提示" onClick={() => { setNotice(""); setDismissedError(state?.error ?? ""); }}><X size={14} /></button></div>}
     {!state ? <div class="peer-loading"><LoaderCircle class="spin" />正在准备你的传输空间…{notice && <button class="peer-button" onClick={() => void act("start")}>重试</button>}</div> : <>
       <section class="peer-identity-card">
         <div class="peer-me"><Avatar person={state.self} /><div><span class="peer-eyebrow">这台电脑</span><h2>{state.self.name}</h2><span class="peer-muted">每次打开，都是一个新身份</span></div></div>
-        <div class="peer-network"><div class="peer-network-label"><Wifi size={14} /><span>我的 IPv6 地址</span><button title="重新检测 IPv6" disabled={!!working || busy} onClick={() => void act("start")}><RefreshCw size={13} /></button></div>
-          {state.addresses.length ? state.addresses.map(ip => <button class="peer-ip" key={ip} title="复制 IPv6 地址" onClick={() => void copy(ip)}><code>{ip}</code>{copied === ip ? <Check size={14} /> : <Copy size={14} />}</button>) : <span class="peer-muted">尚未检测到公网 IPv6</span>}
-          <span class="peer-network-note">双方都需要公网 IPv6 · 直连端口 {state.port}</span>
-        </div>
+        {mode === "direct" ? (
+          <div class="peer-network">
+            <div class="peer-network-label"><Wifi size={14} /><span>我的 IPv6 地址</span><button title="重新检测 IPv6" disabled={!!working || busy} onClick={() => void act("start")}><RefreshCw size={13} /></button></div>
+            {state.addresses.length ? state.addresses.map(ip => <button class="peer-ip" key={ip} title="复制 IPv6 地址" onClick={() => void copy(ip, "已复制 IPv6 地址")}><code>{ip}</code>{copied === ip ? <Check size={14} /> : <Copy size={14} />}</button>) : <span class="peer-muted">尚未检测到公网 IPv6</span>}
+            <span class="peer-network-note">双方都需要公网 IPv6 · 直连端口 {state.port}</span>
+          </div>
+        ) : (
+          <div class="peer-network">
+            <div class="peer-network-label"><Wifi size={14} /><span>打洞通道检测</span><button title="重新检测穿透路径" disabled={!!working || busy} onClick={() => void act("punchPrepare", useSelfPin ? selfPin.trim() : "", "", true)}><RefreshCw size={13} /></button></div>
+            <div class="peer-punch-badges">
+              {punch?.preparing && <span class="peer-badge"><LoaderCircle class="spin" size={11} />探测 STUN 中</span>}
+              {punch?.natType && <span class={`peer-badge ${punch.natType === "symmetric" ? "warn" : ""}`}>{natLabel[punch.natType]}</span>}
+              {punch?.port ? <span class="peer-badge">UDP {punch.port}</span> : null}
+            </div>
+            {punch?.candidates?.length ? <div class="peer-cands">{punch.candidates.map(c => <span class="peer-cand-item" key={c}>{c}</span>)}</div> : <span class="peer-muted">{punch?.error || "正在采集可用穿透地址…"}</span>}
+            {punch?.stunError && <span class="peer-network-note">{punch.stunError}</span>}
+          </div>
+        )}
       </section>
       <section class={`peer-connect-card ${connected ? "is-connected" : ""}`}>
-        {state.state === "idle" || state.state === "offline" ? <div class="peer-connect-idle">
+        {idlePhase ? <div class="peer-connect-idle">
           <div class="peer-orbit"><Radio size={30} /><i /><i /></div>
-          <div class="peer-connect-copy"><h2>把文件送到另一台电脑</h2><p>将你的地址发给对方，或输入对方地址发起连接。</p>
-            <form onSubmit={e => { e.preventDefault(); void act("connect", address); }}><label class="peer-address-input"><Link2 size={16} /><input aria-label="对方 IPv6 地址" placeholder="输入对方的 IPv6 地址" value={address} onInput={e => setAddress(e.currentTarget.value)} spellcheck={false} /></label><button class="peer-button primary" disabled={!!working || !address.trim() || !state.addresses.length}><span>发起连接</span><ArrowUpRight size={16} /></button></form>
-            <span class="peer-muted">连接前需要对方同意，并核对数字。</span>
+          <div class="peer-connect-copy">
+            <div class="peer-mode-bar">
+              <div class="peer-mode-switch" role="tablist" aria-label="连接模式">
+                <button type="button" role="tab" aria-selected={mode === "direct"} class={mode === "direct" ? "is-on" : ""} onClick={() => { setMode("direct"); setNotice(""); }}>IPv6 直连</button>
+                <button type="button" role="tab" aria-selected={mode === "punch"} class={mode === "punch" ? "is-on" : ""} onClick={() => { setMode("punch"); setNotice(""); }}>打洞穿透</button>
+              </div>
+            </div>
+            {mode === "direct" ? <>
+              <h2>把文件送到另一台电脑</h2>
+              <p>将你的地址发给对方，或输入对方地址发起连接。</p>
+              <form onSubmit={e => { e.preventDefault(); void act("connect", address); }}><label class="peer-address-input"><Link2 size={16} /><input aria-label="对方 IPv6 地址" placeholder="输入对方的 IPv6 地址" value={address} onInput={e => setAddress(e.currentTarget.value)} spellcheck={false} /></label><button class="peer-button primary" disabled={!!working || !address.trim() || !state.directReady}><span>发起连接</span><ArrowUpRight size={16} /></button></form>
+              <span class="peer-muted">连接前需要对方同意，并核对数字。</span>
+            </> : <>
+              <h2>双方互换口令，直接穿透连接</h2>
+              <p>分别把自己的口令发给对方，并在 60 秒内各自填入对方口令开始连接。</p>
+              <div class="peer-punch-self">
+                <div class="peer-punch-self-head">
+                  <span class="peer-eyebrow">1. 我的打洞口令{punch?.encrypted ? "（已用提取码加密）" : ""}</span>
+                  <label class="peer-pin-toggle"><input type="checkbox" checked={useSelfPin} onChange={e => { const on = e.currentTarget.checked; setUseSelfPin(on); if (!on) setSelfPin(""); }} /><span>提取码加密</span></label>
+                </div>
+                {useSelfPin && <label class="peer-address-input peer-pin-input"><KeyRound size={15} /><input aria-label="设置提取码" placeholder="输入 4–16 位提取码（发给对方用于解密口令）" value={selfPin} maxLength={16} onInput={e => setSelfPin(e.currentTarget.value)} spellcheck={false} /></label>}
+                {punch?.token ? <button type="button" class="peer-token-box" title="复制我的打洞口令" onClick={() => void copy(punch.token!, "已复制我的打洞口令")}><code>{punch.token}</code><span>{copied === punch.token ? <Check size={14} /> : <Copy size={14} />}</span></button> : <div class="peer-token-empty">{punch?.preparing ? "正在生成口令…" : (punch?.error || "等待生成口令")}</div>}
+              </div>
+              <form class="peer-punch-form" onSubmit={e => { e.preventDefault(); void act("punchConnect", peerToken, peerPin); }}>
+                <div class="peer-punch-inputs">
+                  <label class="peer-address-input"><Link2 size={16} /><input aria-label="对方打洞口令" placeholder="2. 粘贴对方的打洞口令（PK2...）" value={peerToken} onInput={e => setPeerToken(e.currentTarget.value)} spellcheck={false} /></label>
+                  {peerNeedsPin && <label class="peer-address-input peer-pin-input"><KeyRound size={15} /><input aria-label="对方提取码" placeholder="输入对方设置的提取码" value={peerPin} maxLength={16} onInput={e => setPeerPin(e.currentTarget.value)} spellcheck={false} /></label>}
+                </div>
+                <button class="peer-button primary" disabled={!!working || !punch?.ready || !peerToken.trim() || (peerNeedsPin && !peerPin.trim())}><span>开始打洞连接</span><ArrowUpRight size={16} /></button>
+              </form>
+              <span class="peer-muted">连接过程直传加密通道，通后仍需核对 6 位数字。</span>
+            </>}
           </div>
         </div> : state.state === "request" ? <div class="peer-pairing" role="dialog" aria-label="连接请求">
           <Avatar person={state.peer!} /><h2>{state.peer?.name} 请求与您建立连接</h2><p><code>{state.address}</code></p><p>同意后，请核对对方屏幕上的数字。连接成功后可互相发送文件。</p>
@@ -96,9 +218,11 @@ function App() {
           <div class="peer-pair-foot"><span>{remaining} 秒后失效</span><button class="peer-text-button" onClick={() => void act("disconnect")}>取消连接</button></div>
         </div> : connected ? <div class="peer-connected-content">
           <div class={`peer-route ${busy ? "moving" : ""}`}><Avatar person={state.self} small /><div class="peer-route-line"><span /><span /><span /></div><span class="peer-route-lock"><LockKeyhole size={16} /></span><div class="peer-route-line"><span /><span /><span /></div><Avatar person={state.peer!} small /></div>
-          <h2>已与 {state.peer?.name} 连接</h2><p>拖拽文件到这个窗口，或选择文件发送</p>
+          <h2>已与 {state.peer?.name} 连接</h2><p>拖拽文件到这个窗口，或选择文件发送{state.sessionMode === "punch" ? " · 打洞通道" : ""}</p>
           <div class="peer-actions"><button class="peer-button primary" disabled={!!working || current.some(r => r.direction === "send")} onClick={() => void act("pick")}><Upload size={16} />选择文件</button><button class="peer-button" disabled={busy || !!working} onClick={() => void act("disconnect")}><Unplug size={15} />断开</button></div>
           {busy && <div class="peer-protected"><LockKeyhole size={12} />传输中已保护退出 · 请保持双方软件运行</div>}
+        </div> : state.state === "punching" ? <div class="peer-pairing">
+          <LoaderCircle class="spin peer-wait" size={30} /><h2>正在打洞穿透…</h2><p>{state.address}</p><span class="peer-muted">请确认对方也已粘贴你的口令并点击“开始打洞连接”（{remaining} 秒后超时）</span><button class="peer-text-button" onClick={() => void act("disconnect")}>取消打洞</button>
         </div> : <div class="peer-pairing"><LoaderCircle class="spin peer-wait" size={30} /><h2>{statusText[state.state]}</h2><p>{state.peer?.name ?? state.address}</p><span class="peer-muted">对方同意后，会进入数字确认</span><button class="peer-text-button" onClick={() => void act("disconnect")}>取消请求</button></div>}
       </section>
       <div class="peer-folder"><span><FolderOpen size={15} /><span>接收到 <strong title={state.folder}>{state.folder}</strong></span></span><button class="peer-text-button" disabled={busy || !!working} onClick={() => void act("folder")}>更改目录</button></div>
@@ -111,11 +235,12 @@ function App() {
         </div>
       </section>
       <footer class="peer-footer"><ShieldCheck size={13} />端到端直连 · TLS 加密 · SHA-256 校验<span>文件不经过中转服务器</span></footer>
-      {state.state === "offline" && <p class="peer-network-help">请确认网络提供公网 IPv6，并允许双方防火墙的 TCP {state.port} 入站连接。检测到地址不代表对端一定可达。</p>}
+      {mode === "direct" && !state.directReady && <p class="peer-network-help">未检测到公网 IPv6，或路由器限制入站时，可切换到上方的“打洞穿透”模式。直连模式需双方防火墙允许 TCP {state.port} 入站。</p>}
     </>}
     {dragging && <div class="peer-drop-overlay"><Upload size={36} /><h2>{connected ? "松手，开始发送" : "请先建立连接"}</h2><p>{connected ? "文件将直接传到对方的接收文件夹" : "完成数字确认后即可拖拽传输"}</p></div>}
   </main>;
 }
+
 function TransferRow({ record: r, reveal }: { record: Transfer; reveal: () => void }) {
   const pct = progress(r), running = active(r), success = r.status === "completed";
   const labels = { queued: "排队中", transferring: r.direction === "send" ? "发送中" : "接收中", verifying: "正在校验", completed: "校验完成", failed: "传输失败", interrupted: "已中断" };
@@ -129,4 +254,5 @@ function TransferRow({ record: r, reveal }: { record: Transfer; reveal: () => vo
     {success && <button class="peer-reveal" title="在文件夹中显示" onClick={reveal}><FolderOpen size={16} /></button>}
   </article>;
 }
+
 render(<App />, document.getElementById("app")!);

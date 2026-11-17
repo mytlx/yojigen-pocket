@@ -167,7 +167,10 @@ plugins/hello/
 | 方法 | 用途 |
 | --- | --- |
 | `start` / `state` | 初始化或重新检测 IPv6 / 获取身份、连接状态、传输快照 |
-| `connect(address)` | 输入对方公网 IPv6 发起连接 |
+| `connect(address)` | 输入对方公网 IPv6 发起直连 |
+| `punchPrepare(pin, stunServer, refresh)` | 准备或刷新 UDP 打洞口令与 STUN 探测 |
+| `punchInspect(token)` | 检查对方打洞口令是否需要提取码解密 |
+| `punchConnect(token, pin)` | 使用对方口令发起并发 UDP/QUIC 打洞连接 |
 | `accept` / `reject` / `confirm(number)` | 同意请求、拒绝请求、确认三选一数字 |
 | `pick` / `folder` | 原生文件选择器 / 接收文件夹选择器 |
 | `disconnect` / `cancel` | 空闲时断开 / 取消任务并断开 |
