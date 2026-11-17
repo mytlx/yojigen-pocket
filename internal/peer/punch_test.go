@@ -194,15 +194,22 @@ func TestSTUNProbeNATTypes(t *testing.T) {
 	pubIP := net.ParseIP("203.0.113.10").To4()
 	s1 := startFakeSTUNServer(t, pubIP, 55001)
 	s2 := startFakeSTUNServer(t, pubIP, 55001)
-	cone := disp.probe(ctx, tr, []string{s1, s2})
+	cone := disp.probe(ctx, tr, "udp4", []string{s1, s2})
 	if cone.natType != natCone || cone.addr.Port() != 55001 {
 		t.Fatalf("expected cone NAT on port 55001, got %+v", cone)
 	}
 
 	s3 := startFakeSTUNServer(t, pubIP, 55002)
-	sym := disp.probe(ctx, tr, []string{s1, s3})
+	sym := disp.probe(ctx, tr, "udp4", []string{s1, s3})
 	if sym.natType != natSymmetric {
 		t.Fatalf("expected symmetric NAT, got %+v", sym)
+	}
+
+	// Ensure a proxied STUN response on a different exit IP does not prevent detecting symmetric NAT.
+	proxySTUN := startFakeSTUNServer(t, net.ParseIP("198.51.100.99").To4(), 44444)
+	mixed := disp.probe(ctx, tr, "udp4", []string{proxySTUN, s1, s3})
+	if mixed.natType != natSymmetric {
+		t.Fatalf("expected symmetric NAT even with extra foreign IP STUN, got %+v", mixed)
 	}
 }
 
@@ -371,6 +378,7 @@ func TestDualStackIPv4Punch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Wait until initial STUN finishes (Ready becomes true) before inspecting token.
 	wait(t, func() bool {
 		sa, sb := a.Snapshot().Punch, b.Snapshot().Punch
 		return sa != nil && !sa.Preparing && sa.Ready && sb != nil && !sb.Preparing && sb.Ready
@@ -378,9 +386,9 @@ func TestDualStackIPv4Punch(t *testing.T) {
 
 	tokA, _ := DecodePunchToken(a.Snapshot().Punch.Token, "")
 	tokB, _ := DecodePunchToken(b.Snapshot().Punch.Token, "")
-	// Replace candidates with explicit 127.0.0.1:port to isolate dual-stack IPv4 behavior.
-	tokA.Candidates = []PunchCandidate{{Kind: candLANv4, Addr: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(a.Snapshot().Punch.Port))}}
-	tokB.Candidates = []PunchCandidate{{Kind: candLANv4, Addr: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(b.Snapshot().Punch.Port))}}
+	// Replace candidates with explicit 127.0.0.1:port to isolate IPv4 socket behavior.
+	tokA.Candidates = []PunchCandidate{{Kind: candLANv4, Addr: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(a.Snapshot().Punch.V4Port))}}
+	tokB.Candidates = []PunchCandidate{{Kind: candLANv4, Addr: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(b.Snapshot().Punch.V4Port))}}
 	encA, _ := EncodePunchToken(tokA, "")
 	encB, _ := EncodePunchToken(tokB, "")
 	_ = snapA
@@ -396,4 +404,15 @@ func TestDualStackIPv4Punch(t *testing.T) {
 		sa, sb := a.Snapshot().State, b.Snapshot().State
 		return (sa == "request" && sb == "waiting") || (sb == "request" && sa == "waiting")
 	})
+}
+
+func TestExplicitIPv6SocketBindMatchesOutbound(t *testing.T) {
+	// Verify choosePunchIPv6 picks a valid IPv6 and binding directly to it succeeds on IPv6-capable hosts.
+	if ip := choosePunchIPv6(); ip.IsValid() {
+		pc, err := net.ListenPacket("udp6", net.JoinHostPort(ip.String(), "0"))
+		if err != nil {
+			t.Fatalf("failed to bind chosen punch IPv6 %s: %v", ip, err)
+		}
+		_ = pc.Close()
+	}
 }

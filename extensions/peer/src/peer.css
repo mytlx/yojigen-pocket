@@ -29,7 +29,11 @@ h1,h2,p { margin:0; } h1 { font-size:21px; letter-spacing:-.5px; } h2 { font-siz
 .peer-mode-switch button.is-on { background:var(--card-solid,var(--card)); color:var(--text); font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.14); }
 .peer-punch-badges { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
 .peer-badge { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:999px; font-size:11px; background:var(--well); color:var(--text-2); border:1px solid var(--line); }
+.peer-badge.ok { color:#18864b; border-color:rgba(24,134,75,.28); background:rgba(24,134,75,.08); }
 .peer-badge.warn { color:#c97a16; border-color:rgba(201,122,22,.3); background:rgba(201,122,22,.08); }
+.peer-preview { font:11px var(--font-mono,monospace); color:var(--text-2); overflow-wrap:anywhere; }
+.peer-preview.warn { color:#c97a16; font-family:inherit; }
+.peer-punch-diag { display:flex; flex-wrap:wrap; justify-content:center; gap:6px; font:11px var(--font-mono,monospace); color:var(--text-2); font-variant-numeric:tabular-nums; }
 .peer-cands { display:flex; flex-direction:column; gap:3px; margin-bottom:4px; }
 .peer-cand-item { font:11px var(--font-mono,monospace); color:var(--text-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .peer-punch-self { display:flex; flex-direction:column; gap:8px; margin-bottom:12px; padding:10px 12px; border-radius:11px; background:var(--well); border:1px solid var(--line); }

@@ -5,16 +5,34 @@ export interface Transfer {
   status: "queued" | "transferring" | "verifying" | "completed" | "failed" | "interrupted";
   peer: string; started: number; finished?: number; path?: string; error?: string;
 }
+export type NATType = "unknown" | "cone" | "symmetric";
 export interface PunchState {
   ready: boolean;
   preparing: boolean;
   token?: string;
   encrypted: boolean;
-  natType?: "unknown" | "cone" | "symmetric";
+  natType?: NATType;
+  hasIPv6?: boolean;
   port?: number;
+  v6Port?: number;
+  v4Port?: number;
   candidates?: string[];
   stunError?: string;
   error?: string;
+  sentProbes?: number;
+  recvPings?: number;
+  recvPongs?: number;
+  peerNat?: NATType;
+  peerTargets?: string[];
+  lastRemote?: string;
+  dialError?: string;
+}
+export interface TokenPreview {
+  encrypted: boolean;
+  natType?: NATType;
+  targets?: string[];
+  hasIPv6: boolean;
+  hasIPv4: boolean;
 }
 export interface PeerState {
   self: Identity; addresses: string[]; port: number; directReady: boolean; folder: string;

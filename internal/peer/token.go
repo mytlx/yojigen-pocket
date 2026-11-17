@@ -112,6 +112,14 @@ func EncodePunchToken(t PunchToken, pin string) (string, error) {
 	return punchTokenPrefix + encodeBase58(out), nil
 }
 
+type TokenPreview struct {
+	Encrypted bool     `json:"encrypted"`
+	NATType   string   `json:"natType,omitempty"`
+	Targets   []string `json:"targets,omitempty"`
+	HasIPv6   bool     `json:"hasIPv6"`
+	HasIPv4   bool     `json:"hasIPv4"`
+}
+
 func InspectPunchToken(raw string) (bool, error) {
 	raw = cleanTokenInput(raw)
 	b, err := decodeRawToken(raw)
@@ -119,6 +127,37 @@ func InspectPunchToken(raw string) (bool, error) {
 		return false, err
 	}
 	return b[1]&flagEncrypted != 0, nil
+}
+
+func PreviewPunchToken(raw, pin string) (TokenPreview, error) {
+	encrypted, err := InspectPunchToken(raw)
+	if err != nil {
+		return TokenPreview{}, err
+	}
+	if encrypted && strings.TrimSpace(pin) == "" {
+		return TokenPreview{Encrypted: true}, nil
+	}
+	tok, err := DecodePunchToken(raw, pin)
+	if err != nil {
+		return TokenPreview{Encrypted: encrypted}, err
+	}
+	targets := make([]string, 0, len(tok.Candidates))
+	hasV6, hasV4 := false, false
+	for _, c := range tok.Candidates {
+		targets = append(targets, formatCandidateLabel(c))
+		if c.Kind == candIPv6 {
+			hasV6 = true
+		} else {
+			hasV4 = true
+		}
+	}
+	return TokenPreview{
+		Encrypted: encrypted,
+		NATType:   natTypeString(tok.NATType),
+		Targets:   targets,
+		HasIPv6:   hasV6,
+		HasIPv4:   hasV4,
+	}, nil
 }
 
 func DecodePunchToken(raw, pin string) (PunchToken, error) {

@@ -98,11 +98,7 @@ func (h *pluginHost) peerCall(m providers.Manifest, id, name string, args callAr
 		}
 		return v, nil
 	case "punchInspect":
-		encrypted, err := peer.InspectPunchToken(args.str(0))
-		if err != nil {
-			return nil, err
-		}
-		return map[string]bool{"encrypted": encrypted}, nil
+		return peer.PreviewPunchToken(args.str(0), args.str(1))
 	case "punchConnect":
 		return nil, p.PunchConnect(args.str(0), args.str(1))
 	case "state":

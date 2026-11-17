@@ -63,8 +63,8 @@ func TestPeerHostPunchCalls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		m, ok := insp.(map[string]bool)
-		if !ok || !m["encrypted"] {
+		pv, ok := insp.(peer.TokenPreview)
+		if !ok || !pv.Encrypted {
 			t.Fatalf("expected encrypted inspection, got %+v", insp)
 		}
 	}

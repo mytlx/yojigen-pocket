@@ -20,10 +20,10 @@ var defaultSTUNServers = []string{
 }
 
 type stunProbeResult struct {
-	addr     netip.AddrPort
-	natType  uint8
-	errNote  string
-	sawFake  bool
+	addr    netip.AddrPort
+	natType uint8
+	errNote string
+	sawFake bool
 }
 
 type stunDispatcher struct {
@@ -86,8 +86,8 @@ func (d *stunDispatcher) handlePacket(pkt []byte) {
 	}
 }
 
-func (d *stunDispatcher) queryServer(ctx context.Context, tr *quic.Transport, server string) (netip.AddrPort, bool, error) {
-	raddr, err := net.ResolveUDPAddr("udp4", server)
+func (d *stunDispatcher) queryServer(ctx context.Context, tr *quic.Transport, network, server string) (netip.AddrPort, bool, error) {
+	raddr, err := net.ResolveUDPAddr(network, server)
 	if err != nil {
 		return netip.AddrPort{}, false, err
 	}
@@ -114,6 +114,12 @@ func (d *stunDispatcher) queryServer(ctx context.Context, tr *quic.Transport, se
 		case <-retry.C:
 			_, _ = tr.WriteTo(msg.Raw, raddr)
 		case mapped := <-ch:
+			if network == "udp6" {
+				if publicIPv6(mapped.Addr()) {
+					return mapped, sawFake, nil
+				}
+				return netip.AddrPort{}, sawFake, errors.New("STUN 返回了无效 IPv6 地址")
+			}
 			if mapped.Addr().Is4() && !prefixFakeIP.Contains(mapped.Addr()) && !mapped.Addr().IsPrivate() {
 				return mapped, sawFake, nil
 			}
@@ -122,7 +128,7 @@ func (d *stunDispatcher) queryServer(ctx context.Context, tr *quic.Transport, se
 	}
 }
 
-func (d *stunDispatcher) probe(ctx context.Context, tr *quic.Transport, servers []string) stunProbeResult {
+func (d *stunDispatcher) probe(ctx context.Context, tr *quic.Transport, network string, servers []string) stunProbeResult {
 	if len(servers) == 0 {
 		servers = defaultSTUNServers
 	}
@@ -138,7 +144,7 @@ func (d *stunDispatcher) probe(ctx context.Context, tr *quic.Transport, servers 
 	for _, srv := range servers {
 		srv := srv
 		go func() {
-			mapped, sawFake, err := d.queryServer(probeCtx, tr, srv)
+			mapped, sawFake, err := d.queryServer(probeCtx, tr, network, srv)
 			ch <- single{mapped: mapped, sawFake: sawFake, err: err}
 		}()
 	}
@@ -150,7 +156,7 @@ func (d *stunDispatcher) probe(ctx context.Context, tr *quic.Transport, servers 
 		sawFake = sawFake || r.sawFake
 		if r.err == nil && r.mapped.IsValid() {
 			results = append(results, r.mapped)
-			if len(results) >= 2 {
+			if _, ok := classifySameIPNAT(results); ok {
 				break
 			}
 		}
@@ -160,15 +166,31 @@ func (d *stunDispatcher) probe(ctx context.Context, tr *quic.Transport, servers 
 		if sawFake {
 			note = "IPv4 STUN 可能受代理 Fake-IP 影响，优先使用 IPv6 与局域网"
 		}
+		if network == "udp6" {
+			note = ""
+		}
 		return stunProbeResult{natType: natUnknown, errNote: note, sawFake: sawFake}
 	}
-	nat := natUnknown
-	if len(results) >= 2 {
-		if results[0].Port() == results[1].Port() && results[0].Addr() == results[1].Addr() {
-			nat = natCone
-		} else if results[0].Addr() == results[1].Addr() {
-			nat = natSymmetric
+	nat, _ := classifySameIPNAT(results)
+	return stunProbeResult{addr: results[0], natType: nat, sawFake: sawFake}
+}
+
+// classifySameIPNAT compares responses that observed the same external IP so a
+// single proxied STUN server with a different exit IP will not mask NAT type.
+func classifySameIPNAT(results []netip.AddrPort) (uint8, bool) {
+	byIP := map[netip.Addr][]uint16{}
+	for _, ap := range results {
+		ports := byIP[ap.Addr()]
+		ports = append(ports, ap.Port())
+		byIP[ap.Addr()] = ports
+		if len(ports) >= 2 {
+			for _, p := range ports[1:] {
+				if p != ports[0] {
+					return natSymmetric, true
+				}
+			}
+			return natCone, true
 		}
 	}
-	return stunProbeResult{addr: results[0], natType: nat, sawFake: sawFake}
+	return natUnknown, false
 }

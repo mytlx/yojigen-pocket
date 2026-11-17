@@ -29,22 +29,40 @@ const (
 )
 
 type PunchSnapshot struct {
-	Ready      bool     `json:"ready"`
-	Preparing  bool     `json:"preparing"`
-	Token      string   `json:"token,omitempty"`
-	Encrypted  bool     `json:"encrypted"`
-	NATType    string   `json:"natType,omitempty"`
-	Port       int      `json:"port,omitempty"`
-	Candidates []string `json:"candidates,omitempty"`
-	STUNError  string   `json:"stunError,omitempty"`
-	Error      string   `json:"error,omitempty"`
+	Ready       bool     `json:"ready"`
+	Preparing   bool     `json:"preparing"`
+	Token       string   `json:"token,omitempty"`
+	Encrypted   bool     `json:"encrypted"`
+	NATType     string   `json:"natType,omitempty"`
+	HasIPv6     bool     `json:"hasIPv6"`
+	Port        int      `json:"port,omitempty"`
+	V6Port      int      `json:"v6Port,omitempty"`
+	V4Port      int      `json:"v4Port,omitempty"`
+	Candidates  []string `json:"candidates,omitempty"`
+	STUNError   string   `json:"stunError,omitempty"`
+	Error       string   `json:"error,omitempty"`
+	SentProbes  int      `json:"sentProbes,omitempty"`
+	RecvPings   int      `json:"recvPings,omitempty"`
+	RecvPongs   int      `json:"recvPongs,omitempty"`
+	PeerNAT     string   `json:"peerNat,omitempty"`
+	PeerTargets []string `json:"peerTargets,omitempty"`
+	LastRemote  string   `json:"lastRemote,omitempty"`
+	DialError   string   `json:"dialError,omitempty"`
+}
+
+type punchSocket struct {
+	isV6    bool
+	boundIP netip.Addr
+	conn    net.PacketConn
+	tr      *quic.Transport
+	ln      *quic.Listener
+	port    uint16
 }
 
 type punchEngine struct {
 	service *Service
-	udpConn net.PacketConn
-	tr      *quic.Transport
-	ln      *quic.Listener
+	v6Sock  *punchSocket
+	v4Sock  *punchSocket
 	stun    *stunDispatcher
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -53,9 +71,9 @@ type punchEngine struct {
 	pin        string
 	stunServer string
 	preparing  bool
-	localPort  int
 	natType    uint8
 	stunAddr   netip.AddrPort
+	mappedV6   netip.AddrPort
 	stunNote   string
 	lastErr    string
 	selfToken  PunchToken
@@ -65,6 +83,7 @@ type punchEngine struct {
 }
 
 type confirmedEndpoint struct {
+	sock *punchSocket
 	addr netip.AddrPort
 	kind uint8
 }
@@ -73,69 +92,126 @@ type activePunch struct {
 	pairKey     [32]byte
 	selfSeed    uint64
 	peerToken   PunchToken
+	peerTargets []string
 	dialer      bool
 	ctx         context.Context
 	cancel      context.CancelFunc
 	confirmedCh chan confirmedEndpoint
 
-	mu      sync.Mutex
-	dynamic map[netip.AddrPort]struct{}
-	pongs   map[netip.AddrPort]struct{}
+	mu         sync.Mutex
+	dynamic    map[netip.AddrPort]struct{}
+	confirmed  map[netip.AddrPort]confirmedEndpoint
+	sentProbes int
+	recvPings  int
+	recvPongs  int
+	lastRemote string
+	dialError  string
 }
 
-func newPunchEngine(s *Service, pin, stunServer string) (*punchEngine, error) {
-	bindAddr := ":0"
-	if s.allowLocal {
-		bindAddr = "[::1]:0"
-	}
-	conn, err := net.ListenPacket("udp", bindAddr)
-	if err != nil && !s.allowLocal {
-		conn, err = net.ListenPacket("udp4", ":0")
-	}
+func openPunchSocket(network, bindAddr string, isV6 bool, boundIP netip.Addr, tlsCfg *tls.Config) (*punchSocket, error) {
+	conn, err := net.ListenPacket(network, bindAddr)
 	if err != nil {
-		return nil, fmt.Errorf("UDP 打洞端口无法监听：%w", err)
+		return nil, err
 	}
-	udpAddr, ok := conn.LocalAddr().(*net.UDPAddr)
-	if !ok || udpAddr.Port == 0 {
+	ua, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok || ua.Port == 0 {
 		_ = conn.Close()
 		return nil, errors.New("无法获取本地 UDP 端口")
 	}
-	cert, err := certificate()
+	tr := &quic.Transport{Conn: conn}
+	ln, err := tr.Listen(tlsCfg, quicConfig())
 	if err != nil {
+		_ = tr.Close()
 		_ = conn.Close()
 		return nil, err
 	}
-	tr := &quic.Transport{Conn: conn}
+	return &punchSocket{
+		isV6:    isV6,
+		boundIP: boundIP,
+		conn:    conn,
+		tr:      tr,
+		ln:      ln,
+		port:    uint16(ua.Port),
+	}, nil
+}
+
+func (ps *punchSocket) Close() {
+	if ps == nil {
+		return
+	}
+	if ps.ln != nil {
+		_ = ps.ln.Close()
+	}
+	if ps.tr != nil {
+		_ = ps.tr.Close()
+	}
+	if ps.conn != nil {
+		_ = ps.conn.Close()
+	}
+}
+
+func newPunchEngine(s *Service, pin, stunServer string) (*punchEngine, error) {
+	cert, err := certificate()
+	if err != nil {
+		return nil, err
+	}
 	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS13,
 		NextProtos:   []string{punchALPN},
 	}
-	ln, err := tr.Listen(tlsCfg, quicConfig())
-	if err != nil {
-		_ = tr.Close()
-		_ = conn.Close()
-		return nil, fmt.Errorf("QUIC 监听无法启动：%w", err)
+
+	var v6Sock, v4Sock *punchSocket
+	if s.allowLocal {
+		if len(s.stunServers) > 0 {
+			v4Sock, err = openPunchSocket("udp4", "127.0.0.1:0", false, netip.Addr{}, tlsCfg)
+			if err != nil {
+				return nil, fmt.Errorf("UDP4 打洞端口无法监听：%w", err)
+			}
+		} else {
+			v6Sock, err = openPunchSocket("udp6", "[::1]:0", true, netip.IPv6Loopback(), tlsCfg)
+			if err != nil {
+				return nil, fmt.Errorf("UDP6 打洞端口无法监听：%w", err)
+			}
+		}
+	} else {
+		// Bind IPv6 explicitly to the advertised address so Windows/OS privacy
+		// extensions never substitute a different source IPv6 for outbound packets.
+		if chosenV6 := choosePunchIPv6(); chosenV6.IsValid() {
+			if sock, err := openPunchSocket("udp6", net.JoinHostPort(chosenV6.String(), "0"), true, chosenV6, tlsCfg); err == nil {
+				v6Sock = sock
+			}
+		}
+		if sock, err := openPunchSocket("udp4", "0.0.0.0:0", false, netip.Addr{}, tlsCfg); err == nil {
+			v4Sock = sock
+		}
+		if v6Sock == nil && v4Sock == nil {
+			return nil, errors.New("无法监听本地 UDP6 或 UDP4 端口")
+		}
 	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &punchEngine{
 		service:    s,
-		udpConn:    conn,
-		tr:         tr,
-		ln:         ln,
+		v6Sock:     v6Sock,
+		v4Sock:     v4Sock,
 		stun:       newSTUNDispatcher(),
 		ctx:        ctx,
 		cancel:     cancel,
 		pin:        strings.TrimSpace(pin),
 		stunServer: strings.TrimSpace(stunServer),
-		localPort:  udpAddr.Port,
 	}
 	e.selfToken.Version = punchTokenVersion
 	if err = fillRandomTokenIdentity(&e.selfToken); err != nil {
 		_ = e.Close()
 		return nil, err
 	}
-	go e.readNonQUICLoop()
+	if v6Sock != nil {
+		go e.readNonQUICLoop(v6Sock)
+	}
+	if v4Sock != nil {
+		go e.readNonQUICLoop(v4Sock)
+	}
 	return e, nil
 }
 
@@ -168,22 +244,15 @@ func (e *punchEngine) Close() error {
 	if ap != nil {
 		ap.cancel()
 	}
-	if e.ln != nil {
-		_ = e.ln.Close()
-	}
-	if e.tr != nil {
-		_ = e.tr.Close()
-	}
-	if e.udpConn != nil {
-		_ = e.udpConn.Close()
-	}
+	e.v6Sock.Close()
+	e.v4Sock.Close()
 	return nil
 }
 
-func (e *punchEngine) readNonQUICLoop() {
+func (e *punchEngine) readNonQUICLoop(sock *punchSocket) {
 	buf := make([]byte, 2048)
 	for {
-		n, raddr, err := e.tr.ReadNonQUICPacket(e.ctx, buf)
+		n, raddr, err := sock.tr.ReadNonQUICPacket(e.ctx, buf)
 		if err != nil {
 			return
 		}
@@ -194,13 +263,13 @@ func (e *punchEngine) readNonQUICLoop() {
 		}
 		if len(pkt) == punchPacketSize && pkt[0] == punchMagicByte {
 			if ua, ok := raddr.(*net.UDPAddr); ok {
-				e.handlePunchPacket(pkt, ua)
+				e.handlePunchPacket(sock, pkt, ua)
 			}
 		}
 	}
 }
 
-func (e *punchEngine) gatherSTUN() {
+func (e *punchEngine) gatherInitial() {
 	var servers []string
 	e.mu.Lock()
 	custom := e.stunServer
@@ -210,11 +279,31 @@ func (e *punchEngine) gatherSTUN() {
 	} else {
 		servers = append([]string(nil), e.service.stunServers...)
 	}
-	res := e.stun.probe(e.ctx, e.tr, servers)
+
+	var wg sync.WaitGroup
+	var v4Res stunProbeResult
+	var v6Res stunProbeResult
+	if e.v4Sock != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			v4Res = e.stun.probe(e.ctx, e.v4Sock.tr, "udp4", servers)
+		}()
+	}
+	if e.v6Sock != nil && !e.service.allowLocal {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			v6Res = e.stun.probe(e.ctx, e.v6Sock.tr, "udp6", []string{"stun.cloudflare.com:3478"})
+		}()
+	}
+	wg.Wait()
+
 	e.mu.Lock()
-	e.stunAddr = res.addr
-	e.natType = res.natType
-	e.stunNote = res.errNote
+	e.stunAddr = v4Res.addr
+	e.natType = v4Res.natType
+	e.stunNote = v4Res.errNote
+	e.mappedV6 = v6Res.addr
 	e.preparing = false
 	e.mu.Unlock()
 	e.rebuildToken()
@@ -223,14 +312,17 @@ func (e *punchEngine) gatherSTUN() {
 func (e *punchEngine) setPIN(pin string) {
 	e.mu.Lock()
 	e.pin = strings.TrimSpace(pin)
+	preparing := e.preparing
 	e.mu.Unlock()
-	e.rebuildToken()
+	if !preparing {
+		e.rebuildToken()
+	}
 }
 
 func (e *punchEngine) rebuildToken() {
 	e.mu.Lock()
-	port := uint16(e.localPort)
 	stunAddr := e.stunAddr
+	mappedV6 := e.mappedV6
 	nat := e.natType
 	pin := e.pin
 	allowLocal := e.service.allowLocal
@@ -239,31 +331,38 @@ func (e *punchEngine) rebuildToken() {
 	var cands []PunchCandidate
 	var labels []string
 	if allowLocal {
-		cands = append(cands, PunchCandidate{Kind: candIPv6, Addr: netip.AddrPortFrom(netip.IPv6Loopback(), port)})
-		labels = append(labels, fmt.Sprintf("回环测试 · [::1]:%d", port))
+		if e.v6Sock != nil {
+			ap := netip.AddrPortFrom(e.v6Sock.boundIP, e.v6Sock.port)
+			cands = append(cands, PunchCandidate{Kind: candIPv6, Addr: ap})
+			labels = append(labels, fmt.Sprintf("回环测试 · %s", ap))
+		}
+		if e.v4Sock != nil && stunAddr.IsValid() {
+			cands = append(cands, PunchCandidate{Kind: candSTUNv4, Addr: stunAddr})
+			labels = append(labels, fmt.Sprintf("公网 IPv4 (STUN) · %s", stunAddr))
+		}
 	} else {
-		v6s := Addresses()
-		for i, s := range v6s {
-			if i >= 2 {
-				break
-			}
-			if ip, err := netip.ParseAddr(s); err == nil {
-				cands = append(cands, PunchCandidate{Kind: candIPv6, Addr: netip.AddrPortFrom(ip, port)})
-				labels = append(labels, fmt.Sprintf("公网 IPv6 · [%s]:%d", ip, port))
+		if e.v6Sock != nil && e.v6Sock.boundIP.IsValid() {
+			localV6 := netip.AddrPortFrom(e.v6Sock.boundIP, e.v6Sock.port)
+			cands = append(cands, PunchCandidate{Kind: candIPv6, Addr: localV6})
+			labels = append(labels, fmt.Sprintf("公网 IPv6 · %s", localV6))
+			if mappedV6.IsValid() && mappedV6 != localV6 {
+				cands = append(cands, PunchCandidate{Kind: candIPv6, Addr: mappedV6})
+				labels = append(labels, fmt.Sprintf("公网 IPv6 (映射) · %s", mappedV6))
 			}
 		}
 		if stunAddr.IsValid() {
 			cands = append(cands, PunchCandidate{Kind: candSTUNv4, Addr: stunAddr})
 			labels = append(labels, fmt.Sprintf("公网 IPv4 (STUN) · %s", stunAddr))
 		}
-		v4s := localIPv4s()
-		for i, ip := range v4s {
-			if i >= 2 {
-				break
+		if e.v4Sock != nil {
+			for i, ip := range localIPv4s() {
+				if i >= 2 {
+					break
+				}
+				ap := netip.AddrPortFrom(ip, e.v4Sock.port)
+				cands = append(cands, PunchCandidate{Kind: candLANv4, Addr: ap})
+				labels = append(labels, fmt.Sprintf("局域网 · %s", ap))
 			}
-			ap := netip.AddrPortFrom(ip, port)
-			cands = append(cands, PunchCandidate{Kind: candLANv4, Addr: ap})
-			labels = append(labels, fmt.Sprintf("局域网 · %s", ap))
 		}
 	}
 
@@ -289,18 +388,42 @@ func (e *punchEngine) rebuildToken() {
 
 func (e *punchEngine) snapshot() *PunchSnapshot {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	return &PunchSnapshot{
-		Ready:      e.tokenStr != "",
+	snap := &PunchSnapshot{
+		Ready:      !e.preparing && e.tokenStr != "",
 		Preparing:  e.preparing,
 		Token:      e.tokenStr,
 		Encrypted:  e.pin != "",
 		NATType:    natTypeString(e.natType),
-		Port:       e.localPort,
+		HasIPv6:    e.v6Sock != nil && e.v6Sock.boundIP.IsValid(),
 		Candidates: append([]string{}, e.candLabels...),
 		STUNError:  e.stunNote,
 		Error:      e.lastErr,
 	}
+	if e.v6Sock != nil {
+		snap.V6Port = int(e.v6Sock.port)
+		snap.Port = int(e.v6Sock.port)
+	}
+	if e.v4Sock != nil {
+		snap.V4Port = int(e.v4Sock.port)
+		if snap.Port == 0 {
+			snap.Port = int(e.v4Sock.port)
+		}
+	}
+	ap := e.active
+	e.mu.Unlock()
+
+	if ap != nil {
+		ap.mu.Lock()
+		snap.SentProbes = ap.sentProbes
+		snap.RecvPings = ap.recvPings
+		snap.RecvPongs = ap.recvPongs
+		snap.LastRemote = ap.lastRemote
+		snap.DialError = ap.dialError
+		snap.PeerNAT = natTypeString(ap.peerToken.NATType)
+		snap.PeerTargets = append([]string{}, ap.peerTargets...)
+		ap.mu.Unlock()
+	}
+	return snap
 }
 
 func (s *Service) PreparePunch(pin, stunServer string, refresh bool) (Snapshot, error) {
@@ -331,12 +454,13 @@ func (s *Service) PreparePunch(pin, stunServer string, refresh bool) (Snapshot, 
 		if old != nil {
 			_ = old.Close()
 		}
-		e.mu.Lock()
-		e.preparing = !s.allowLocal
-		e.mu.Unlock()
-		e.rebuildToken()
-		if !s.allowLocal {
-			go e.gatherSTUN()
+		if s.allowLocal && len(s.stunServers) == 0 {
+			e.rebuildToken()
+		} else {
+			e.mu.Lock()
+			e.preparing = true
+			e.mu.Unlock()
+			go e.gatherInitial()
 		}
 		return s.Snapshot(), nil
 	}
@@ -359,19 +483,31 @@ func (s *Service) PunchConnect(peerTokenRaw, pin string) error {
 		s.mu.Unlock()
 	}
 
+	e.mu.Lock()
+	preparing := e.preparing
+	selfTok := e.selfToken
+	e.mu.Unlock()
+	if preparing {
+		return errors.New("正在完成网络路径探测，请稍等 1 秒后再开始")
+	}
+
 	peerTok, err := DecodePunchToken(peerTokenRaw, pin)
 	if err != nil {
 		return err
 	}
-	e.mu.Lock()
-	selfTok := e.selfToken
-	e.mu.Unlock()
-
 	if peerTok.SessionToken == selfTok.SessionToken {
 		return errors.New("不能连接本机生成的口令")
 	}
 	if !allowLocal && incompatibleSymmetricNAT(selfTok, peerTok) {
 		return errors.New("检测到双方均为对称型 NAT 且无共同可用的 IPv6/局域网路径，无法打洞直连")
+	}
+	if !hasReachableOverlap(e, peerTok) {
+		return errors.New("双方没有可用的共同网络协议路径（例如一方仅有 IPv6、另一方仅有 IPv4），请重新刷新口令后再试")
+	}
+
+	peerTargets := make([]string, 0, len(peerTok.Candidates))
+	for _, c := range peerTok.Candidates {
+		peerTargets = append(peerTargets, formatCandidateLabel(c))
 	}
 
 	peerLabel := peerDisplayTarget(peerTok)
@@ -388,12 +524,13 @@ func (s *Service) PunchConnect(peerTokenRaw, pin string) error {
 		pairKey:     DerivePairKey(selfTok.SessionToken, peerTok.SessionToken),
 		selfSeed:    selfTok.RoleSeed,
 		peerToken:   peerTok,
+		peerTargets: peerTargets,
 		dialer:      IsDialer(selfTok.RoleSeed, selfTok.SessionToken, peerTok.RoleSeed, peerTok.SessionToken),
 		ctx:         punchCtx,
 		cancel:      punchCancel,
 		confirmedCh: make(chan confirmedEndpoint, 16),
 		dynamic:     map[netip.AddrPort]struct{}{},
-		pongs:       map[netip.AddrPort]struct{}{},
+		confirmed:   map[netip.AddrPort]confirmedEndpoint{},
 	}
 
 	e.mu.Lock()
@@ -405,6 +542,31 @@ func (s *Service) PunchConnect(peerTokenRaw, pin string) error {
 
 	go e.runPunchSession(p, ap)
 	return nil
+}
+
+func formatCandidateLabel(c PunchCandidate) string {
+	switch c.Kind {
+	case candIPv6:
+		return "IPv6 · " + c.Addr.String()
+	case candLANv4:
+		return "局域网 · " + c.Addr.String()
+	case candSTUNv4:
+		return "IPv4 · " + c.Addr.String()
+	default:
+		return c.Addr.String()
+	}
+}
+
+func hasReachableOverlap(e *punchEngine, peerTok PunchToken) bool {
+	hasPeerV6 := hasCandidateKind(peerTok.Candidates, candIPv6)
+	hasPeerV4 := hasCandidateKind(peerTok.Candidates, candSTUNv4) || hasCandidateKind(peerTok.Candidates, candLANv4)
+	if e.v6Sock != nil && hasPeerV6 {
+		return true
+	}
+	if e.v4Sock != nil && hasPeerV4 {
+		return true
+	}
+	return false
 }
 
 func incompatibleSymmetricNAT(self, peer PunchToken) bool {
@@ -439,7 +601,14 @@ func peerDisplayTarget(t PunchToken) string {
 	return "P2P 节点"
 }
 
-func (e *punchEngine) handlePunchPacket(pkt []byte, raddr *net.UDPAddr) {
+func (e *punchEngine) socketForAddr(ap netip.AddrPort) *punchSocket {
+	if ap.Addr().Is6() {
+		return e.v6Sock
+	}
+	return e.v4Sock
+}
+
+func (e *punchEngine) handlePunchPacket(sock *punchSocket, pkt []byte, raddr *net.UDPAddr) {
 	e.mu.Lock()
 	ap := e.active
 	e.mu.Unlock()
@@ -460,20 +629,25 @@ func (e *punchEngine) handlePunchPacket(pkt []byte, raddr *net.UDPAddr) {
 	msgType := pkt[1]
 	if msgType == punchMsgPing {
 		pong := buildPunchPacket(ap.pairKey, punchMsgPong, ap.selfSeed)
-		_, _ = e.tr.WriteTo(pong, addrPortToUDPAddr(udpAP))
+		_, _ = sock.tr.WriteTo(pong, addrPortToUDPAddr(udpAP))
 		ap.mu.Lock()
+		ap.recvPings++
+		ap.lastRemote = udpAP.String()
 		ap.dynamic[udpAP] = struct{}{}
 		ap.mu.Unlock()
 		return
 	}
 	if msgType == punchMsgPong {
+		ep := confirmedEndpoint{sock: sock, addr: udpAP, kind: classifyEndpoint(ap, udpAP)}
 		ap.mu.Lock()
-		_, already := ap.pongs[udpAP]
-		ap.pongs[udpAP] = struct{}{}
+		ap.recvPongs++
+		ap.lastRemote = udpAP.String()
+		_, already := ap.confirmed[udpAP]
+		ap.confirmed[udpAP] = ep
 		ap.mu.Unlock()
 		if !already {
 			select {
-			case ap.confirmedCh <- confirmedEndpoint{addr: udpAP, kind: classifyEndpoint(ap, udpAP)}:
+			case ap.confirmedCh <- ep:
 			default:
 			}
 		}
@@ -501,7 +675,7 @@ func (e *punchEngine) runPunchSession(p *session, ap *activePunch) {
 			if p.wasUserCancelled() {
 				p.finish(nil)
 			} else {
-				p.finish(formatPunchError(err))
+				p.finish(formatPunchError(err, ap))
 			}
 			return
 		}
@@ -514,7 +688,7 @@ func (e *punchEngine) runPunchSession(p *session, ap *activePunch) {
 		if p.wasUserCancelled() {
 			p.finish(nil)
 		} else {
-			p.finish(formatPunchError(err))
+			p.finish(formatPunchError(err, ap))
 		}
 		return
 	}
@@ -527,11 +701,22 @@ func (p *session) wasUserCancelled() bool {
 	return p.userCancelled
 }
 
-func formatPunchError(err error) error {
-	if errors.Is(err, context.DeadlineExceeded) {
-		return errors.New("打洞连接超时，请确认双方在 60 秒内同时点击连接；若双方均为对称型 NAT 可能无法直连")
+func formatPunchError(err error, ap *activePunch) error {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return err
 	}
-	return err
+	ap.mu.Lock()
+	pings := ap.recvPings
+	pongs := ap.recvPongs
+	dialErr := ap.dialError
+	ap.mu.Unlock()
+	if pings == 0 && pongs == 0 {
+		return errors.New("打洞超时：未收到对方任何探测包（可能网络/运营商防火墙拦截或口令不一致）")
+	}
+	if dialErr != "" {
+		return fmt.Errorf("已收到对方探测但加密通道握手超时：%s", dialErr)
+	}
+	return errors.New("打洞连接超时，请确认双方在 60 秒内同时点击连接")
 }
 
 func (e *punchEngine) sendProbeLoop(ap *activePunch) {
@@ -546,6 +731,7 @@ func (e *punchEngine) sendProbeLoop(ap *activePunch) {
 			}
 		}
 		ap.mu.Lock()
+		ap.sentProbes++
 		for addr := range ap.dynamic {
 			if _, ok := seen[addr]; !ok {
 				seen[addr] = struct{}{}
@@ -558,7 +744,11 @@ func (e *punchEngine) sendProbeLoop(ap *activePunch) {
 			if ap.ctx.Err() != nil {
 				return
 			}
-			_, _ = e.tr.WriteTo(pkt, addrPortToUDPAddr(target))
+			sock := e.socketForAddr(target)
+			if sock == nil {
+				continue
+			}
+			_, _ = sock.tr.WriteTo(pkt, addrPortToUDPAddr(target))
 		}
 	}
 
@@ -577,7 +767,7 @@ func (e *punchEngine) sendProbeLoop(ap *activePunch) {
 
 func (e *punchEngine) runPunchDialer(p *session, ap *activePunch) (*quic.Conn, error) {
 	for {
-		best, err := waitBestConfirmedPath(ap.ctx, ap.confirmedCh)
+		best, err := waitBestConfirmedPath(ap)
 		if err != nil {
 			if p.ctx.Err() != nil {
 				return nil, p.ctx.Err()
@@ -590,7 +780,7 @@ func (e *punchEngine) runPunchDialer(p *session, ap *activePunch) (*quic.Conn, e
 			InsecureSkipVerify: true,
 			NextProtos:         []string{punchALPN},
 		}
-		conn, err := e.tr.Dial(dialCtx, addrPortToUDPAddr(best.addr), tlsCfg, quicConfig())
+		conn, err := best.sock.tr.Dial(dialCtx, addrPortToUDPAddr(best.addr), tlsCfg, quicConfig())
 		cancel()
 		if err == nil {
 			e.service.mu.Lock()
@@ -598,19 +788,45 @@ func (e *punchEngine) runPunchDialer(p *session, ap *activePunch) (*quic.Conn, e
 			e.service.mu.Unlock()
 			return conn, nil
 		}
+		ap.mu.Lock()
+		ap.dialError = err.Error()
+		ap.mu.Unlock()
 		if ap.ctx.Err() != nil {
 			return nil, ap.ctx.Err()
+		}
+		select {
+		case <-ap.ctx.Done():
+			return nil, ap.ctx.Err()
+		case <-time.After(400 * time.Millisecond):
 		}
 	}
 }
 
-func waitBestConfirmedPath(ctx context.Context, ch <-chan confirmedEndpoint) (confirmedEndpoint, error) {
+func bestKnownConfirmed(ap *activePunch) (confirmedEndpoint, bool) {
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
 	var best confirmedEndpoint
-	select {
-	case <-ctx.Done():
-		return confirmedEndpoint{}, ctx.Err()
-	case first := <-ch:
-		best = first
+	var ok bool
+	for _, ep := range ap.confirmed {
+		if !ok || candidatePriority(ep.kind) < candidatePriority(best.kind) {
+			best = ep
+			ok = true
+		}
+	}
+	return best, ok
+}
+
+func waitBestConfirmedPath(ap *activePunch) (confirmedEndpoint, error) {
+	var best confirmedEndpoint
+	if existing, ok := bestKnownConfirmed(ap); ok {
+		best = existing
+	} else {
+		select {
+		case <-ap.ctx.Done():
+			return confirmedEndpoint{}, ap.ctx.Err()
+		case first := <-ap.confirmedCh:
+			best = first
+		}
 	}
 	if best.kind == candLANv4 {
 		return best, nil
@@ -619,11 +835,11 @@ func waitBestConfirmedPath(ctx context.Context, ch <-chan confirmedEndpoint) (co
 	defer grace.Stop()
 	for {
 		select {
-		case <-ctx.Done():
+		case <-ap.ctx.Done():
 			return best, nil
 		case <-grace.C:
 			return best, nil
-		case next := <-ch:
+		case next := <-ap.confirmedCh:
 			if candidatePriority(next.kind) < candidatePriority(best.kind) {
 				best = next
 				if best.kind == candLANv4 {
@@ -648,30 +864,68 @@ func candidatePriority(kind uint8) int {
 }
 
 func (e *punchEngine) runPunchListener(p *session, ap *activePunch) (*quicTransport, message, error) {
-	for {
-		qConn, err := e.ln.Accept(ap.ctx)
-		if err != nil {
-			if p.ctx.Err() != nil {
-				return nil, message{}, p.ctx.Err()
+	type accepted struct {
+		tc    *quicTransport
+		hello message
+	}
+	winCh := make(chan accepted, 1)
+	acceptCtx, acceptCancel := context.WithCancel(ap.ctx)
+	defer acceptCancel()
+
+	var wg sync.WaitGroup
+	listenOn := func(sock *punchSocket) {
+		defer wg.Done()
+		for {
+			qConn, err := sock.ln.Accept(acceptCtx)
+			if err != nil {
+				return
 			}
-			return nil, message{}, context.DeadlineExceeded
-		}
-		authCtx, cancel := context.WithTimeout(ap.ctx, 5*time.Second)
-		stream, err := qConn.AcceptStream(authCtx)
-		if err != nil {
+			authCtx, cancel := context.WithTimeout(acceptCtx, 5*time.Second)
+			stream, err := qConn.AcceptStream(authCtx)
+			if err != nil {
+				cancel()
+				_ = qConn.CloseWithError(1, "stream accept failed")
+				continue
+			}
+			tc := newQUICTransport(qConn, stream)
+			_, raw, err := tc.ReadMessage(authCtx)
 			cancel()
-			_ = qConn.CloseWithError(1, "stream accept failed")
-			continue
+			var hello message
+			if err != nil || unmarshalHello(raw, &hello) != nil || !verifyHelloAuth(ap.pairKey, tc.TLSState(), hello.Auth) {
+				_ = tc.CloseNow()
+				continue
+			}
+			select {
+			case winCh <- accepted{tc: tc, hello: hello}:
+				acceptCancel()
+				return
+			default:
+				_ = tc.CloseNow()
+				return
+			}
 		}
-		tc := newQUICTransport(qConn, stream)
-		_, raw, err := tc.ReadMessage(authCtx)
-		cancel()
-		var hello message
-		if err != nil || unmarshalHello(raw, &hello) != nil || !verifyHelloAuth(ap.pairKey, tc.TLSState(), hello.Auth) {
-			_ = tc.CloseNow()
-			continue
+	}
+
+	if e.v6Sock != nil {
+		wg.Add(1)
+		go listenOn(e.v6Sock)
+	}
+	if e.v4Sock != nil {
+		wg.Add(1)
+		go listenOn(e.v4Sock)
+	}
+
+	select {
+	case win := <-winCh:
+		wg.Wait()
+		return win.tc, win.hello, nil
+	case <-ap.ctx.Done():
+		acceptCancel()
+		wg.Wait()
+		if p.ctx.Err() != nil {
+			return nil, message{}, p.ctx.Err()
 		}
-		return tc, hello, nil
+		return nil, message{}, context.DeadlineExceeded
 	}
 }
 

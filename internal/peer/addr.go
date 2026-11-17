@@ -64,6 +64,48 @@ func localIPv4s() []netip.Addr {
 	return selectPreferredIPv4(candidates)
 }
 
+// outboundPublicIPv6 asks the OS routing table which source IPv6 address it
+// would actually choose for outbound public internet traffic (zero packets sent).
+func outboundPublicIPv6() netip.Addr {
+	for _, target := range []string{"[2400:3200::1]:53", "[2606:4700:4700::1111]:53"} {
+		c, err := net.Dial("udp6", target)
+		if err != nil {
+			continue
+		}
+		ua, ok := c.LocalAddr().(*net.UDPAddr)
+		_ = c.Close()
+		if !ok {
+			continue
+		}
+		if ip, ok := netip.AddrFromSlice(ua.IP); ok && publicIPv6(ip.Unmap()) {
+			return ip.Unmap()
+		}
+	}
+	return netip.Addr{}
+}
+
+// choosePunchIPv6 returns the preferred IPv6 address to explicitly bind for
+// hole punching so outbound source IP never diverges from the advertised token.
+func choosePunchIPv6() netip.Addr {
+	addrs := Addresses()
+	out := outboundPublicIPv6()
+	if out.IsValid() {
+		outPrefix := netip.PrefixFrom(out, 64).Masked()
+		for _, s := range addrs {
+			if ip, err := netip.ParseAddr(s); err == nil && outPrefix.Contains(ip) {
+				return ip
+			}
+		}
+		return out
+	}
+	if len(addrs) > 0 {
+		if ip, err := netip.ParseAddr(addrs[0]); err == nil {
+			return ip
+		}
+	}
+	return netip.Addr{}
+}
+
 func selectPreferredIPv6(candidates []ipv6Candidate) []string {
 	type groupKey struct {
 		iface  int
