@@ -130,7 +130,7 @@ function mountTokenInput(
   input.addEventListener("input", () => {
     wrap.dataset.text = input.value || " ";
     opts.onLiveInput?.(input.value);
-    if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(wrap, null);
+    if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(view, wrap);
   });
   input.addEventListener("keydown", (e) => {
     e.stopPropagation();
@@ -161,7 +161,7 @@ function mountTokenInput(
   });
 
   wrap.replaceChildren(input);
-  if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(wrap, null);
+  if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(view, wrap);
   requestAnimationFrame(() => {
     if (!input.isConnected) return;
     input.focus();
@@ -169,19 +169,23 @@ function mountTokenInput(
   });
 }
 
-function syncPlaceholderHostOffset(wrap: HTMLElement | null, prevHost: HTMLElement | null): HTMLElement | null {
+function syncPlaceholderHostOffset(view: EditorView, wrap: HTMLElement | null): void {
+  // 必须把 CSS 变量写到 ProseMirror DOM 之外（.milkdown），避免触发 DOMObserver(attributes:true) 导致死循环卡死。
+  const outer = view.dom.closest(".milkdown") ?? view.dom.parentElement;
+  if (!(outer instanceof HTMLElement) || outer === view.dom || view.dom.contains(outer)) return;
   const parent = wrap?.parentElement;
-  const host = parent instanceof HTMLElement && parent.classList.contains("crepe-placeholder") ? parent : null;
-  if (prevHost && prevHost !== host) {
-    prevHost.style.removeProperty("--pocket-ph-x");
+  if (!wrap || !(parent instanceof HTMLElement) || !parent.classList.contains("crepe-placeholder")) {
+    if (outer.style.getPropertyValue("--pocket-ph-x")) outer.style.removeProperty("--pocket-ph-x");
+    return;
   }
-  if (!wrap || !host) return null;
-  const hostRect = host.getBoundingClientRect();
+  const hostRect = parent.getBoundingClientRect();
   const wrapRect = wrap.getBoundingClientRect();
   const mr = Number.parseFloat(window.getComputedStyle(wrap).marginRight) || 0;
-  const x = Math.max(0, wrapRect.right - hostRect.left - host.clientLeft + mr);
-  host.style.setProperty("--pocket-ph-x", `${Math.round(x * 100) / 100}px`);
-  return host;
+  const x = Math.max(0, wrapRect.right - hostRect.left - parent.clientLeft + mr);
+  const next = `${Math.round(x * 100) / 100}px`;
+  if (outer.style.getPropertyValue("--pocket-ph-x") !== next) {
+    outer.style.setProperty("--pocket-ph-x", next);
+  }
 }
 
 /** 创建按需可编辑的语法标记：正常打字与 IME 期间为纯静态 <span>（不向编辑区注入 <input>），点击后再就地转为输入框。 */
@@ -219,7 +223,7 @@ function makeTokenWidget(
         labelEl.textContent = val;
         wrap.dataset.text = val || " ";
         wrap.replaceChildren(labelEl);
-        if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(wrap, null);
+        if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(view, wrap);
       },
     });
   });
@@ -683,7 +687,6 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
             },
           });
         };
-        let lastPhHost: HTMLElement | null = null;
         const syncPlaceholderOffset = (view: EditorView) => {
           if (view.isDestroyed) return;
           const sel = view.state.selection;
@@ -691,7 +694,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
             sel.empty && sel.$from.parent.content.size === 0
               ? view.dom.querySelector<HTMLElement>(".crepe-placeholder > .pocket-syntax-wrap.is-block-prefix")
               : null;
-          lastPhHost = syncPlaceholderHostOffset(wrap, lastPhHost);
+          syncPlaceholderHostOffset(view, wrap);
         };
         editorView.dom.addEventListener("pocket-html-dismiss", onDismiss);
         editorView.dom.addEventListener("pointerdown", onGutterPointerDown, true);
@@ -736,7 +739,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
               window.clearTimeout(composeRefreshTimer);
               composeRefreshTimer = 0;
             }
-            lastPhHost = syncPlaceholderHostOffset(null, lastPhHost);
+            syncPlaceholderHostOffset(editorView, null);
             editorView.dom.removeEventListener("pocket-html-dismiss", onDismiss);
             editorView.dom.removeEventListener("pointerdown", onGutterPointerDown, true);
             boundView = null;
