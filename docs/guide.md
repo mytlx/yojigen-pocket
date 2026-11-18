@@ -129,7 +129,9 @@ macOS 上有三项系统权限和这个应用有关，都在「系统设置 → 
 
    ```bash
    git config --local pocket.signingIdentity "Yojigen Pocket Local"
-   bunx mygo build -platform darwin/universal
+   # 仅限自签名证书的本地构建：bun run build 无需联网获取时间戳。
+   git config --local pocket.offlineSigning true
+   bun run build -platform darwin/universal
    ```
 
 第一次用新证书构建的版本要重新授权一次，之后的更新都不用了。CI 上同理：配了

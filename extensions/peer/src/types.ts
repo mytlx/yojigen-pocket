@@ -38,7 +38,7 @@ export interface PeerState {
   self: Identity; addresses: string[]; port: number; directReady: boolean; folder: string;
   state: "offline" | "idle" | "punching" | "connecting" | "waiting" | "request" | "verify" | "connected";
   sessionMode?: "direct" | "punch";
-  peer?: Identity; address?: string; code?: string; choices?: string[]; expires?: number;
+  peer?: Identity; address?: string; code?: string; localConfirmed?: boolean; pairingVersion: number; expires?: number;
   busy: boolean; error?: string; punch?: PunchState; records: Transfer[];
 }
 export const avatars = ["🦦", "🦊", "🐳", "🐧", "🐿️", "🐻", "🦭", "🐱"];

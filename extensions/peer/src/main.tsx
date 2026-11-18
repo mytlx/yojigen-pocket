@@ -198,6 +198,8 @@ function App() {
     }
   };
 
+  if (state && state.pairingVersion !== 2) return <main class="pk-app"><div class="pk-loading">当前主程序不支持四位数字双向验证，请更新主程序后重新打开口袋直传。</div></main>;
+
   if (!state) {
     return <main class="pk-app">
       <div class="pk-loading"><span class="pk-loading-orb"><Send size={22} /></span><span>正在准备传输空间…</span>
@@ -287,7 +289,7 @@ function App() {
             </form>
             {!state.directReady
               ? <p class="pk-hint warn">未检测到可用的公网 IPv6。路由器限制入站时，可以切换到“打洞穿透”。</p>
-              : <p class="pk-hint">对方同意后，双方核对一个两位数字即可建立连接。</p>}
+              : <p class="pk-hint">对方同意后，双方核对四位数字并各自确认后即可传输。</p>}
           </> : <>
             <div class="pk-step">
               <div class="pk-step-head"><span class="pk-step-no">1</span><span>把我的口令发给对方{punch?.encrypted ? "（已加密）" : ""}</span>
@@ -316,15 +318,17 @@ function App() {
           {state.state === "request" ? <div class="pk-panel" role="dialog" aria-label="连接请求">
             <h2>{state.peer?.name} 想和你建立连接</h2>
             <p class="pk-mono-line">{state.address}</p>
-            <p>同意后，请核对对方屏幕上的两位数字。</p>
+            <p>同意后，请核对对方屏幕上的四位数字。</p>
             <div class="pk-actions"><button class="pk-btn" disabled={!!working} onClick={() => void act("reject")}>拒绝</button><button class="pk-btn primary" disabled={!!working} onClick={() => void act("accept")}><Check size={15} />同意连接</button></div>
           </div> : state.state === "verify" ? <div class="pk-panel" role="dialog" aria-label="数字验证">
-            <h2>{state.code ? "把这个数字告诉对方" : "对方屏幕上是哪个数字？"}</h2>
-            <p>{state.code ? `通过电话或当面告诉 ${state.peer?.name}，等对方选择。` : `向 ${state.peer?.name} 确认，选错会立即断开。`}</p>
-            {state.code
-              ? <div class="pk-code" aria-label="连接确认数字">{state.code.split("").map((d, i) => <span key={i} style={{ "--d": i } as Record<string, number>}>{d}</span>)}</div>
-              : <div class="pk-choices">{state.choices?.map((n, i) => <button class="pk-choice" key={n} style={{ "--d": i } as Record<string, number>} disabled={!!working} onClick={() => void act("confirm", n)}>{n}</button>)}</div>}
-            <div class="pk-timer"><span class="pk-timer-bar"><i style={{ width: `${Math.min(100, remaining / 120 * 100)}%` }} /></span><span>{remaining} 秒后失效</span><button class="pk-link-btn" onClick={() => void act("disconnect")}>取消</button></div>
+            <h2>{state.localConfirmed ? "已确认，等待对方核对" : "核对两台设备上的四位数字"}</h2>
+            <p>请通过电话或当面与 {state.peer?.name} 逐位核对。双方都确认后才能传文件。</p>
+            <div class="pk-code" aria-label="连接确认数字">{state.code?.split("").map((d, i) => <span key={i} style={{ "--d": i } as Record<string, number>}>{d}</span>)}</div>
+            <div class="pk-actions">
+              <button class="pk-btn" disabled={!!working} onClick={() => void act("disconnect")}>不一致，断开</button>
+              <button class="pk-btn primary" disabled={!!working || !state.code || state.localConfirmed} onClick={() => void act("confirm", state.code)}><Check size={15} />{state.localConfirmed ? "我已确认" : "数字一致"}</button>
+            </div>
+            <div class="pk-timer"><span class="pk-timer-bar"><i style={{ width: `${Math.min(100, remaining / 120 * 100)}%` }} /></span><span>{remaining} 秒后失效</span></div>
           </div> : connected ? <div class="pk-panel pk-connected" data-testid="connected">
             <h2>已与 {state.peer?.name} 安全连接</h2>
             <p>把文件拖进窗口，或点“选择文件”。对方也可以同时给你发文件。</p>

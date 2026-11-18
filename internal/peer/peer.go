@@ -11,7 +11,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/binary"
+
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -39,22 +39,23 @@ type Identity struct {
 	Avatar int    `json:"avatar"`
 }
 type Snapshot struct {
-	Self        Identity       `json:"self"`
-	Addresses   []string       `json:"addresses"`
-	Port        int            `json:"port"`
-	DirectReady bool           `json:"directReady"`
-	Folder      string         `json:"folder"`
-	State       string         `json:"state"`
-	SessionMode string         `json:"sessionMode,omitempty"`
-	Peer        *Identity      `json:"peer,omitempty"`
-	Address     string         `json:"address,omitempty"`
-	Code        string         `json:"code,omitempty"`
-	Choices     []string       `json:"choices,omitempty"`
-	Expires     int64          `json:"expires,omitempty"`
-	Error       string         `json:"error,omitempty"`
-	Busy        bool           `json:"busy"`
-	Punch       *PunchSnapshot `json:"punch,omitempty"`
-	Records     []Record       `json:"records"`
+	Self           Identity       `json:"self"`
+	Addresses      []string       `json:"addresses"`
+	Port           int            `json:"port"`
+	DirectReady    bool           `json:"directReady"`
+	Folder         string         `json:"folder"`
+	State          string         `json:"state"`
+	SessionMode    string         `json:"sessionMode,omitempty"`
+	Peer           *Identity      `json:"peer,omitempty"`
+	Address        string         `json:"address,omitempty"`
+	Code           string         `json:"code,omitempty"`
+	LocalConfirmed bool           `json:"localConfirmed,omitempty"`
+	PairingVersion int            `json:"pairingVersion"`
+	Expires        int64          `json:"expires,omitempty"`
+	Error          string         `json:"error,omitempty"`
+	Busy           bool           `json:"busy"`
+	Punch          *PunchSnapshot `json:"punch,omitempty"`
+	Records        []Record       `json:"records"`
 }
 type Record struct {
 	ID        string  `json:"id"`
@@ -90,23 +91,23 @@ type Service struct {
 	stunServers []string
 }
 type session struct {
-	service                   *Service
-	conn                      transportConn
-	ctx                       context.Context
-	cancel                    context.CancelFunc
-	mu                        sync.Mutex // serializes protocol writes, not state (owned by service.mu)
-	remote                    Identity
-	mode                      string
-	address, state, sas, code string
-	choices                   []string
-	incoming                  bool
-	userCancelled             bool
-	expires                   time.Time
-	timer                     *time.Timer
-	sending                   bool
-	receive                   *incomingFile // owned exclusively by the reader goroutine
-	ack                       chan message
-	done                      chan struct{}
+	service                         *Service
+	conn                            transportConn
+	ctx                             context.Context
+	cancel                          context.CancelFunc
+	mu                              sync.Mutex // serializes protocol writes, not state (owned by service.mu)
+	remote                          Identity
+	mode                            string
+	address, state, sas, code       string
+	localConfirmed, remoteConfirmed bool
+	incoming                        bool
+	userCancelled                   bool
+	expires                         time.Time
+	timer                           *time.Timer
+	sending                         bool
+	receive                         *incomingFile // owned exclusively by the reader goroutine
+	ack                             chan message
+	done                            chan struct{}
 }
 type message struct {
 	Type     string   `json:"type"`
@@ -213,16 +214,9 @@ func certificate() (tls.Certificate, error) {
 	der, err := x509.CreateCertificate(rand.Reader, t, t, &key.PublicKey, key)
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, err
 }
-func channelNumber(state *tls.ConnectionState) (string, error) {
-	b, err := state.ExportKeyingMaterial("pocket-peer-number-v1", nil, 8)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%02d", binary.BigEndian.Uint64(b)%90+10), nil
-}
 func (s *Service) Snapshot() Snapshot {
 	s.mu.Lock()
-	v := Snapshot{Self: s.self, Addresses: append([]string{}, s.addresses...), Port: s.port, DirectReady: s.listener != nil, Folder: s.folder, State: "idle", Error: s.lastError, Busy: s.active > 0, Records: append([]Record{}, s.records...)}
+	v := Snapshot{PairingVersion: 2, Self: s.self, Addresses: append([]string{}, s.addresses...), Port: s.port, DirectReady: s.listener != nil, Folder: s.folder, State: "idle", Error: s.lastError, Busy: s.active > 0, Records: append([]Record{}, s.records...)}
 	for i := range v.Records {
 		v.Records[i].Temp = ""
 	}
@@ -236,7 +230,7 @@ func (s *Service) Snapshot() Snapshot {
 		v.Peer = &peer
 		v.Address = p.address
 		v.Code = p.code
-		v.Choices = append([]string{}, p.choices...)
+		v.LocalConfirmed = p.localConfirmed
 		if !p.expires.IsZero() {
 			v.Expires = p.expires.UnixMilli()
 		}
@@ -270,6 +264,7 @@ func (s *Service) SetFolder(dir string) error {
 	}
 	return nil
 }
+
 // ClearHistory 删除已结束的传输记录（完成、失败、中断），进行中的任务保留。返回删除的条数。
 func (s *Service) ClearHistory() (int, error) {
 	s.mu.Lock()
@@ -468,7 +463,7 @@ func (p *session) finish(err error) {
 	close(p.done)
 }
 func (s *Service) accept(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/pocket/v1" || r.Header.Get("Origin") != "" || r.TLS == nil {
+	if r.URL.Path != "/pocket/v2" || r.Header.Get("Origin") != "" || r.TLS == nil {
 		http.Error(w, "not found", 404)
 		return
 	}
@@ -483,19 +478,13 @@ func (s *Service) accept(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "busy", 409)
 		return
 	}
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"pocket-peer-v1"}})
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"pocket-peer-v2"}})
 	if err != nil {
 		p.finish(err)
 		return
 	}
 	tc := newWSTransport(conn, r.TLS)
 	p.attach(tc)
-	sas, err := channelNumber(tc.TLSState())
-	if err != nil {
-		p.finish(err)
-		return
-	}
-	p.sas = sas
 	ctx, cancel := context.WithTimeout(p.ctx, 10*time.Second)
 	_, raw, err := tc.ReadMessage(ctx)
 	cancel()
@@ -504,6 +493,12 @@ func (s *Service) accept(w http.ResponseWriter, r *http.Request) {
 		p.finish(errors.New("无效连接请求"))
 		return
 	}
+	sas, err := p.pairingNumber(true)
+	if err != nil {
+		p.finish(err)
+		return
+	}
+	p.sas = sas
 	s.mu.Lock()
 	p.remote = hello.Identity
 	s.mu.Unlock()
@@ -547,7 +542,7 @@ func (s *Service) connectTo(address string, targetPort int) error {
 		transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true}}
 		defer transport.CloseIdleConnections()
 		ctx, cancel := context.WithTimeout(p.ctx, 10*time.Second)
-		conn, response, err := websocket.Dial(ctx, "wss://"+net.JoinHostPort(ip.String(), fmt.Sprint(targetPort))+"/pocket/v1", &websocket.DialOptions{HTTPClient: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("不允许重定向") }}, Subprotocols: []string{"pocket-peer-v1"}})
+		conn, response, err := websocket.Dial(ctx, "wss://"+net.JoinHostPort(ip.String(), fmt.Sprint(targetPort))+"/pocket/v2", &websocket.DialOptions{HTTPClient: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("不允许重定向") }}, Subprotocols: []string{"pocket-peer-v2"}})
 		cancel()
 		if err != nil {
 			p.finish(fmt.Errorf("无法连接，请检查对方扩展和 IPv6 防火墙：%w", err))
@@ -555,13 +550,13 @@ func (s *Service) connectTo(address string, targetPort int) error {
 		}
 		tc := newWSTransport(conn, response.TLS)
 		p.attach(tc)
-		p.sas, err = channelNumber(tc.TLSState())
-		if err != nil {
+		p.deadline()
+		if err = p.write(message{Type: "hello", Identity: s.self}); err != nil {
 			p.finish(err)
 			return
 		}
-		p.deadline()
-		if err = p.write(message{Type: "hello", Identity: s.self}); err != nil {
+		p.sas, err = p.pairingNumber(false)
+		if err != nil {
 			p.finish(err)
 			return
 		}
@@ -583,17 +578,7 @@ func (s *Service) Accept() error {
 		s.mu.Unlock()
 		return errors.New("请求已失效")
 	}
-	p.choices = []string{p.sas}
-	for len(p.choices) < 3 {
-		n := fmt.Sprintf("%02d", randomN(90)+10)
-		if n != p.choices[0] && (len(p.choices) == 1 || n != p.choices[1]) {
-			p.choices = append(p.choices, n)
-		}
-	}
-	for i := 2; i > 0; i-- {
-		j := randomN(i + 1)
-		p.choices[i], p.choices[j] = p.choices[j], p.choices[i]
-	}
+	p.code = p.sas
 	p.state = "verify"
 	s.mu.Unlock()
 	return p.writeControlLocked(message{Type: "challenge"})
@@ -608,7 +593,7 @@ func (s *Service) Confirm(number string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	s.mu.Lock()
-	if s.current != p || !p.incoming || p.state != "verify" || time.Now().After(p.expires) {
+	if s.current != p || p.localConfirmed || p.state != "verify" || time.Now().After(p.expires) {
 		s.mu.Unlock()
 		return errors.New("验证已失效")
 	}
@@ -620,14 +605,15 @@ func (s *Service) Confirm(number string) error {
 		_ = p.conn.CloseNow()
 		return errors.New("数字不匹配，连接已拒绝")
 	}
-	p.state = "connected"
-	p.choices = nil
-	p.expires = time.Time{}
-	if p.timer != nil {
-		p.timer.Stop()
-	}
+	p.localConfirmed = true
+	p.finishPairingLocked()
 	s.mu.Unlock()
-	return p.writeControlLocked(message{Type: "ready"})
+	err := p.writeControlLocked(message{Type: "confirmed"})
+	if err != nil {
+		p.cancel()
+		_ = p.conn.CloseNow()
+	}
+	return err
 }
 func (s *Service) Reject() error {
 	s.mu.Lock()
@@ -706,18 +692,15 @@ func (p *session) readLoop() {
 			p.state = "verify"
 			p.code = p.sas
 			s.mu.Unlock()
-		case "ready":
-			if p.incoming || state != "verify" {
-				end = errors.New("尚未验证")
+		case "confirmed":
+			s.mu.Lock()
+			if p.state != "verify" || p.remoteConfirmed || time.Now().After(p.expires) {
+				s.mu.Unlock()
+				end = errors.New("无效配对确认")
 				return
 			}
-			s.mu.Lock()
-			p.state = "connected"
-			p.code = ""
-			p.expires = time.Time{}
-			if p.timer != nil {
-				p.timer.Stop()
-			}
+			p.remoteConfirmed = true
+			p.finishPairingLocked()
 			s.mu.Unlock()
 		case "rejected":
 			end = errors.New("对方拒绝了连接或数字不匹配")

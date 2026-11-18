@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "mygo dev",
-    "build": "mygo build",
+    "build": "bun tools/build.ts",
     "generate": "mygo generate",
     "dev:web": "bun --bun vite",
     "build:web": "tsc --noEmit && bun --bun vite build",

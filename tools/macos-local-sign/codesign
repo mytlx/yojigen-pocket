@@ -1,0 +1,12 @@
+#!/bin/bash
+# Only adjust MyGo's timestamp request for the explicitly opted-in identity.
+args=("$@")
+for ((i=0; i+1<${#args[@]}; i++)); do
+  if [[ ${args[i]} == --sign && -n ${POCKET_LOCAL_SIGNER:-} && ${args[i+1]} == "$POCKET_LOCAL_SIGNER" ]]; then
+    for ((j=0; j<${#args[@]}; j++)); do
+      if [[ ${args[j]} == --timestamp ]]; then args[j]=--timestamp=none; fi
+    done
+    break
+  fi
+done
+exec /usr/bin/codesign "${args[@]}"

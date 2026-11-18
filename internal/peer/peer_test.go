@@ -50,21 +50,17 @@ func pair(t *testing.T, a, b *Service) {
 	}
 	wait(t, func() bool { return a.Snapshot().Code != "" })
 	code := a.Snapshot().Code
-	if len(code) != 2 {
-		t.Fatalf("pairing code should be 2 digits: %q", code)
-	}
-	v := b.Snapshot()
-	if len(v.Choices) != 3 || v.Code != "" {
-		t.Fatalf("receiver exposed answer: %+v", v)
-	}
-	found := false
-	for _, n := range v.Choices {
-		found = found || n == code
-	}
-	if !found {
-		t.Fatal("TLS exporter numbers do not match")
+	if len(code) != 4 || b.Snapshot().Code != code {
+		t.Fatalf("different four-digit displays: %q, %q", code, b.Snapshot().Code)
 	}
 	if err := b.Confirm(code); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.current != nil && a.current.remoteConfirmed })
+	if a.Snapshot().State != "verify" || b.Snapshot().State != "verify" {
+		t.Fatal("one confirmation unlocked file transfer")
+	}
+	if err := a.Confirm(code); err != nil {
 		t.Fatal(err)
 	}
 	wait(t, func() bool { return a.Snapshot().State == "connected" && b.Snapshot().State == "connected" })
@@ -130,11 +126,9 @@ func TestWrongNumberRejects(t *testing.T) {
 		t.Fatal(err)
 	}
 	wait(t, func() bool { return a.Snapshot().Code != "" })
-	wrong := ""
-	for _, n := range b.Snapshot().Choices {
-		if n != a.Snapshot().Code {
-			wrong = n
-		}
+	wrong := "0000"
+	if wrong == a.Snapshot().Code {
+		wrong = "0001"
 	}
 	if err := b.Confirm(wrong); err == nil {
 		t.Fatal("wrong answer accepted")
