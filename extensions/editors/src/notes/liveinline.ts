@@ -130,6 +130,7 @@ function mountTokenInput(
   input.addEventListener("input", () => {
     wrap.dataset.text = input.value || " ";
     opts.onLiveInput?.(input.value);
+    if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(wrap, null);
   });
   input.addEventListener("keydown", (e) => {
     e.stopPropagation();
@@ -160,11 +161,27 @@ function mountTokenInput(
   });
 
   wrap.replaceChildren(input);
+  if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(wrap, null);
   requestAnimationFrame(() => {
     if (!input.isConnected) return;
     input.focus();
     input.select();
   });
+}
+
+function syncPlaceholderHostOffset(wrap: HTMLElement | null, prevHost: HTMLElement | null): HTMLElement | null {
+  const parent = wrap?.parentElement;
+  const host = parent instanceof HTMLElement && parent.classList.contains("crepe-placeholder") ? parent : null;
+  if (prevHost && prevHost !== host) {
+    prevHost.style.removeProperty("--pocket-ph-x");
+  }
+  if (!wrap || !host) return null;
+  const hostRect = host.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+  const mr = Number.parseFloat(window.getComputedStyle(wrap).marginRight) || 0;
+  const x = Math.max(0, wrapRect.right - hostRect.left - host.clientLeft + mr);
+  host.style.setProperty("--pocket-ph-x", `${Math.round(x * 100) / 100}px`);
+  return host;
 }
 
 /** 创建按需可编辑的语法标记：正常打字与 IME 期间为纯静态 <span>（不向编辑区注入 <input>），点击后再就地转为输入框。 */
@@ -202,6 +219,7 @@ function makeTokenWidget(
         labelEl.textContent = val;
         wrap.dataset.text = val || " ";
         wrap.replaceChildren(labelEl);
+        if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(wrap, null);
       },
     });
   });
@@ -665,10 +683,22 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
             },
           });
         };
+        let lastPhHost: HTMLElement | null = null;
+        const syncPlaceholderOffset = (view: EditorView) => {
+          if (view.isDestroyed) return;
+          const sel = view.state.selection;
+          const wrap =
+            sel.empty && sel.$from.parent.content.size === 0
+              ? view.dom.querySelector<HTMLElement>(".crepe-placeholder > .pocket-syntax-wrap.is-block-prefix")
+              : null;
+          lastPhHost = syncPlaceholderHostOffset(wrap, lastPhHost);
+        };
         editorView.dom.addEventListener("pocket-html-dismiss", onDismiss);
         editorView.dom.addEventListener("pointerdown", onGutterPointerDown, true);
+        syncPlaceholderOffset(editorView);
         return {
           update(view, prevState) {
+            syncPlaceholderOffset(view);
             if (!view.state.doc.eq(prevState.doc)) {
               const p = currentParaPos(view.state);
               if (p !== null) editedParaPos = p;
@@ -706,6 +736,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
               window.clearTimeout(composeRefreshTimer);
               composeRefreshTimer = 0;
             }
+            lastPhHost = syncPlaceholderHostOffset(null, lastPhHost);
             editorView.dom.removeEventListener("pocket-html-dismiss", onDismiss);
             editorView.dom.removeEventListener("pointerdown", onGutterPointerDown, true);
             boundView = null;

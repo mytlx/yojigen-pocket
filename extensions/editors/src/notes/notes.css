@@ -1073,6 +1073,13 @@
   margin-right: 4px;
   background: rgba(var(--accent-rgb), 0.14);
 }
+.fx-notes-rich .milkdown .ProseMirror .crepe-placeholder:has(> .pocket-syntax-wrap.is-block-prefix) {
+  position: relative;
+}
+.fx-notes-rich .milkdown .ProseMirror .crepe-placeholder:has(> .pocket-syntax-wrap.is-block-prefix)::before {
+  left: var(--pocket-ph-x, 0px);
+  right: 0;
+}
 .fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap.is-url {
   max-width: 320px;
 }
