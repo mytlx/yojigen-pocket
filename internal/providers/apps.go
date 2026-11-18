@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"yojigen-pocket/internal/core"
@@ -31,9 +32,10 @@ type Apps struct {
 	List   func() ([]AppEntry, error)
 	Launch func(AppEntry) error
 
-	mu    sync.RWMutex
-	items []appItem
-	last  time.Time
+	scanning atomic.Bool
+	mu       sync.RWMutex
+	items    []appItem
+	last     time.Time
 }
 
 // Info 实现 core.Provider。
@@ -43,6 +45,10 @@ func (a *Apps) Info() core.Info {
 
 // Refresh 重新扫描已安装的应用。拼音在这里预计算，不在每次输入时算。
 func (a *Apps) Refresh() error {
+	if !a.scanning.CompareAndSwap(false, true) {
+		return nil
+	}
+	defer a.scanning.Store(false)
 	list, err := a.List()
 	if err != nil {
 		return err

@@ -46,6 +46,16 @@ func main() {
 	mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
 	mygo.App.OnWindowAllClosed(func() {}) // 没有窗口也继续运行
 	mygo.App.OnSecondInstance(func([]string, string) { a.showPanel("") })
+	if runtime.GOOS == "darwin" {
+		mygo.App.OnActivate(func(visible bool) {
+			a.urlMu.Lock()
+			ready := a.isReady
+			a.urlMu.Unlock()
+			if ready && !visible {
+				a.showPanel("")
+			}
+		})
+	}
 	mygo.App.OnOpenURL(a.handleURL)
 	mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
 		if a.pluginHost != nil {

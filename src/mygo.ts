@@ -221,6 +221,7 @@ export interface CommandTarget {
 }
 
 export interface Config {
+  diagnosticLogging: boolean;
   hotkey: string;
   hideOnBlur: boolean;
   rememberSeconds: number;
@@ -939,6 +940,9 @@ export const Settings = {
   /** PreviewPanel 显示或收起主窗口，方便在调整外观时看效果。预览期间点回设置窗口不会把它隐藏。 */
   previewPanel(show: boolean): Promise<void> {
     return call("Settings.PreviewPanel", show);
+  },
+  readLog(): Promise<string> {
+    return call("Settings.ReadLog");
   },
   /** Relaunch 重启应用（授予系统权限后需要重启才生效）。 */
   relaunch(): Promise<void> {

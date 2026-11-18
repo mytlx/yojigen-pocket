@@ -34,12 +34,13 @@ var trayIconColor []byte
 
 // App 把引擎、窗口和系统能力粘在一起。
 type App struct {
-	paths   store.Paths
-	config  *store.ConfigStore
-	usage   *store.Usage
-	engine  *core.Engine
-	host    *host
-	version string
+	diagnostic diagnosticLog
+	paths      store.Paths
+	config     *store.ConfigStore
+	usage      *store.Usage
+	engine     *core.Engine
+	host       *host
+	version    string
 
 	apps      *providers.Apps
 	clipboard *providers.Clipboard
@@ -119,6 +120,8 @@ func (a *App) ready() {
 		}
 	}
 	a.config = store.NewConfigStore(a.paths.Config)
+	a.configureLog()
+	log.Printf("启动版本 %s", a.version)
 	a.detached = map[int]*detachedWindow{}
 	a.dragOrigin = map[int]mygo.Point{}
 	a.loadState()
@@ -142,15 +145,6 @@ func (a *App) ready() {
 	a.watchHome(ctx)
 	mygo.Theme.OnUpdated(func() { ThemeChanged.Broadcast(mygo.Theme.IsDark()) })
 
-	// 手动打开时直接显示主窗口，让人知道它已经在运行了；开机启动时安静地待在后台。
-	if !mygo.App.WasOpenedAtLogin() && os.Getenv("POCKET_HIDDEN") == "" {
-		a.panel.OnReadyToShow(func() {
-			a.showPanel("")
-			a.flushPendingURL()
-		})
-	} else {
-		a.panel.OnReadyToShow(a.flushPendingURL)
-	}
 }
 
 func (a *App) flushPendingURL() {
@@ -395,6 +389,15 @@ func (a *App) createPanel(cfg *store.Config) {
 		opts.BackgroundColor = "light-dark(#f4f5f7, #1d1f24)"
 	}
 	a.panel = mygo.NewWindow(opts)
+	// 手动打开时直接显示主窗口，让人知道它已经在运行了；开机启动时安静地待在后台。
+	if !mygo.App.WasOpenedAtLogin() && os.Getenv("POCKET_HIDDEN") == "" {
+		a.panel.OnReadyToShow(func() {
+			a.showPanel("")
+			a.flushPendingURL()
+		})
+	} else {
+		a.panel.OnReadyToShow(a.flushPendingURL)
+	}
 	if glass && material(cfg) != mygo.VibrancyGlass {
 		a.panel.SetVibrancy(material(cfg))
 	}
@@ -646,6 +649,7 @@ func (a *App) applyTheme(cfg *store.Config) {
 // configApplied 让新配置生效：主题、材质、热键，并通知所有窗口。
 func (a *App) configApplied() {
 	cfg := a.config.Get()
+	a.configureLog()
 	a.applyTheme(cfg)
 	if a.panel != nil && platform.GlassSupported() {
 		a.panel.SetVibrancy(material(cfg))

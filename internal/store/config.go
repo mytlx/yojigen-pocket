@@ -151,18 +151,19 @@ type ReaderConfig struct {
 
 // Config 是 config.json 的完整结构。
 type Config struct {
-	Hotkey          string            `json:"hotkey"`
-	HideOnBlur      bool              `json:"hideOnBlur"`
-	RememberSeconds int               `json:"rememberSeconds"` // 再次唤出时保留上次输入的秒数
-	AutoFillSeconds int               `json:"autoFillSeconds"` // 唤出时自动填入 N 秒内复制的文本，0 为关闭
-	MaxResults      int               `json:"maxResults"`
-	HalfLifeDays    float64           `json:"halfLifeDays"` // 使用记录的半衰期
-	Editor          string            `json:"editor"`       // 打开脚本用的编辑器命令，留空用系统默认
-	Appearance      Appearance        `json:"appearance"`
-	Modules         map[string]Module `json:"modules"`
-	Web             []WebEntry        `json:"web"`
-	Hotkeys         map[string]string `json:"hotkeys"`  // 命令 ID → 直达热键
-	Disabled        []string          `json:"disabled"` // 隐藏的命令 ID
+	DiagnosticLogging bool              `json:"diagnosticLogging"`
+	Hotkey            string            `json:"hotkey"`
+	HideOnBlur        bool              `json:"hideOnBlur"`
+	RememberSeconds   int               `json:"rememberSeconds"` // 再次唤出时保留上次输入的秒数
+	AutoFillSeconds   int               `json:"autoFillSeconds"` // 唤出时自动填入 N 秒内复制的文本，0 为关闭
+	MaxResults        int               `json:"maxResults"`
+	HalfLifeDays      float64           `json:"halfLifeDays"` // 使用记录的半衰期
+	Editor            string            `json:"editor"`       // 打开脚本用的编辑器命令，留空用系统默认
+	Appearance        Appearance        `json:"appearance"`
+	Modules           map[string]Module `json:"modules"`
+	Web               []WebEntry        `json:"web"`
+	Hotkeys           map[string]string `json:"hotkeys"`  // 命令 ID → 直达热键
+	Disabled          []string          `json:"disabled"` // 隐藏的命令 ID
 	// Keywords 是用户自己定的关键词：命令 ID → 关键词列表，代替这一项自带的。没有的项用自带的。
 	Keywords        map[string][]string `json:"keywords,omitempty"`
 	Clipboard       ClipboardConfig     `json:"clipboard"`

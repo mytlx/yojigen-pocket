@@ -1,16 +1,22 @@
-import { markdownLanguage } from "@codemirror/lang-markdown";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { toString } from "mdast-util-to-string";
+import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
+import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
+import type { Nodes } from "mdast";
 export interface OutlineHeading { level: number; text: string; from: number }
 export interface OutlineNode { heading: OutlineHeading; index: number; children: OutlineNode[] }
 /** 用 Markdown 语法树排除代码块中的 #，支持 ATX 和 Setext 标题。 */
 export function outlineOf(text: string): OutlineHeading[] {
   const headings: OutlineHeading[] = [];
-  markdownLanguage.parser.parse(text).iterate({ enter(node) {
-    const m = /^(?:ATX|Setext)Heading([1-6])$/.exec(node.name);
-    if (!m) return;
-    const raw = text.slice(node.from, node.to);
-    const label = raw.replace(/^#{1,6}\s+/, "").replace(/\s+#+\s*$/, "").replace(/\n[ \t]*[=-]+[ \t]*$/, "");
-    headings.push({ level: Number(m[1]), text: label, from: node.from });
-  } });
+  const doc = fromMarkdown(text, { extensions: [gfmStrikethrough()], mdastExtensions: [gfmStrikethroughFromMarkdown()] });
+  function collect(node: Nodes) {
+    if (node.type === "heading") {
+      headings.push({ level: node.depth, text: toString(node, { includeHtml: false }), from: node.position!.start.offset! });
+    } else if ("children" in node) {
+      node.children.forEach(collect);
+    }
+  }
+  collect(doc);
   return headings;
 }
 

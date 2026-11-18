@@ -208,3 +208,8 @@ describe("notes sidebar multi-select, delete normalization, and resizable widths
     expect(matchStandaloneHtmlSnippet("<script>alert(1)</script>")).toBeNull();
   });
 });
+
+test("outline labels display inline Markdown as text and keep the source offset", () => {
+  const source = "intro\n\n## **bold** [link](https://example.org) ~~old~~ `code` &amp; <i>text</i>";
+  expect(outlineOf(source)).toEqual([{ level: 2, text: "bold link old code & text", from: 7 }]);
+});

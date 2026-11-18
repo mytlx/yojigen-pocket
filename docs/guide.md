@@ -128,7 +128,8 @@ macOS 上有三项系统权限和这个应用有关，都在「系统设置 → 
 2. 构建时告诉它用这个证书：
 
    ```bash
-   POCKET_SIGN_IDENTITY="Yojigen Pocket Local" bunx mygo build -platform darwin/universal
+   git config --local pocket.signingIdentity "Yojigen Pocket Local"
+   bunx mygo build -platform darwin/universal
    ```
 
 第一次用新证书构建的版本要重新授权一次，之后的更新都不用了。CI 上同理：配了
