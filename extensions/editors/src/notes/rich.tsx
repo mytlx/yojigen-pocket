@@ -59,15 +59,17 @@ export function RichEditor(props: RichProps) {
     let destroy: (() => void) | undefined;
     void (async () => {
       try {
-        const [{ Crepe }, { editorViewCtx }, { remarkPreserveEmptyLinePlugin }, { remarkGFMPlugin }, { LanguageDescription, LanguageSupport, Language }, cm, marks, toc] = await Promise.all([
+        const [{ Crepe }, { editorViewCtx }, { codeBlockView }, { remarkPreserveEmptyLinePlugin }, { remarkGFMPlugin }, { LanguageDescription, LanguageSupport, Language }, cm, marks, toc, { fastCodeBlockView }] = await Promise.all([
           import("@milkdown/crepe"),
           import("@milkdown/kit/core"),
+          import("@milkdown/kit/component/code-block"),
           import("@milkdown/kit/preset/commonmark"),
           import("@milkdown/kit/preset/gfm"),
           import("@codemirror/language"),
           import("../code/editor"),
           import("./marks"),
           import("./toc"),
+          import("./fastcodeblock"),
           import("@milkdown/crepe/theme/common/style.css"),
           import("@milkdown/crepe/theme/frame.css"),
         ]);
@@ -172,6 +174,9 @@ export function RichEditor(props: RichProps) {
         );
         // 不在空段落处写入 <br /> 占位，保持标准 Markdown 换行行为（类 Typora）。
         await crepe.editor.remove(remarkPreserveEmptyLinePlugin);
+        // 替换滚动期间按视口批量实例化数百个 CodeMirror 的默认节点视图，改用点击/聚焦时按需激活。
+        await crepe.editor.remove(codeBlockView);
+        crepe.editor.use(fastCodeBlockView);
         await crepe.create();
         if (!alive) {
           void crepe.destroy();

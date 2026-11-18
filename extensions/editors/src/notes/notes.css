@@ -492,13 +492,54 @@
   cursor: default;
   transition: opacity 120ms ease-out;
 }
-.fx-notes-rich .milkdown .ProseMirror > * {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 48px;
+.fx-notes-rich .milkdown .milkdown-code-block.pocket-code-active {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
 }
-.fx-notes-rich .milkdown .ProseMirror > .milkdown-code-block {
-  contain-intrinsic-size: auto 120px;
+.fx-notes-rich .milkdown .milkdown-code-block.pocket-code-active > .milkdown-code-block {
+  margin: 8px 0;
 }
+.fx-notes-rich .milkdown .milkdown-code-block.pocket-code-idle .pocket-code-pre {
+  margin: 0;
+  padding: 2px 0 4px;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: calc(12.5px * var(--zoom-rich, 1));
+  line-height: 1.65;
+  color: var(--code-text, var(--text));
+  white-space: pre;
+  overflow-x: auto;
+  cursor: text;
+}
+.fx-notes-rich .milkdown .milkdown-code-block.pocket-code-idle .pocket-code-pre code {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  padding: 0;
+}
+.fx-notes-rich .milkdown .milkdown-code-block.pocket-code-idle .tools :is(.language-button, .tools-button-group > button) {
+  border: 0;
+}
+.fx-notes-rich .milkdown .milkdown-code-block.pocket-code-idle:hover .tools .tools-button-group > button {
+  opacity: 1;
+}
+.fx-notes-rich .milkdown .pocket-code-pre .tok-keyword { color: var(--cm-keyword); }
+.fx-notes-rich .milkdown .pocket-code-pre :is(.tok-string, .tok-string2, .tok-literal) { color: var(--cm-string); }
+.fx-notes-rich .milkdown .pocket-code-pre :is(.tok-number, .tok-bool, .tok-atom) { color: var(--cm-number); }
+.fx-notes-rich .milkdown .pocket-code-pre .tok-comment { color: var(--cm-comment); font-style: italic; }
+.fx-notes-rich .milkdown .pocket-code-pre :is(.tok-macroName, .tok-link, .tok-url) { color: var(--cm-function); }
+.fx-notes-rich .milkdown .pocket-code-pre :is(.tok-typeName, .tok-className, .tok-namespace) { color: var(--cm-type); }
+.fx-notes-rich .milkdown .pocket-code-pre :is(.tok-propertyName, .tok-labelName) { color: var(--cm-property); }
+.fx-notes-rich .milkdown .pocket-code-pre :is(.tok-operator, .tok-punctuation) { color: var(--cm-punct); }
+.fx-notes-rich .milkdown .pocket-code-pre .tok-meta { color: var(--cm-meta); }
+.fx-notes-rich .milkdown .pocket-code-pre .tok-heading { color: var(--cm-keyword); font-weight: 700; }
+.fx-notes-rich .milkdown .pocket-code-pre .tok-strong { font-weight: 700; }
+.fx-notes-rich .milkdown .pocket-code-pre .tok-emphasis { font-style: italic; }
+.fx-notes-rich .milkdown .pocket-code-pre :is(.tok-invalid, .tok-deleted) { color: var(--danger); }
+.fx-notes-rich .milkdown .pocket-code-pre .tok-inserted { color: var(--cm-string); }
 .fx-notes-rich .milkdown .milkdown-block-handle .operation-item {
   width: 22px;
   height: 24px;
@@ -1009,6 +1050,25 @@
   font: inherit;
   line-height: inherit;
 }
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap.is-passive {
+  display: inline;
+  padding: 0 3px;
+  color: var(--accent);
+  cursor: text;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap.is-passive::after {
+  display: none;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap.is-passive > .pocket-syntax-text {
+  white-space: pre;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap.is-passive.is-url {
+  display: inline-block;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
 .fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap.is-block-prefix {
   margin-right: 4px;
   background: rgba(var(--accent-rgb), 0.14);
@@ -1029,10 +1089,28 @@
   vertical-align: baseline;
 }
 .fx-notes-rich .milkdown .ProseMirror .milkdown-list-item-block.pocket-active-prefix-li > .list-item > .label-wrapper {
+  width: auto;
+  min-width: 24px;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+.fx-notes-rich .milkdown .ProseMirror .milkdown-list-item-block.pocket-active-prefix-li > .list-item > .label-wrapper > .label {
   display: none;
 }
-.fx-notes-rich .milkdown .ProseMirror .milkdown-list-item-block.pocket-active-prefix-li > .list-item > .children > .content-dom > p:first-of-type ~ * {
-  margin-left: 34px;
+.fx-notes-rich .milkdown .ProseMirror .milkdown-list-item-block.pocket-active-prefix-li > .list-item > .label-wrapper:not(.is-editing)::after {
+  content: var(--pocket-prefix);
+  white-space: pre;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  line-height: 1.35;
+  cursor: text;
+}
+.fx-notes-rich .milkdown .ProseMirror .milkdown-list-item-block.pocket-active-prefix-li > .list-item > .label-wrapper.is-editing > .pocket-syntax-wrap.is-gutter-prefix {
+  margin: 0;
 }
 .fx-notes-rich .milkdown .ProseMirror blockquote:has(> p.pocket-active-prefix-quote) {
   padding-left: 0;
