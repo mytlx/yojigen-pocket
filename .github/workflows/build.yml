@@ -1,4 +1,4 @@
-# 每次推送都测试，打 v* 标签时构建 macOS 和 Windows 的安装包。
+# 每次推送都测试，打 v* 标签时构建 macOS 和 Windows 的安装包，以及官方扩展包（zip）。
 # macOS 必须在 macOS 上打包（签名和 dmg）；Windows 可以在 Ubuntu 上交叉编译，安装包用 NSIS 制作。
 name: Build
 
@@ -29,6 +29,12 @@ jobs:
         run: bunx tsc --noEmit
       - name: Build the frontend
         run: bun --bun vite build
+      - name: Build the extensions
+        run: bun run build:ext
+      - name: Check extension manifests
+        run: bun tools/extension-registry.ts check --id all
+      - name: Run tool tests
+        run: bun test tools/tests
       - name: Vet
         run: go vet ./...
       - name: Test
@@ -39,6 +45,8 @@ jobs:
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
+    env:
+      MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
     strategy:
       fail-fast: false
       matrix:
@@ -55,6 +63,25 @@ jobs:
       - name: Install NSIS
         if: matrix.name == 'Windows'
         run: sudo apt-get update && sudo apt-get install -y nsis zip
+      # 可选：用固定的证书给 macOS 版签名，用户更新后不用重新授权系统权限。
+      # 需要三个仓库密钥：MACOS_SIGN_P12（证书导出的 .p12，base64）、MACOS_SIGN_PASSWORD、MACOS_SIGN_IDENTITY（证书的名字）。
+      # 没配就是 ad-hoc 签名，和以前一样。
+      - name: Import the macOS signing certificate
+        if: matrix.name == 'macOS' && env.MACOS_SIGN_P12 != ''
+        env:
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          keychain="$RUNNER_TEMP/sign.keychain-db"
+          echo "$MACOS_SIGN_P12" | base64 --decode > "$RUNNER_TEMP/sign.p12"
+          security create-keychain -p ci "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p ci "$keychain"
+          security import "$RUNNER_TEMP/sign.p12" -P "$MACOS_SIGN_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k ci "$keychain" >/dev/null
+          security list-keychain -d user -s "$keychain"
+          rm -f "$RUNNER_TEMP/sign.p12"
+          echo "POCKET_SIGN_IDENTITY=$MACOS_SIGN_IDENTITY" >> "$GITHUB_ENV"
       - name: Build
         run: bunx mygo build -platform ${{ matrix.platform }}
       - name: Package portable Windows archives
@@ -68,6 +95,10 @@ jobs:
               zip -j "$dir/${SLUG}-${VERSION}-windows-${arch}-portable.zip" "$exe"
             fi
           done
+      # 扩展包和平台无关，只在一个任务里打，免得发布时出现两份同名文件。
+      - name: Build the extension packages
+        if: matrix.name == 'Windows'
+        run: bun run build:ext
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.name }}
@@ -75,6 +106,7 @@ jobs:
             build/**/*.dmg
             build/**/*-setup-*.exe
             build/**/*-portable.zip
+            build/extensions/*.zip
 
   release:
     name: Release
@@ -83,7 +115,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    concurrency:
+      group: extensions-registry
+      cancel-in-progress: false
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
       - uses: actions/download-artifact@v4
         with:
           pattern: release-*
@@ -100,4 +139,43 @@ jobs:
             gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --clobber
           else
             gh release create "${GITHUB_REF_NAME}" "${files[@]}" --generate-notes
+          fi
+      - name: Sync extension registry (extensions.json)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ext-release
+          if gh release view extensions >/dev/null 2>&1; then
+            gh release download extensions -p extensions.json --dir .ext-release || true
+          fi
+          for id in $(bun tools/extension-registry.ts list); do
+            version=$(bun tools/extension-registry.ts meta --id "$id" --field version)
+            zip_file=$(find release-assets -name "${id}-${version}.zip" | head -n 1)
+            if [ -z "$zip_file" ]; then
+              echo "Warning: ${id}-${version}.zip not found in release-assets"
+              continue
+            fi
+            changelog_file=".ext-release/${id}-changelog.md"
+            bun tools/extension-registry.ts changelog --id "$id" --tag "$GITHUB_REF_NAME" --out "$changelog_file"
+            bun tools/extension-registry.ts update \
+              --registry .ext-release/extensions.json \
+              --id "$id" \
+              --zip "$zip_file" \
+              --tag "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --changelog-file "$changelog_file"
+          done
+          if [ -f .ext-release/extensions.json ]; then
+            if gh release view extensions >/dev/null 2>&1; then
+              gh release upload extensions .ext-release/extensions.json --clobber
+            else
+              gh release create extensions .ext-release/extensions.json \
+                --target "$GITHUB_SHA" \
+                --prerelease \
+                --latest=false \
+                --title "官方扩展在线索引" \
+                --notes "供 Yojigen Pocket 客户端在线读取官方扩展目录、版本号与更新日志（extensions.json）。如需安装扩展，请下载各扩展或主程序 Release 中的 zip 包。"
+            fi
           fi

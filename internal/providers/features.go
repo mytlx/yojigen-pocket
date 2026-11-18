@@ -27,7 +27,6 @@ type FeatureDef struct {
 	// OS 不为空时只在这个系统上出现（windows | darwin）。
 	OS     string
 	target *match.Target
-	kw     []*match.Target
 }
 
 // FeatureCommand 是功能下的一条命令，例如「截图识别并复制」。
@@ -61,6 +60,12 @@ func FeatureDefs() []*FeatureDef {
 			Keywords: []string{"find", "search", "gjss", "wjss", "everything", "本地搜索", "文件搜索", "高级搜索", "搜索"}},
 		{ID: "wintools", Title: "Windows 工具", Icon: "svg:wrench", Category: "效率工具", Desc: "常用的控制面板项和管理工具（.cpl / .msc），按名字或说明搜索", OS: "windows",
 			Keywords: []string{"wt", "wintools", "cpl", "msc", "控制面板", "管理工具", "系统工具"}},
+		{ID: "clicker", Title: "鼠标连点器", Icon: "svg:mouse-click", Category: "效率工具", Desc: "按设定的间隔自动点击：单击、双击、长按，定次数或定时长，间隔可以随机",
+			Keywords: []string{"clicker", "autoclick", "ldq", "liandian", "连点", "连点器", "点击"}},
+		{ID: "macro", Title: "键盘宏", Icon: "svg:keyboard-macro", Category: "效率工具", Desc: "把一串按键存下来一键重放：长按、连击、组合键、输入文字，可以录制",
+			Keywords: []string{"macro", "jph", "jianpanhong", "宏", "键盘宏", "按键"}},
+		{ID: "inputtest", Title: "按键测试", Icon: "svg:gamepad", Category: "效率工具", Desc: "测键盘和鼠标的每个键：按下时图上跟着亮，统计次数，检查连击和冲突",
+			Keywords: []string{"keytest", "mousetest", "ajcs", "anjianceshi", "按键测试", "键盘测试", "鼠标测试"}},
 		{ID: "json", Title: "JSON 工具", Icon: "svg:braces", Category: "开发工具", Desc: "格式化、压缩、校验、转义、排序键",
 			Keywords: []string{"json", "jsonm", "format"}, QuickTool: true,
 			Aliases: map[string]map[string]string{"jsonm": {"action": "minify"}}},
@@ -80,8 +85,6 @@ func FeatureDefs() []*FeatureDef {
 			Keywords: []string{"re", "regex", "regexp", "正则"}},
 		{ID: "jwt", Title: "JWT 解析", Icon: "svg:key-round", Category: "开发工具", Desc: "解出头部和载荷，看过期时间",
 			Keywords: []string{"jwt", "token"}},
-		{ID: "diff", Title: "文本对比", Icon: "svg:diff", Category: "开发工具", Desc: "逐行对比两段文本的差异",
-			Keywords: []string{"diff", "compare", "对比", "比较"}},
 		{ID: "random", Title: "UUID 与密码", Icon: "svg:dices", Category: "开发工具", Desc: "批量生成 UUID、随机密码",
 			Keywords: []string{"uuid", "guid", "password", "pwd", "random", "随机", "密码"}, QuickTool: true,
 			Aliases: map[string]map[string]string{"uuid": {"tab": "uuid"}, "guid": {"tab": "uuid"}, "password": {"tab": "password"}, "pwd": {"tab": "password"}}},
@@ -111,6 +114,14 @@ type Features struct {
 	PayloadCommands []*PayloadCommand
 	// Detach 把功能页直接以独立窗口打开。
 	Detach func(v *core.View) error
+	// Custom 查用户自己定的关键词（设置里可以改）。
+	Custom CustomKeywords
+	kws    keywordSet
+}
+
+// words 返回一个功能页或命令实际生效的关键词。
+func (f *Features) words(id string, defaults []string) []string {
+	return effective(f.Custom, "features:"+id, defaults)
 }
 
 // NewFeatures 创建功能页数据源。
@@ -123,15 +134,9 @@ func NewFeatures(commands []*FeatureCommand, detach func(v *core.View) error) *F
 	}
 	for _, d := range f.Defs {
 		d.target = match.Prepare(d.Title)
-		for _, k := range d.Keywords {
-			d.kw = append(d.kw, match.Prepare(k))
-		}
 	}
 	for _, c := range f.Commands {
 		c.target = match.Prepare(c.Title)
-		for _, k := range c.Keywords {
-			c.kw = append(c.kw, match.Prepare(k))
-		}
 	}
 	return f
 }
@@ -193,7 +198,8 @@ func (f *Features) Search(_ context.Context, req *core.Request) []core.Item {
 	var out []core.Item
 	first := strings.ToLower(req.First)
 	for _, d := range f.Defs {
-		if hit, args := keywordOf(d, first); hit {
+		words := f.words(d.ID, d.Keywords)
+		if hit, args := keywordOf(d, words, first); hit {
 			it := f.item(d, req.Rest, args)
 			switch {
 			case req.Rest == "":
@@ -206,14 +212,14 @@ func (f *Features) Search(_ context.Context, req *core.Request) []core.Item {
 			out = append(out, it)
 			continue
 		}
-		if r := match.Best(req.Query, d.target, d.kw...); r.OK && r.Score > 0 {
+		if r := match.Best(req.Query, d.target, f.kws.targets(words)...); r.OK && r.Score > 0 {
 			it := f.item(d, "", nil)
 			it.Score, it.Highlights = r.Score, r.Positions
 			out = append(out, it)
 		}
 	}
 	for _, c := range f.Commands {
-		if r := match.Best(req.Query, c.target, c.kw...); r.OK && r.Score > 0 {
+		if r := match.Best(req.Query, c.target, f.kws.targets(f.words(c.ID, c.Keywords))...); r.OK && r.Score > 0 {
 			it := f.commandItem(c)
 			it.Score, it.Highlights = r.Score, r.Positions
 			out = append(out, it)
@@ -222,11 +228,11 @@ func (f *Features) Search(_ context.Context, req *core.Request) []core.Item {
 	return out
 }
 
-func keywordOf(d *FeatureDef, first string) (bool, map[string]string) {
+func keywordOf(d *FeatureDef, words []string, first string) (bool, map[string]string) {
 	if first == "" {
 		return false, nil
 	}
-	for _, k := range d.Keywords {
+	for _, k := range words {
 		if strings.EqualFold(k, first) {
 			return true, d.Aliases[strings.ToLower(k)]
 		}
@@ -267,8 +273,14 @@ func (f *Features) CatalogItems() []core.Item {
 	return out
 }
 
-// KeywordsOf 返回功能页或命令的触发词（道具库展示用）。
+// KeywordsOf 返回功能页或命令实际生效的关键词。
 func (f *Features) KeywordsOf(id string) []string {
+	name := strings.TrimPrefix(id, "features:")
+	return f.words(name, f.DefaultKeywordsOf(id))
+}
+
+// DefaultKeywordsOf 返回功能页或命令自带的关键词（用户没改过时用的）。
+func (f *Features) DefaultKeywordsOf(id string) []string {
 	name := strings.TrimPrefix(id, "features:")
 	if d := f.Def(name); d != nil {
 		return d.Keywords

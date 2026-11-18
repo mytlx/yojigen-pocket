@@ -39,6 +39,8 @@ type FindResult struct {
 	Engine    string    `json:"engine"` // everything | spotlight | index
 	Truncated bool      `json:"truncated"`
 	Note      string    `json:"note,omitempty"`
+	// Hint 是“为什么可能搜不全”的提示，界面上单独显示并带一个去处理的按钮。目前只有一种：disk。
+	Hint string `json:"hint,omitempty"`
 }
 
 // FindEngine 报告当前会用哪个引擎搜索，以及给用户看的说明。

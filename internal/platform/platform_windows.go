@@ -4,11 +4,14 @@ package platform
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -19,6 +22,9 @@ import (
 var (
 	user32   = syscall.NewLazyDLL("user32.dll")
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
+	shell32  = syscall.NewLazyDLL("shell32.dll")
+	ole32    = syscall.NewLazyDLL("ole32.dll")
+	comctl32 = syscall.NewLazyDLL("comctl32.dll")
 
 	procSendInput                  = user32.NewProc("SendInput")
 	procGetForegroundWindow        = user32.NewProc("GetForegroundWindow")
@@ -28,9 +34,16 @@ var (
 	procGetClipboardSequenceNumber = user32.NewProc("GetClipboardSequenceNumber")
 	procRegisterClipboardFormatW   = user32.NewProc("RegisterClipboardFormatW")
 	procIsClipboardFormatAvailable = user32.NewProc("IsClipboardFormatAvailable")
+	procGetKeyState                = user32.NewProc("GetKeyState")
 	procOpenProcess                = kernel32.NewProc("OpenProcess")
 	procCloseHandle                = kernel32.NewProc("CloseHandle")
 	procQueryFullProcessImageNameW = kernel32.NewProc("QueryFullProcessImageNameW")
+	procShellExecuteW              = shell32.NewProc("ShellExecuteW")
+	procCoInitializeEx             = ole32.NewProc("CoInitializeEx")
+	procCoUninitialize             = ole32.NewProc("CoUninitialize")
+	procSetWindowSubclass          = comctl32.NewProc("SetWindowSubclass")
+	procRemoveWindowSubclass       = comctl32.NewProc("RemoveWindowSubclass")
+	procDefSubclassProc            = comctl32.NewProc("DefSubclassProc")
 )
 
 const (
@@ -40,8 +53,16 @@ const (
 	vkControl       = 0x11
 	vkV             = 0x56
 
+	wmNCDestroy  = 0x0082
+	wmSysCommand = 0x0112
+	scKeyMenu    = 0xF100
+
 	createNoWindow          = 0x08000000
+	createNewProcessGroup   = 0x00000200
 	processQueryLimitedInfo = 0x1000
+	swShowNormal            = 1
+	coinitApartmentThreaded = 0x2
+	coinitDisableOle1Dde    = 0x4
 )
 
 // keybdInput 对应 Win32 的 KEYBDINPUT。
@@ -192,6 +213,65 @@ func prepareCommand(cmd *exec.Cmd) {
 	cmd.WaitDelay = 2 * time.Second
 }
 
+// prepareDetachedCommand 用来启动编辑器这类要显示出来的程序，所以不能设 HideWindow：
+// 它会把 STARTUPINFO 的显示方式设成 SW_HIDE，记事本、Notepad++ 这些窗口程序会照着它把主窗口藏起来，
+// 看上去就是“点了没反应”。CREATE_NO_WINDOW 只影响控制台程序（code.cmd 这种批处理不会闪黑框），对窗口程序没有影响。
+func prepareDetachedCommand(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: createNoWindow | createNewProcessGroup,
+	}
+}
+
+func utf16PtrOpt(s string) (*uint16, error) {
+	if s == "" {
+		return nil, nil
+	}
+	return syscall.UTF16PtrFromString(s)
+}
+
+// ShellOpen 通过 ShellExecuteW 打开应用、文件或链接，并显式指定工作目录。
+// 避免 lpDirectory 为 NULL 时子进程继承启动器所在目录而造成目录锁定。
+func ShellOpen(verb, target string) error {
+	if target == "" {
+		return fmt.Errorf("打开目标不能为空")
+	}
+	dir := WorkDir(target)
+	vPtr, err := utf16PtrOpt(verb)
+	if err != nil {
+		return err
+	}
+	tPtr, err := syscall.UTF16PtrFromString(target)
+	if err != nil {
+		return err
+	}
+	dPtr, err := utf16PtrOpt(dir)
+	if err != nil {
+		return err
+	}
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if hr, _, _ := procCoInitializeEx.Call(0, coinitApartmentThreaded|coinitDisableOle1Dde); int32(hr) >= 0 {
+		defer procCoUninitialize.Call()
+	}
+
+	r, _, _ := procShellExecuteW.Call(
+		0,
+		uintptr(unsafe.Pointer(vPtr)),
+		uintptr(unsafe.Pointer(tPtr)),
+		0,
+		uintptr(unsafe.Pointer(dPtr)),
+		swShowNormal,
+	)
+	runtime.KeepAlive(vPtr)
+	runtime.KeepAlive(tPtr)
+	runtime.KeepAlive(dPtr)
+	if r <= 32 {
+		return fmt.Errorf("打开 %s 失败（错误码 %d）", target, r)
+	}
+	return nil
+}
+
 func powershell() string {
 	if p := LookFirst("pwsh.exe"); p != "" {
 		return p
@@ -261,12 +341,17 @@ func Interpreter(ext string) []string {
 
 // OpenInEditor 用默认编辑器打开文件。
 func OpenInEditor(path string) error {
+	dir := WorkDir(path)
 	for _, editor := range []string{"code.cmd", "notepad++.exe"} {
 		if p := LookFirst(editor); p != "" {
-			return Command(context.Background(), p, path).Start()
+			cmd := DetachedCommand(p, path)
+			cmd.Dir = dir
+			return cmd.Start()
 		}
 	}
-	return Command(context.Background(), "notepad.exe", path).Start()
+	cmd := DetachedCommand("notepad.exe", path)
+	cmd.Dir = dir
+	return cmd.Start()
 }
 
 // FixPath 在 Windows 上不需要处理。
@@ -297,3 +382,95 @@ func RequestScreenCapture() {}
 
 // CaptureRegion 在 Windows 上由应用层调用系统的截图工具（ms-screenclip），这里不处理。
 func CaptureRegion(context.Context, string) (bool, error) { return false, ErrUnsupported }
+
+type hotkeyHookEntry struct {
+	active        *atomic.Bool
+	onAccel       func(string)
+	suppressUntil atomic.Int64
+}
+
+var (
+	hotkeyHooksMu       sync.Mutex
+	hotkeyHooks         = map[uintptr]*hotkeyHookEntry{}
+	sysMenuSubclassOnce sync.Once
+	sysMenuSubclassProc uintptr
+)
+
+// RegisterHotkeyCapture 在录制快捷键期间拦截窗口的系统菜单触发（SC_KEYMENU），
+// 防止 Alt+Space / 单按 Alt 弹出原生窗口菜单，并在拦截到 Alt+Space 时回调通知前端。
+// 必须在拥有 hwnd 的 UI 线程上调用。
+func RegisterHotkeyCapture(hwnd uintptr, active *atomic.Bool, onAccel func(string)) {
+	if hwnd == 0 || active == nil {
+		return
+	}
+	sysMenuSubclassOnce.Do(func() {
+		sysMenuSubclassProc = syscall.NewCallback(sysMenuSubclassCallback)
+	})
+	hotkeyHooksMu.Lock()
+	_, exists := hotkeyHooks[hwnd]
+	hotkeyHooks[hwnd] = &hotkeyHookEntry{active: active, onAccel: onAccel}
+	hotkeyHooksMu.Unlock()
+	if !exists {
+		procSetWindowSubclass.Call(hwnd, sysMenuSubclassProc, 1, 0)
+	}
+}
+
+func sysMenuSubclassCallback(hwnd, msg, wp, lp, id, _ uintptr) uintptr {
+	switch msg {
+	case wmNCDestroy:
+		hotkeyHooksMu.Lock()
+		delete(hotkeyHooks, hwnd)
+		hotkeyHooksMu.Unlock()
+		procRemoveWindowSubclass.Call(hwnd, sysMenuSubclassProc, id)
+	case wmSysCommand:
+		if wp&0xFFF0 == scKeyMenu {
+			hotkeyHooksMu.Lock()
+			entry := hotkeyHooks[hwnd]
+			hotkeyHooksMu.Unlock()
+			if entry != nil {
+				if entry.active != nil && entry.active.Load() {
+					if lp == ' ' && entry.onAccel != nil {
+						entry.suppressUntil.Store(time.Now().Add(400 * time.Millisecond).UnixMilli())
+						entry.onAccel(altSpaceAccelerator())
+					}
+					return 0
+				}
+				// 录完 Alt+Space 后用户才松开 Alt：吞掉紧随其后的无参 SC_KEYMENU，避免菜单延迟弹出。
+				if lp == 0 && time.Now().UnixMilli() < entry.suppressUntil.Load() {
+					return 0
+				}
+			}
+		}
+	}
+	r, _, _ := procDefSubclassProc.Call(hwnd, msg, wp, lp)
+	return r
+}
+
+func isVKDown(vk uintptr) bool {
+	r, _, _ := procGetKeyState.Call(vk)
+	return int16(r) < 0
+}
+
+func altSpaceAccelerator() string {
+	return formatAltSpaceAccelerator(
+		isVKDown(vkLWin) || isVKDown(vkRWin),
+		isVKDown(vkControl),
+		isVKDown(vkShift),
+	)
+}
+
+func formatAltSpaceAccelerator(winDown, ctrlDown, shiftDown bool) string {
+	var parts []string
+	if winDown {
+		parts = append(parts, "Win")
+	}
+	if ctrlDown {
+		parts = append(parts, "Ctrl")
+	}
+	parts = append(parts, "Alt")
+	if shiftDown {
+		parts = append(parts, "Shift")
+	}
+	parts = append(parts, "Space")
+	return strings.Join(parts, "+")
+}

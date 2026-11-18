@@ -1,0 +1,46 @@
+{
+  "id": "editors",
+  "name": "写作与代码",
+  "version": "1.0.0",
+  "api": 1,
+  "description": "Markdown 笔记、代码草稿、文本对比。三个工具共用一套编辑器",
+  "icon": "svg:notebook",
+  "tools": [
+    {
+      "id": "notes",
+      "title": "Markdown 笔记",
+      "description": "随手记：文件夹和文件管理，阅读或源码编辑",
+      "icon": "svg:notebook",
+      "category": "效率工具",
+      "keywords": ["md", "note", "notes", "markdown", "bj", "biji", "笔记", "记事"],
+      "entry": "index.html",
+      "width": 1040,
+      "height": 580,
+      "matches": [{ "type": "text", "min": 1, "label": "记到一篇新笔记里" }]
+    },
+    {
+      "id": "scratch",
+      "title": "代码草稿",
+      "description": "临时写一段代码：高亮、格式化，装了对应环境的可以直接运行",
+      "icon": "svg:code",
+      "category": "开发工具",
+      "keywords": ["scratch", "code", "run", "cg", "caogao", "草稿", "代码", "运行"],
+      "entry": "index.html",
+      "width": 1040,
+      "height": 580
+    },
+    {
+      "id": "diff",
+      "title": "文本对比",
+      "description": "两边直接编辑、实时高亮差异，按语言高亮和格式化",
+      "icon": "svg:diff",
+      "category": "开发工具",
+      "keywords": ["diff", "compare", "对比", "比较"],
+      "entry": "index.html",
+      "width": 1040,
+      "height": 560,
+      "matches": [{ "type": "text", "min": 1, "label": "放到对比的左边" }]
+    }
+  ],
+  "permissions": { "dirs": ["notes", "scratches"], "runner": true, "files": true }
+}

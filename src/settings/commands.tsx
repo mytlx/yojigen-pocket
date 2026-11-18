@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Settings, events, type CommandInfo, type CommandTarget, type PluginInfo } from "../mygo";
+import { applyHotkeyInputMode, hotkeyInputOptions, normalizeHotkeyInputMode, supportsHotkeyInput } from "../shared/hotkey";
 import { Icon } from "../shared/icons";
 import type { SectionProps } from "./app";
 import { Button, Hotkey, Row, Section, Text, Toggle } from "./ui";
@@ -91,6 +92,28 @@ export function Commands({ info, config, update, arg, view }: SectionProps) {
       else delete c.hotkeys[id];
     });
 
+  const renderHotkeyInputSelect = (id: string) => (
+    <label class="st-inline st-detach-toggle" title="按直达热键时自动带入的内容">
+      带入
+      <select
+        class="st-select"
+        aria-label="按快捷键时带入的内容"
+        value={normalizeHotkeyInputMode(config.hotkeyInput?.[id])}
+        onChange={(e) => {
+          const mode = (e.target as HTMLSelectElement).value;
+          update((c) => {
+            c.hotkeyInput ??= {};
+            applyHotkeyInputMode(c.hotkeyInput, id, mode);
+          });
+        }}
+      >
+        {hotkeyInputOptions.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+
   return (
     <>
       <Section
@@ -127,6 +150,7 @@ export function Commands({ info, config, update, arg, view }: SectionProps) {
               <div class="st-row-desc">{c.desc || c.path}</div>
               {c.problems?.map((p) => <div class="st-row-error" key={p}>{p}</div>)}
             </div>
+            {(config.hotkeys[c.id] || c.hotkey) && renderHotkeyInputSelect(c.id)}
             <Hotkey
               value={config.hotkeys[c.id] ?? c.hotkey ?? ""}
               platform={info.platform}
@@ -208,6 +232,7 @@ export function Commands({ info, config, update, arg, view }: SectionProps) {
                 })} />
               </label>
             )}
+            {supportsHotkeyInput(t.id) && renderHotkeyInputSelect(t.id)}
             <Hotkey value={config.hotkeys[t.id] ?? ""} platform={info.platform} clearable onChange={(v) => setHotkey(t.id, v)} />
           </div>
         ))}

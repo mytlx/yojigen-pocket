@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -24,8 +25,8 @@ import (
 
 // --- 本地媒体服务 ---
 //
-// 视频、音频和 PDF 要能拖动进度、按范围读取，自定义协议做不到，所以在本机回环地址上开一个只读的小服务。
-// 地址里带一个随机口令，只有本应用的页面知道；并且只放行能预览的文件类型和缓存目录里的文件。
+// 视频、音频和 PDF 要能拖动进度、按范围读取，自定义协议做不到，
+// 所以在本机回环地址上开一个只读的小服务，地址带随机口令防止其他网页访问。
 
 type mediaServer struct {
 	base  string
@@ -36,11 +37,16 @@ type mediaServer struct {
 func (a *App) startMedia() {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return // 没有它只是不能预览音视频，不影响别的
+		log.Printf("[ERROR] 启动本机回环服务失败：%v", err)
+		return
 	}
 	raw := make([]byte, 16)
 	_, _ = rand.Read(raw)
-	m := &mediaServer{base: "http://" + ln.Addr().String(), token: hex.EncodeToString(raw), cache: a.paths.Cache}
+	m := &mediaServer{
+		base:  "http://" + ln.Addr().String(),
+		token: hex.EncodeToString(raw),
+		cache: a.paths.Cache,
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/"+m.token+"/file", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -104,6 +110,9 @@ type FinderKind struct {
 }
 
 // Info 返回类型筛选、当前引擎和界面偏好。
+// OpenFullDisk 打开系统设置里的“完全磁盘访问权限”。
+func (f *Finder) OpenFullDisk() { platform.OpenFullDiskAccessSettings() }
+
 func (f *Finder) Info() FinderInfo {
 	cfg := f.a.config.Get()
 	out := FinderInfo{Preview: cfg.Files.FindPreview, Meta: cfg.Files.FindMeta, Scope: cfg.Files.FindScope, Scopes: isDarwin}
@@ -137,6 +146,10 @@ func (f *Finder) Search(ctx context.Context, req providers.FindRequest) provider
 	res := f.a.files.Find(ctx, req)
 	for i := range res.Items {
 		res.Items[i].Icon = f.a.engine.NormalizeIcon(res.Items[i].Icon)
+	}
+	// macOS：没有“完全磁盘访问”时，系统会把其他应用数据目录里的结果去掉（聚焦自己搜得到，这里搜不到）。
+	if res.Engine == "spotlight" && !platform.FullDiskAccess() {
+		res.Hint = "disk"
 	}
 	return res
 }

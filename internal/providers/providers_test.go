@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"slices"
 	"yojigen-pocket/internal/core"
 	"yojigen-pocket/internal/match"
 	"yojigen-pocket/internal/store"
@@ -540,5 +541,51 @@ func TestShellInGlobalSearch(t *testing.T) {
 	scoped := Shell{}.Search(context.Background(), &core.Request{Text: "随便什么", First: "随便什么", Scoped: true})
 	if len(scoped) != 1 || scoped[0].Score != 1 {
 		t.Fatalf("前缀模式下应该照旧：%+v", scoped)
+	}
+}
+
+// 关键词可以由用户改：改了之后新词生效，原来的词不再是“完全命中”。
+func TestFeaturesCustomKeywords(t *testing.T) {
+	f := NewFeatures(nil, func(*core.View) error { return nil })
+	custom := map[string][]string{"features:json": {"jj", "格式化"}, "features:regex": {}}
+	f.Custom = func(id string) ([]string, bool) { w, ok := custom[id]; return w, ok }
+
+	exact := func(q string) string {
+		for _, it := range f.Search(context.Background(), req(q)) {
+			if it.Exact {
+				return it.Actions[0].View.Feature
+			}
+		}
+		return ""
+	}
+	if got := exact("jj"); got != "json" {
+		t.Errorf("自定义的关键词 jj 应该打开 JSON 工具，得到 %q", got)
+	}
+	if got := exact("格式化"); got != "json" {
+		t.Errorf("可以配多个关键词，得到 %q", got)
+	}
+	if got := exact("json"); got == "json" {
+		t.Errorf("改掉之后，原来的关键词 json 不应再是完全命中")
+	}
+	if got := exact("regex"); got != "" {
+		t.Errorf("关键词清空之后不应再有完全命中，得到 %q", got)
+	}
+	if got := f.KeywordsOf("features:json"); !slices.Equal(got, []string{"jj", "格式化"}) {
+		t.Errorf("KeywordsOf 应返回生效的关键词：%v", got)
+	}
+	if got := f.DefaultKeywordsOf("features:json"); !slices.Contains(got, "json") {
+		t.Errorf("DefaultKeywordsOf 应返回自带的：%v", got)
+	}
+	// 没改过的照旧。
+	if got := exact("md5"); got != "hash" {
+		t.Errorf("没改过的关键词照旧，得到 %q", got)
+	}
+	// 清空关键词之后仍然能按名字找到。
+	found := false
+	for _, it := range f.Search(context.Background(), req("正则")) {
+		found = found || it.ID == "features:regex"
+	}
+	if !found {
+		t.Errorf("没有关键词的功能仍然应该能按名字搜到")
 	}
 }

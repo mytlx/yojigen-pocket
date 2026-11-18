@@ -3,6 +3,7 @@ import { Launcher, type View } from "../mygo";
 import { renderMarkdown } from "../shared/markdown";
 import { features } from "../features/registry";
 import type { FeatureCtx } from "../features/types";
+import { PluginFrame, type PluginHostHooks } from "../shared/pluginframe";
 
 export type ActiveView = View & { streaming?: boolean };
 
@@ -22,7 +23,7 @@ export function ViewPane({ view, onSubmit, onClose, onToast, featureCtx }: {
     case "form":
       return <FormView view={view} onSubmit={onSubmit} />;
     case "panel":
-      return <PanelView view={view} onClose={onClose} />;
+      return <PanelView view={view} onClose={onClose} hooks={{ toast: onToast, detach: featureCtx.detach, remember: featureCtx.remember }} detachKey={featureCtx.detachKey} />;
   }
   return null;
 }
@@ -140,8 +141,6 @@ function FormView({ view, onSubmit }: { view: ActiveView; onSubmit: (args: Recor
   );
 }
 
-const escapeBridge = `<script>addEventListener("keydown",e=>{if(e.key==="Escape"){e.preventDefault();parent.postMessage({__pocket:true,method:"back"},"*")}})</script>`;
-
 /** 内置功能页。在主窗口里给一个固定高度，里面的内容自己排版。 */
 export function FeatureHost({ view, ctx, fill }: { view: ActiveView; ctx: FeatureCtx; fill?: boolean }) {
   const f = features[view.feature ?? ""];
@@ -154,50 +153,23 @@ export function FeatureHost({ view, ctx, fill }: { view: ActiveView; ctx: Featur
   );
 }
 
-/** 网页面板：插件和 panel 模式的脚本。运行在 iframe 里，和主页面隔离。 */
-export function PanelView({ view, onClose, fill }: { view: ActiveView; onClose: () => void; fill?: boolean }) {
-  const frame = useRef<HTMLIFrameElement>(null);
-
-  // 同步注册（useLayoutEffect）：useEffect 可能排在 iframe 发出第一条消息之后，那条消息就丢了。
-  useLayoutEffect(() => {
-    const onMessage = (e: MessageEvent) => {
-      if (e.source !== frame.current?.contentWindow || !e.data?.__pocket) return;
-      const { id, method, args } = e.data as { id: number; method: string; args: unknown[] };
-      if (method === "back") {
-        onClose();
-        return;
-      }
-      const reply = (payload: object) => (e.source as Window).postMessage({ __pocketReply: true, id, ...payload }, "*");
-      if (!view.plugin) {
-        reply({ error: "这个页面不能调用 pocket 接口" });
-        return;
-      }
-      Launcher.pluginCall(view.plugin, method, args).then(
-        (result) => reply({ result }),
-        (err: Error) => reply({ error: err.message }),
-      );
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [onClose, view.plugin]);
-
-  useEffect(() => {
-    const el = frame.current;
-    const focus = () => el?.contentWindow?.focus();
-    el?.addEventListener("load", focus);
-    return () => el?.removeEventListener("load", focus);
-  }, []);
-
+/** 网页面板：扩展和 panel 模式的脚本。运行在 iframe 里，和主页面隔离。 */
+export function PanelView({ view, onClose, fill, hooks, detached, detachKey }: { view: ActiveView; onClose: () => void; fill?: boolean; hooks?: PluginHostHooks; detached?: boolean; detachKey?: string }) {
   const height = view.height && view.height > 0 ? view.height : 460;
   return (
-    <iframe
-      ref={frame}
-      class="pk-frame"
-      style={fill ? { height: "100%" } : { height: `${height}px` }}
-      src={view.html ? undefined : view.url}
-      srcDoc={view.html ? escapeBridge + view.html : undefined}
-      sandbox={view.plugin ? "allow-scripts allow-forms allow-same-origin allow-modals" : "allow-scripts allow-forms"}
+    <PluginFrame
+      plugin={view.plugin}
+      tool={view.args?.tool}
+      url={view.url}
+      html={view.html}
       title={view.title}
+      input={view.input}
+      args={view.args}
+      detached={detached}
+      detachKey={detachKey}
+      onClose={onClose}
+      style={fill ? { height: "100%" } : { height: `${height}px` }}
+      {...hooks}
     />
   );
 }

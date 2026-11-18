@@ -1,0 +1,129 @@
+/* 代码编辑器的配色。浅色和深色各一套，跟着应用的主题走。 */
+:root {
+  --cm-keyword: #a626a4;
+  --cm-string: #2f7d32;
+  --cm-number: #1c5fd1;
+  --cm-comment: #8a8f98;
+  --cm-function: #0b6fd0;
+  --cm-type: #b3600a;
+  --cm-property: #0f7c8a;
+  --cm-tag: #c23b3b;
+  --cm-punct: #5c6370;
+  --cm-meta: #7a5ccf;
+  --diff-add: rgba(46, 160, 67, 0.16);
+  --diff-add-strong: rgba(46, 160, 67, 0.36);
+  --diff-del: rgba(229, 83, 75, 0.14);
+  --diff-del-strong: rgba(229, 83, 75, 0.34);
+}
+:root[data-theme="dark"] {
+  --cm-keyword: #d79bf0;
+  --cm-string: #9ad28b;
+  --cm-number: #8ab4ff;
+  --cm-comment: #7d8590;
+  --cm-function: #79b8ff;
+  --cm-type: #f0b674;
+  --cm-property: #6fd3dd;
+  --cm-tag: #ff8f8f;
+  --cm-punct: #a4abb6;
+  --cm-meta: #b9a3ff;
+  --diff-add: rgba(46, 160, 67, 0.22);
+  --diff-add-strong: rgba(46, 160, 67, 0.48);
+  --diff-del: rgba(248, 81, 73, 0.2);
+  --diff-del-strong: rgba(248, 81, 73, 0.46);
+}
+.code-editor {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.code-editor .cm-editor {
+  height: 100%;
+}
+
+/* 语言选择：可以搜的下拉 */
+.lang-pick {
+  position: relative;
+}
+.lang-pick-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--card);
+  box-shadow: inset 0 0 0 0.5px var(--line);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: transform var(--dur) var(--spring), background var(--dur-fast);
+}
+.lang-pick-btn:active {
+  transform: scale(0.96);
+}
+.lang-pick-pop {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 5px);
+  left: 0;
+  width: 220px;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--card-solid);
+  box-shadow: var(--float-shadow), inset 0 0 0 0.5px var(--line-strong);
+  animation: q-pop-in 160ms var(--spring);
+}
+.lang-pick-pop input {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  outline: 0;
+  background: var(--well);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}
+.lang-pick-list {
+  max-height: 260px;
+  margin-top: 5px;
+  overflow: auto;
+}
+.lang-pick-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.lang-pick-item.is-active {
+  background: var(--sel);
+}
+.lang-pick-item.is-current {
+  font-weight: 600;
+  color: var(--accent);
+}
+.lang-pick-item small {
+  color: var(--text-3);
+  font-size: 11px;
+}
+.lang-pick-empty {
+  padding: 10px 8px;
+  color: var(--text-3);
+  font-size: 12px;
+}

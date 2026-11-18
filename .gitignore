@@ -6,3 +6,4 @@ mygo_windows_*.syso
 /yojigen-pocket
 .DS_Store
 *.log
+.idea/

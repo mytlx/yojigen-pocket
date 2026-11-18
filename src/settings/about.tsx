@@ -8,8 +8,18 @@ export function About({ info, update }: SectionProps) {
   const [doctor, setDoctor] = useState<DoctorItem[]>([]);
   const [confirmReset, setConfirmReset] = useState(false);
   const [cleared, setCleared] = useState(false);
+  const [problem, setProblem] = useState("");
   const check = () => void Settings.doctor().then(setDoctor);
   useEffect(check, []);
+  // 从系统设置切回来时重新检查一遍，授权的结果马上能看到。
+  useEffect(() => {
+    window.addEventListener("focus", check);
+    return () => window.removeEventListener("focus", check);
+  }, []);
+  const reset = (kind: string) => {
+    setProblem("");
+    void Settings.resetPermission(kind).then(check, (e: Error) => setProblem(e.message));
+  };
 
   return (
     <>
@@ -20,7 +30,7 @@ export function About({ info, update }: SectionProps) {
         </Row>
       </Section>
 
-      <Section title="环境检查" description="脚本需要的解释器和系统权限。" actions={<Button onClick={check}>重新检查</Button>}>
+      <Section title="环境检查" description={problem || "脚本需要的解释器和系统权限。"} actions={<Button onClick={check}>重新检查</Button>}>
         {doctor.map((d) => (
           <div class="st-doctor" key={d.title}>
             {d.ok ? <CheckCircle2 size={17} class="st-ok" /> : <AlertCircle size={17} class="st-warn" />}
@@ -28,8 +38,25 @@ export function About({ info, update }: SectionProps) {
               <div class="st-row-label">{d.title}</div>
               <div class="st-row-desc">{d.detail}</div>
             </div>
-            {d.action === "accessibility" && <Button onClick={() => void Settings.openAccessibility()}>去授权</Button>}
-            {d.action === "screen" && <Button onClick={() => void Settings.openScreenCapture()}>去授权</Button>}
+            {d.action === "accessibility" && (
+              <span class="st-inline">
+                <Button onClick={() => void Settings.openAccessibility()}>去授权</Button>
+                <Button title="清掉系统里旧的授权记录，然后重新授权" onClick={() => reset("accessibility")}>重置</Button>
+              </span>
+            )}
+            {d.action === "screen" && (
+              <span class="st-inline">
+                <Button onClick={() => void Settings.openScreenCapture()}>去授权</Button>
+                <Button title="清掉系统里旧的授权记录，然后重新授权" onClick={() => reset("screen")}>重置</Button>
+                <Button onClick={() => void Settings.relaunch()}>重启应用</Button>
+              </span>
+            )}
+            {d.action === "disk" && (
+              <span class="st-inline">
+                <Button onClick={() => void Settings.openFullDisk()}>去授权</Button>
+                <Button onClick={() => void Settings.relaunch()}>重启应用</Button>
+              </span>
+            )}
           </div>
         ))}
       </Section>

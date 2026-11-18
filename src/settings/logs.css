@@ -1,0 +1,22 @@
+.st-log-content { display:flex; flex-direction:column; }
+.st-log-content > :not(.log-console), .log-console > :not(.log-list) { flex:none; }
+.log-actions, .log-confirm { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.log-confirm { padding:10px 16px; border-bottom:1px solid var(--line); }
+.log-confirm span { flex:1 1 200px; }
+.log-console { flex:1 0 155px; display:flex; flex-direction:column; border:1px solid var(--line); border-radius:var(--radius-card); overflow:hidden; background:var(--card); }
+.log-tools,.log-footer { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 16px; flex-wrap:wrap; }
+.log-tools { border-bottom:1px solid var(--line); }
+.log-tools button svg { vertical-align:middle; }
+.log-list { flex:1; min-height:60px; overflow:auto; overscroll-behavior:contain; background:var(--well); scrollbar-gutter:stable; }
+.log-line { display:grid; grid-template-columns:8ch auto minmax(0,1fr); align-items:baseline; gap:12px; padding:7px 14px; border-bottom:1px solid var(--line); font:12px/1.55 var(--font-mono); }
+.log-line time,.log-footer { color:var(--text-2); font-variant-numeric:tabular-nums; }
+.log-level { font:11px var(--font-ui); color:var(--text-2); }
+.log-line.is-error { background:rgba(220,80,64,.07); }
+.log-line.is-error .log-level { color:var(--danger,#c74736); font-weight:600; }
+.log-message { white-space:pre-wrap; overflow-wrap:anywhere; }
+.log-empty { display:grid; place-content:center; justify-items:center; gap:12px; height:100%; color:var(--text-2); }
+.log-empty svg { color:var(--text-3); }
+.log-footer { justify-content:flex-start; border-top:1px solid var(--line); font-size:12px; }
+.log-footer span:first-child::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--text-3); margin-right:6px; }
+.log-footer .log-live:first-child::before { background:#33996f; }
+.log-footer button { display:inline-flex; gap:5px; align-items:center; margin-left:auto; color:var(--accent); border:0; background:transparent; cursor:pointer; }

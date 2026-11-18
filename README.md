@@ -1,301 +1,171 @@
+<div align="center">
+
+<img src="docs/images/icon.png" width="112" alt="Yojigen Pocket">
+
 # Yojigen Pocket
 
-一个类似 uTools 的桌面启动器：按一个快捷键，敲几个字母，打开应用、找文件、算数、翻剪贴板、跑你自己的脚本。支持 macOS 和 Windows。
+**四次元口袋：一个键唤出，要用的东西都在里面。**
 
-后端用 Go，界面是网页（系统自带的 WebView），基于 [mygo](https://github.com/egoist/mygo) 构建。Windows 版程序约 23 MB（安装包约 6 MB），macOS 通用版约 46 MB（dmg 约 11 MB）。不需要账号；除了你自己配置的翻译、识别接口，不会联网；所有配置都是普通文件。
+一个开源的桌面启动器和工具箱，macOS 和 Windows 都能用。<br>
+Go 写的，没有 Electron：Windows 安装包不到 10 MB，macOS 的通用安装包 17 MB。
 
-## 用起来
+[![Release](https://img.shields.io/github/v/release/mytlx/yojigen-pocket?color=2a8bef)](https://github.com/mytlx/yojigen-pocket/releases)
+[![Build](https://github.com/mytlx/yojigen-pocket/actions/workflows/build.yml/badge.svg)](https://github.com/mytlx/yojigen-pocket/actions/workflows/build.yml)
+[![License](https://img.shields.io/github/license/mytlx/yojigen-pocket)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
 
-默认按 `Alt+Space`（macOS 上是 `⌥ Space`）唤出。被其他程序占用时会自动改用 `Alt+Shift+Space`，可以在设置里换。
+[下载](#下载) · [功能](#里面有什么) · [使用手册](docs/guide.md) · [自己扩展](#自己扩展) · [参与开发](#参与开发)
 
-| 输入 | 做什么 |
+<img src="docs/images/home.png" width="720" alt="主窗口">
+
+</div>
+
+## 为什么做这个
+
+uTools 很好用，但有些东西我想自己说了算：数据放在哪、界面长什么样、缺的工具能不能自己加。
+所以有了这个项目。它做的事情和 uTools、Raycast、Alfred 是一类：按 `Alt + Space` 唤出一个搜索框，
+找应用、找文件、算个数、翻一下剪贴板，或者打开一个小工具把手头的事做完。
+
+几个一开始就定下的原则：
+
+- **数据都在本地。** 配置、剪贴板历史、笔记都是用户目录下的普通文件，可以自己备份和同步。API 密钥存在系统钥匙串里，不进配置文件。
+- **不用就不占资源。** 核心只有启动器和一批小工具。笔记、代码编辑器、桌面宠物这些大块头是[扩展包](docs/extensions.md)，装了才有，停用之后连进程和窗口都不留。
+- **能改。** 脚本、扩展、主题样式都是往文件夹里放文件，改完立刻生效，不用重启。每个功能的关键词、每个模块的前缀也都能换成自己顺手的。
+
+## 里面有什么
+
+**找东西**
+
+- 应用：支持拼音全拼和首字母，`wx`、`weixin`、`微信` 都能找到微信；会记住你常开的
+- 文件：macOS 用聚焦，Windows 用 Everything；带类型筛选、预览和属性的「高级搜索」
+- 剪贴板历史：文字、图片、文件，可以固定和搜索
+- 网页搜索、系统操作（锁屏、睡眠、清空回收站……）、Windows 的控制面板项和管理工具
+
+**随手处理**
+
+- 计算器：单位和进制换算、多行计算、变量、历史
+- 翻译：Claude、兼容 OpenAI 的接口、有道、百度；带发音（单词用词典发音，句子用 Edge 语音）
+- 截图识别文字：系统自带的离线识别，或大模型识别
+- 摸鱼阅读：txt / epub，有个不起眼的小窗模式
+
+**开发常用**
+
+- JSON、编码转换、哈希、时间戳、正则、JWT、UUID、颜色、URL 解析、文本处理
+
+**其他**
+
+- 鼠标连点器、键盘宏、键盘和鼠标按键测试
+
+**扩展包**（单独下载，在“道具库 → 扩展管理”里安装）
+
+- 写作与代码：Markdown 笔记（所见即所得，也能切到源码）、代码草稿（27 种语言高亮和格式化，装了环境的直接运行）、文本对比（两边直接改，差异实时标出来）
+- 桌面宠物：一只可以养的 3D 小狸猫
+- 口袋直传：IPv6 点对点文件传输，数字配对、加密传输、进度与本地记录（[使用说明](docs/peer.md)）
+
+所有功能页都可以拆成独立窗口，也都可以绑一个全局快捷键。完整的清单和用法在[使用手册](docs/guide.md)里。
+
+<table>
+  <tr>
+    <td><img src="docs/images/feature-notes.png" alt="Markdown 笔记"></td>
+    <td><img src="docs/images/feature-scratch.png" alt="代码草稿"></td>
+  </tr>
+  <tr>
+    <td align="center">Markdown 笔记</td>
+    <td align="center">代码草稿：写完直接运行</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/feature-diff.png" alt="文本对比"></td>
+    <td><img src="docs/images/feature-keytest.png" alt="按键测试"></td>
+  </tr>
+  <tr>
+    <td align="center">文本对比</td>
+    <td align="center">按键测试</td>
+  </tr>
+</table>
+
+## 下载
+
+到 [Releases](https://github.com/mytlx/yojigen-pocket/releases) 下载最新版本：
+
+| 系统 | 文件 |
 | --- | --- |
-| `wx`、`weixin`、`微信` | 打开应用，支持拼音全拼、首字母和中英混合 |
-| `1+2*3`、`10 km to mi`、`255 to hex` | 计算、单位和进制换算，回车复制结果 |
-| `cb` 加空格 | 搜索剪贴板历史，回车粘贴到当前窗口 |
-| `sn` 加空格 | 文本片段 |
-| `f` 加空格 | 搜索文件（macOS 用 Spotlight，Windows 用 Everything） |
-| `/`、`~`、`C:\` 开头 | 逐级浏览文件夹，`Tab` 进入下一级 |
-| `> ls -la` | 运行一行命令，输出显示在窗口里 |
-| `g 关键词`、`gh 关键词` | 网页搜索，条目可以自己加 |
-| `b64 文字`、`json {...}`、`md5`、`uuid`、`ts` | 开发小工具；不写内容时用剪贴板 |
-| 锁屏、睡眠、清空回收站…… | 系统操作，危险的会二次确认 |
+| macOS 13 及以上（Intel 和 Apple 芯片通用） | `yojigen-pocket-x.y.z.dmg` |
+| Windows 10 / 11（x64） | `yojigen-pocket-setup-x.y.z-amd64.exe`，或免安装的 `…-windows-amd64-portable.zip` |
+| Windows 11（ARM） | `yojigen-pocket-setup-x.y.z-arm64.exe` |
+| 扩展包（两个系统通用，按需下载） | `editors-x.y.z.zip`（笔记、代码草稿、文本对比）、`pet-x.y.z.zip`（桌面宠物）、`peer-x.y.z.zip`（口袋直传） |
 
-常用的项目会按你的使用习惯排到前面，并出现在首页。名字同样对得上时，应用排在命令和功能前面。macOS 上应用的中文名和英文名都搜得到（`时钟`、`shizhong`、`clock` 都能找到时钟），显示哪个跟系统语言走。
+> **macOS 提示“无法打开”或“已损坏”？** 安装包没有苹果的开发者签名。把应用拖进“应用程序”后，在终端里运行一次：
+>
+> ```bash
+> xattr -dr com.apple.quarantine "/Applications/Yojigen Pocket.app"
+> ```
 
-## 带入内容：文字块、图片块
+Windows 上界面用的是系统自带的 WebView2，Windows 11 和更新过的 Windows 10 都已经有了。
 
-选中的文字、刚复制的内容、粘贴进来的东西，会变成搜索框里的一个**块**，和你输入的文字分开：
+## 上手
 
-- **直接看结果**：短文字照常当搜索词用。复制了一个文件名再唤出，能看到这个文件、同名的应用，以及翻译、文本处理等能处理它的功能，网页搜索在最后。
-- **块后面输入功能名**：输入的是「用哪个功能处理它」，例如输入 `文本处理`（或拼音首字母 `wbcl`）回车，文字自动带进文本处理；输入 `md5` 直接算出结果；输入 `gh` 用它搜 GitHub；输入脚本的关键词，把它作为参数运行脚本。
-- **退格键**：输入框空着时按退格，文字块变回普通文字，可以接着编辑；图片和文件的块被移除。点一下块也一样。
-- **图片**：在搜索框里粘贴图片（或带入刚截到剪贴板的图），可以识别文字、识别并复制、识别并翻译、保存到文件、复制、用默认应用打开、以图搜图。以图搜图是把图片复制好并打开 Google 智能镜头 / 百度识图 / 必应的页面，在页面里粘贴一下即可（没有自动上传图片）。
-- **文件**：粘贴文件可以打开、在文件夹中显示、复制路径、算哈希；是图片文件时还有上面的图片操作。
+装好之后按 `Alt + Space`（macOS 是 `⌥ Space`）。被别的程序占了的话会自动换成 `Alt + Shift + Space`，可以在设置里改。
 
-内容从哪里来（都在「设置 → 通用 → 带入内容」里开关）：
-
-| 来源 | 说明 |
+| 输入 | 得到 |
 | --- | --- |
-| 选中的文字 | 唤出主窗口、或按某个功能的快捷键时读取。例如选中一段话按翻译的快捷键，直接开始翻译；脚本用 `{selection}` 或 `POCKET_SELECTION` 拿到。macOS 先通过辅助功能读（只读，不碰剪贴板）；读不到的应用（部分 Electron 应用、浏览器）再模拟一次 `⌘C`，读完把剪贴板恢复原样，这次复制也不进剪贴板历史。Windows 只有模拟 `Ctrl+C` 这一种方式。可以选「只读取」或关闭 |
-| 刚复制的内容 | 唤出时把最近 N 秒内复制的文字、图片或文件带进来，每次复制只带一次。默认关闭 |
-| 粘贴 | 输入框空着时粘贴，变成块；已经在打字时，文字照常粘贴进去 |
+| `wx` | 打开微信 |
+| `1+2*3`、`10 km to mi` | 算出结果，回车复制 |
+| `f 报告` | 搜文件 |
+| `cb ` | 翻剪贴板历史 |
+| `fy hello` | 翻译 |
+| `md5 hello` | 回车直接复制结果；`Ctrl + 回车` 打开哈希工具 |
+| `md`、`scratch`、`diff` | 笔记、代码草稿、文本对比（装了“写作与代码”扩展包之后） |
+| `> ls -la` | 运行一条命令 |
 
-模拟复制有一个已知的副作用：有些编辑器（如 VS Code）在没有选中内容时按复制会复制整行，这一行就会被带进来。介意的话选「只读取」。
+选中一段文字再唤出，文字会变成搜索框里的一个块，接着输入 `翻译`、`md5` 就是在处理它。
+`⌘K` / `Ctrl + K` 看当前这一项还能做什么，`⌘D` / `Ctrl + D` 把功能页拆成独立窗口。
 
-## 移动窗口
+## 自己扩展
 
-按住搜索框的空白处、标题栏（图标和标题一带）或底栏拖动，可以把主窗口放到任何地方；功能页里同样可以。位置会被记住，下次唤出还在那里（「设置 → 通用 → 窗口位置」可以改成每次居中，或复位）。独立窗口拖标题栏移动，位置各自记住。
+- **脚本命令**：往 `commands` 文件夹里放一个脚本（Shell、Python、PowerShell、JS……），开头写几行注释声明标题和关键词，它就是一条命令。输出可以是通知、列表、文本或 Markdown。
+- **扩展**：一个文件夹加一个 `plugin.json`，页面跑在隔离的 iframe 里，通过 `window.pocket` 调用宿主的能力（文件、网络请求、运行代码、悬浮窗……），还可以带一个按需启动的本地程序。一个扩展能带多个工具，打成 zip 就能分享。见[扩展文档](docs/extensions.md)。
+- **外观**：`ui/theme.css` 改颜色和圆角，`ui/user.css`、`ui/user.js` 想怎么改怎么改。
 
-## 功能页与独立窗口
+写法和接口见[使用手册的“自定义”一节](docs/guide.md#自定义)。
 
-像 uTools 的插件一样，翻译、截图识别、摸鱼阅读和开发工具都有自己的页面：输入关键词回车打开，页面在主窗口里显示，`Esc` 返回搜索。
+## 参与开发
 
-- **分离成独立窗口**：在功能页里按 `⌘D` / `Ctrl+D`（可以在「设置 → 通用」里改），或点右上角的分离按钮。独立窗口会出现在任务栏和程序坞里，可以置顶。
-- **在窗口之间切换**：独立窗口标题栏的「窗口」菜单列出所有窗口和主窗口；主窗口里搜索窗口标题，或输入「窗口」，也能切过去。托盘菜单里同样有。
-- **直达快捷键**：任何功能都能绑一个全局快捷键（道具库或「设置 → 指令与插件」），可以选择按下时直接以独立窗口打开。
-- **关键词加内容**：开发工具保留了快捷用法，例如输入 `md5 hello`，回车直接复制结果；`⌘↵` / `Ctrl+↵` 带着内容打开 MD5 面板。只输入 `md5` 回车，则打开面板。
-- **内置模块也一样**：计算器、剪贴板历史、文件搜索都有自己的页面，可以分离、可以绑快捷键；命令行、网页搜索这类没有页面的模块，快捷键是带着前缀打开搜索框。
-- **右键菜单**：在结果或首页图标上点右键，菜单在鼠标处弹出，针对的就是点的那一项；鼠标划过别的项不会变，点菜单外面只是关闭。
-
-| 功能 | 关键词 | 说明 |
-| --- | --- | --- |
-| 计算器 | `calc`、`jsq`、`计算器` | 在搜索框里输入算式，回车复制结果，`⌘↵` / `Ctrl+↵` 带着算式打开计算器页。页面里每行一个算式，可以用变量（`x = 3`）、`ans`（上一行）、`sum`（合计）、`#` 注释、单位和进制换算；历史一直保留，可以单条删除或清空 |
-| 剪贴板历史 | `cb`、`clip`、`剪贴板` | 左边列表、右边预览，按文字 / 图片 / 文件筛选，固定、删除；回车粘贴到之前的窗口。`cb 关键词` 或按 `Tab` 仍可在搜索框里直接搜 |
-| 高级搜索 | `find`、`文件搜索` | 左边按类型筛选，中间是文件，右边是预览区和属性区（各有开关）。详见下面的「文件搜索和预览」 |
-| Windows 工具 | `wt`、`cpl`、`msc` | 仅 Windows。约 80 个常用的控制面板项、管理单元和系统程序（`services.msc`、`sysdm.cpl`、`compmgmt.msc`、环境变量……），按原名、中文名、说明或拼音搜索；在搜索框里直接输入名字也能找到 |
-| 翻译 | `fy`、`tr`、`翻译` | 支持 Claude、OpenAI 兼容接口（DeepSeek、通义千问、Kimi、Ollama……）、有道智云、百度翻译；可以发音 |
-| 截图识别文字 | `ocr`、`jt`、`截图` | 框选屏幕识别文字；另有「截图识别并复制」「截图识别并翻译」；也能识别剪贴板图片或拖进来的图片 |
-| 摸鱼阅读 | `my`、`xs`、`阅读` | 导入 txt / epub（自动识别 GBK），记住进度；「小窗」是无边框、半透明、置顶的阅读条，鼠标移开就淡出，老板键（默认 `Alt+Shift+M`）一键藏起来 |
-| JSON 工具 | `json` | 格式化、压缩、转义、排序键，指出错误的行列 |
-| 编码转换 | `b64`、`url`、`unicode`、`html`、`hex` | 编码 / 解码，一键交换 |
-| 哈希计算 | `md5`、`sha1`、`sha256`、`sha512` | 文字或文件的哈希 |
-| 时间戳转换 | `ts` | 秒、毫秒、微秒、纳秒和日期互转 |
-| 正则测试 | `re`、`regex` | 实时高亮、分组、替换，附常用正则 |
-| JWT 解析 | `jwt` | 头部、载荷、是否过期 |
-| 文本对比 | `diff` | 逐行对比 |
-| UUID 与密码 | `uuid`、`pwd` | 批量生成 |
-| 颜色转换 | `color` | HEX、RGB、HSL 互转，支持透明度（`#rrggbbaa`、`rgba()`、`rgb(… / 50%)`），给出叠在白底、黑底上的颜色和对比度 |
-| URL 解析 | `urlp` | 拆出各部分和查询参数 |
-| 文本处理 | `upper`、`lower`、`count` | 大小写、命名风格、去重排序、字数统计 |
-
-**道具库**（搜索「道具库」、托盘菜单、设置侧栏底部）分类列出所有功能、内置模块、网页插件、脚本、系统指令、网页搜索和文本片段，可以直接打开、分离、绑快捷键、停用。
-
-### 文件搜索和预览
-
-搜索框里直接输入文件名（3 个字以上），或用 `f 关键词`；想按类型筛、看预览，就用「高级搜索」（`find`）。
-
-- **搜索引擎**：Windows 上装了 [Everything](https://www.voidtools.com/) 和它的命令行工具 `es.exe` 时用它搜全盘，输入原样交给它，Everything 的语法都能用（`*.pdf`、`ext:docx`、`size:>10mb`、`dm:today`、带 `\` 的路径……），类型筛选也翻译成它的语法；Everything 没运行时会说明原因并退回内置索引。macOS 用“聚焦”的索引，支持 `*` `?` 通配符，多个词用空格隔开表示都要包含，可以选只搜个人文件夹还是整台电脑。都没有时搜「设置 → 模块」里指定的目录。
-- **预览区**：图片、视频（mp4 / mov / webm）、音频、PDF 直接看和播放；文本和代码显示开头（认 UTF-8、UTF-16、GBK），Markdown 渲染后显示，Word 文档抽出正文；zip / tar 压缩包和文件夹列出里面的内容。Office 文档、设计稿和播放不了的视频，在 macOS 上会向系统要一张“快速查看”的预览图。
-- **属性区**：名称、类型、大小、位置、创建 / 修改 / 访问时间、权限；图片的尺寸、音视频的时长和分辨率、文本的编码和行数、压缩包和文件夹的项数。
-- **没法预览时**不留一块空白：显示图标和类型，属性铺满整个区域。
-- **开关**：高级搜索在工具栏右侧；搜索框里选中文件时，开关在窗口底栏（也在「设置 → 外观」里）。两个都关掉，右侧就收起来。
-
-### 发音
-
-在「设置 → 发音」里选，和翻译用哪个服务无关（翻译用百度，发音照样可以用 Edge）。
-
-- **单个英文单词**用词典的真人发音：有道或谷歌，可选美音 / 英音，一个连不上自动换另一个。
-- **句子和长文本**默认用微软 Edge 的在线语音（自然、免费、需要联网），按语言分别选音色；长文本按句子分段，边合成边播，第一句很快就出声。也可以换成系统语音、OpenAI 兼容的语音接口（密钥单独保存），或本地部署的 Kokoro。
-- **Edge 语音的校验会变**：这个接口没有公开文档，微软隔一阵会改校验方式。所以连接参数不写死：内置一份，`data/edge-tts.json` 可以覆盖任何一项，设置里还能填一个在线地址一键更新；算法本身变了、参数救不回来时，可以交给外部的 [edge-tts](https://github.com/rany2/edge-tts) 命令（设置里有安装 / 升级按钮，或自己 `pip install -U edge-tts`），升级它就行，不用等本应用更新。默认是“自动”：内置实现连不上就试外部命令，都不行再退回系统语音，并说明原因。
-- **本地 Kokoro**：[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) 用 Kokoro-FastAPI 之类的项目部署后提供 OpenAI 兼容接口，在设置里选「本地 Kokoro」、填地址（默认 `http://127.0.0.1:8880/v1`）和音色即可，不需要密钥。
-
-### 翻译和识别的接口
-
-在「设置 → 翻译与识别」里选择服务、填写密钥。密钥保存在系统的凭据管理器（macOS 钥匙串、Windows 凭据管理器）里，不写进配置文件。
-
-- Claude 通过官方 Go SDK 调用，默认模型 `claude-opus-5-5`，翻译和识别用低 effort 以加快响应；并开启了服务端的拒答兜底（`fallbacks: "default"`），模型误拒时由服务端换一个推荐的模型重答。可以改成别的模型，或填自己的转发地址。
-- 截图识别默认用系统自带的离线识别（macOS Vision、Windows.Media.Ocr），也可以换成大模型识别。识别前会把小图放大并在四周留白，小字的识别率明显更高；结果按阅读顺序排好，同一行被拆开的几段会合并。对排版复杂、字很小或有艺术字的图片，大模型识别更准。
-- macOS 上截图需要在「系统设置 → 隐私与安全性 → 屏幕录制」里允许本应用，**授权后要重启本应用才生效**；没有权限时会明确提示，不会截完没有下文。识别剪贴板里的图片、粘贴的图片不需要这个权限（可以用系统的 `⌘⇧⌃4` 截到剪贴板再粘贴）。Windows 用系统截图工具框选，中文识别需要装上中文的「光学字符识别」语言功能。
-- 所有接口请求走系统代理。
-
-| 按键 | 作用 |
-| --- | --- |
-| `↑` `↓` 或 `Ctrl+N` `Ctrl+P` | 移动选择 |
-| `↵` | 执行默认动作 |
-| `⌘↵` / `Ctrl+↵` | 执行第二个动作 |
-| `⌘K` / `Ctrl+K` | 打开动作面板（固定、设置快捷键、编辑源文件……） |
-| `Tab` | 进入作用域，或补全 |
-| `⌘1…9` / `Alt+1…9` | 直接执行第 N 项 |
-| `⌘E` / `Ctrl+E` | 编辑这个命令的源文件 |
-| `⌘,` / `Ctrl+,` | 打开设置 |
-| `Esc` | 清空 → 退出作用域 → 隐藏窗口 |
-
-在 macOS 上，自动粘贴需要在「系统设置 → 隐私与安全性 → 辅助功能」里允许本应用；没有授权时内容只会复制到剪贴板。「设置 → 关于」里有一项环境检查，会列出缺什么。
-
-## 自定义
-
-所有东西都在用户目录 `~/.yojigen-pocket`（Windows 是 `%USERPROFILE%\.yojigen-pocket`），可以用环境变量 `POCKET_HOME` 改到别处。把它放进 git，换电脑时 clone 下来就是原样的工具。
-
-```
-~/.yojigen-pocket/
-├─ config.json   主配置。设置窗口改的就是它，手改保存后也立刻生效；写错时沿用上一份有效配置，并提示错在哪一行
-├─ commands/     脚本命令
-├─ plugins/      网页插件
-├─ snippets/     文本片段（.md / .txt）
-├─ ui/           theme.css（变量）、user.css（任意样式）、user.js（界面钩子）
-└─ data/ cache/ logs/   运行数据，已写入 .gitignore
-```
-
-### 脚本命令
-
-往 `commands/` 里放一个脚本，保存后不到一秒就能搜到。文件头部写几行注释就能控制它的行为，全部可选，任何注释符都行：
+需要 [Go](https://go.dev/dl/) 1.27 以上和 [Bun](https://bun.sh)。
 
 ```bash
-#!/bin/bash
-# @pocket.title 问候
-# @pocket.keywords hi,hello
-# @pocket.icon 👋
-# @pocket.mode toast
-# @pocket.arg1 {"name":"名字","placeholder":"输入名字"}
-
-echo "你好，$1"
-```
-
-| 元数据 | 含义 |
-| --- | --- |
-| `title` `desc` `keywords` `icon` | 标题、副标题、额外搜索词（逗号分隔）、图标（emoji、图片路径或 `svg:名称`） |
-| `mode` | 输出方式，见下表，默认 `silent` |
-| `arg1` `arg2` `arg3` | 参数：`{"name","placeholder","type":"text/dropdown/file/password","options","optional","default"}`。`default` 可用 `{clipboard}`、`{query}`。缺少必填参数时弹表单 |
-| `hotkey` | 直达全局快捷键，例如 `Ctrl+Alt+T` |
-| `when` | 只在这些前台应用里出现，逗号分隔 |
-| `fallback` | 没有匹配结果时作为兜底候选 |
-| `timeout` | 超时秒数，默认 10 |
-| `cwd` | 工作目录，默认脚本所在目录 |
-| `confirm` | 执行前确认的提示语 |
-| `refresh` | list 模式结果缓存的秒数 |
-| `interpreter` | 指定解释器，例如 `uv run` |
-
-| 模式 | 脚本做什么 | 界面怎么显示 |
-| --- | --- | --- |
-| `silent` | 只干活 | 窗口隐藏，失败时发通知 |
-| `toast` | 输出一行字 | 通知显示最后一行 |
-| `text` | 输出文本 | 等宽文本视图，流式显示，回车复制全文 |
-| `detail` | 输出 Markdown | 渲染后的视图 |
-| `list` | 输出列表 | 进入子列表，可继续过滤 |
-| `filter` | 每次输入都重跑，输入作为第一个参数 | 实时联想，旧进程会被结束 |
-| `panel` | 输出 HTML 或一个网址 | 网页面板（隔离的 iframe） |
-
-`list` 和 `filter` 接受两种输出：
-
-```json
-{"items": [{"title": "标题", "subtitle": "副标题", "icon": "🍎",
-            "actions": [{"type": "open", "target": "/path"}, {"type": "copy", "title": "复制路径", "text": "/path"}]}]}
-```
-
-或每行一项的文本：`标题⇥副标题⇥动作`。动作写 `open:`、`copy:`、`paste:`、`shell:`、`run:` 前缀；不写时，像路径或网址就打开，否则复制。
-
-动作类型：`open` `reveal` `copy` `paste` `type` `run` `shell` `view` `notify`。动作可以加 `"keepOpen": true` 和 `"confirm": "确定？"`。
-
-脚本能拿到：命令行参数；环境变量 `POCKET_QUERY`、`POCKET_CLIPBOARD`、`POCKET_FG_PROCESS`、`POCKET_FG_TITLE`、`POCKET_COMMAND`、`POCKET_DATA_DIR`（这个命令专属的持久目录）、`POCKET_CACHE_DIR`；stdin 是 JSON 上下文。退出码非 0 视为失败，错误信息取 stderr 第一行。
-
-解释器按 `@pocket.interpreter` → 配置里的 `interpreters` → shebang → 扩展名的顺序决定。支持 `.sh .py .js .mjs .ts .rb .pl .php .lua .ps1`，macOS 上还有 `.applescript .command`，Windows 上还有 `.bat .cmd .ahk .exe .lnk`。Windows 中文系统的 GBK 输出会自动转码。
-
-### 网页插件
-
-`plugins/<id>/` 下放一个 `plugin.json` 和一个网页，文件夹名只能用小写字母、数字和连字符：
-
-```json
-{ "title": "颜色工具", "description": "…", "icon": "🎨", "keywords": ["color"], "main": "index.html", "height": 300 }
-```
-
-网页里引入 `<script src="/__pocket.js"></script>` 就有了 `window.pocket`：`copyText` `readClipboard` `pasteText` `openExternal` `notify` `hide` `getStorage` `setStorage`。插件运行在隔离的 iframe 里，不能直接调用后端，存储按插件隔离。`plugins/color-tool` 是一个完整的例子。
-
-### 改外观
-
-设置窗口里能改主题、强调色、玻璃材质和底色浓度、宽度、行数、行高、字号。更深的定制：
-
-- `ui/theme.css` 只放变量，例如 `--accent-rgb`、`--font-ui`、`--row-radius`、`--text`、`--surface-rgb`。
-- `ui/user.css` 覆盖任意样式。元素都有稳定的 class：`.pk-panel .pk-input .pk-row .pk-row-title .pk-row-subtitle .pk-row-badge .pk-tile .pk-footer .pk-actions`。
-- `ui/user.js` 是界面钩子：
-
-```js
-pocket.hooks.onQuery((text) => text.replace(/^kk\b/, "kill"));   // 改写输入
-pocket.hooks.onResults((items, ctx) => items);                   // 调整结果
-pocket.keymap.bind("mod+l", () => pocket.query.set("/"));        // 加快捷键
-```
-
-### 外部调用
-
-```
-yojigen-pocket://query?q=文字       打开主窗口并填入文字
-yojigen-pocket://run/<命令 ID>      执行命令
-```
-
-来自网页的链接可能是诱导，所以 `run` 只会直接执行 `config.json` 里 `uriAllowlist` 列出的命令，其余只是填进搜索框。
-
-### 隐私
-
-剪贴板历史以明文保存在 `data/` 下，只留在本机。带「不要记录」标记的内容（密码管理器复制的密码）不入库，`clipboard.ignoreApps` 里的应用复制的内容也不记录，这个模块可以在设置里整个关掉。
-
-## 开发
-
-需要 [Go](https://go.dev/dl/) 1.27.3+ 和 [Bun](https://bun.sh)。
-
-```bash
+git clone https://github.com/mytlx/yojigen-pocket.git
+cd yojigen-pocket
 bun install
-```
-
-```bash
 bun run dev
 ```
 
-开发版有独立的用户目录（`~/.yojigen-pocket-dev`），可以和正式版同时运行。
+开发版用单独的用户目录（`~/.yojigen-pocket-dev`），可以和正式版同时开着。
 
 ```bash
-go test ./...
+go test ./...        # 单元测试
+tools/e2e/run.sh     # 端到端测试：启动真实的应用跑一遍（目前只在 macOS 上跑过）
+bunx mygo build      # 打包
 ```
 
-```bash
-bun run build
-```
+技术上是 Go 后端加网页前端：
 
-打包时可以同时构建两个平台，mygo 不需要 cgo，任何机器都能编译。macOS 的 dmg 必须在 macOS 上做，Windows 安装包需要 NSIS（没有时只出 exe，macOS 上用 `brew install makensis` 安装；如果 makensis 启动就崩溃，先设置 `LC_ALL=en_US.UTF-8`）：
+| 部分 | 用的什么 |
+| --- | --- |
+| 桌面框架 | [mygo](https://github.com/egoist/mygo)：纯 Go，不需要 cgo，用系统自带的 WebView |
+| 界面 | Preact + TypeScript + Vite |
+| 编辑器 | CodeMirror 6、Milkdown（在“写作与代码”扩展包里） |
+| 3D | three.js（在“桌面宠物”扩展包里） |
 
-```bash
-bunx mygo build -platform darwin/universal,windows/amd64,windows/arm64
-```
+代码结构、打包和 CI 的细节在[使用手册的“开发”一节](docs/guide.md#开发)。
 
-推送 `v*` 标签时，`.github/workflows/build.yml` 会在 CI 上测试并打包。
+欢迎提 issue 和 PR。改动比较大的话，先开个 issue 说一下想法，免得白做。
 
-端到端测试会启动一个真实的应用（只在 macOS 上跑过），用临时目录和测试热键，不影响你的配置，但主窗口会出现在屏幕上，运行期间剪贴板也会被覆盖：
+## 致谢
 
-```bash
-tools/e2e/run.sh
-```
+- [uTools](https://u.tools)、[Raycast](https://www.raycast.com)、[Alfred](https://www.alfredapp.com)：这类工具该是什么样，是它们教的
+- [mygo](https://github.com/egoist/mygo)：让 Go 写桌面应用这件事变得很轻
+- [edge-tts](https://github.com/rany2/edge-tts)：Edge 语音的接口参数和签名算法参照了它的实现
 
-代码结构：
+## 许可证
 
-```
-main.go, app.go      应用入口、窗口、托盘、热键、配置生效
-services.go          页面调用的 Go 服务（Launcher、Settings）
-host.go              系统能力、自定义协议（图标、插件）
-internal/core        引擎：查询路由、合并排序、动作执行
-internal/match       模糊匹配和拼音
-internal/store       用户目录、配置、使用记录
-internal/providers   各个数据源：应用、文件、剪贴板、计算器……
-internal/scripts     脚本元数据、执行、输出解析
-internal/platform    系统差异：模拟按键、前台应用、进程管理
-internal/seed        第一次启动写入的示例文件
-internal/llm         大模型接口：Claude（官方 Go SDK）、OpenAI 兼容
-internal/translate   翻译：大模型、有道智云、百度翻译
-internal/ocr         文字识别：macOS Vision、Windows.Media.Ocr、大模型
-internal/reader      摸鱼阅读的书库：txt / epub 导入、章节、进度
-internal/tts         发音：词典单词音频、Edge 语音（含签名算法）、OpenAI 兼容接口
-services_tools.go    高级搜索、文件预览、计算器、剪贴板页、Windows 工具的服务，本地媒体服务
-services_speech.go   发音服务
-tools/gen-icons      生成应用图标和托盘图标
-app_features.go      独立窗口、老板键、截图流程、道具库数据
-app_payload.go       带入内容：读取选中的文字、内容块、主窗口位置、针对图片和文件的命令
-services_features.go 功能页调用的 Go 服务
-src/launcher         主窗口界面
-src/features         各个功能页
-src/detached         独立窗口
-src/catalog          道具库窗口
-src/settings         设置窗口界面
-src/shared           共用的设计变量、图标、主题
-tools/gen-icons      生成应用图标
-tools/e2e            端到端测试；e2e.go 只在 -tags e2e 时打开自动化接口，不进入正式版
-```
-
-`src/mygo.ts` 是 `mygo generate` 从 Go 代码生成的类型安全客户端，不要手改。
+[MIT](LICENSE)

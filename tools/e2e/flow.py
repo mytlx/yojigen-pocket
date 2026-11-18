@@ -35,6 +35,10 @@ def show():
 def visible():
     return [w for w in windows() if w['id']==panel_id()][0]['visible']
 def typed(text):
+    # 停在功能页或命令输出里时，再次唤出会原样回到那里（没有搜索框）；先按 Esc 回到搜索。
+    for _ in range(3):
+        if js('!!document.querySelector(".pk-input")'): break
+        js('(()=>{const t=document.activeElement&&document.activeElement!==document.body?document.activeElement:document.querySelector(".pk-panel");t.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",code:"Escape",bubbles:true,cancelable:true}));return 1})()'); time.sleep(0.3)
     js('''(()=>{const i=document.querySelector(".pk-input");const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set;s.call(i,%s);i.dispatchEvent(new Event("input",{bubbles:true}));return 1})()''' % json.dumps(text)); wait()
 def press(key, code=None, **mods):
     init=dict(key=key,code=code or ('Key'+key.upper() if len(key)==1 and key.isalpha() else key),bubbles=True,cancelable=True,**mods)
@@ -60,6 +64,33 @@ fails=[]
 def check(name, ok, detail=""):
     print(('ok  ' if ok else 'FAIL'), name, '' if ok else detail)
     if not ok: fails.append(name)
+
+def soft(name, ok, detail=""):
+    """依赖联网或本机环境的检查：不通过只提示，不算失败。"""
+    print(('ok  ' if ok else 'WARN'), name, '' if ok else detail)
+def click(sel, win=None):
+    return js('(()=>{const el=document.querySelector(%s);if(!el)return false;el.click();return true})()' % json.dumps(sel), win)
+def click_text(sel, text, win=None):
+    return js('(()=>{const el=[...document.querySelectorAll(%s)].find(e=>e.innerText.trim()===%s);if(!el)return false;el.click();return true})()' % (json.dumps(sel), json.dumps(text)), win)
+def wait_for(expr, timeout=4.0, win=None):
+    t=time.time()
+    while time.time()-t<timeout:
+        if js(expr, win): return True
+        time.sleep(0.15)
+    return False
+def close_window(w):
+    js('setTimeout(()=>mygo.call("Windows.Control","close",0),30);1', w['id']); wait(0.8)
+
+EXT=os.environ.get('POCKET_E2E_EXT','')
+def ext_eval(code, win=None, timeout=8):
+    """在扩展页面里面执行一段代码（只有测试构建允许）。"""
+    return js('window.__pluginEval(%s)' % json.dumps(code), win)
+def ext_error(code, win=None):
+    try:
+        ext_eval(code, win); return None
+    except RuntimeError as e:
+        return str(e)
+def installed(): return {p['id']:p for p in (js('mygo.call("Extensions.List")') or [])}
 
 show()
 # --- 计算器
@@ -214,14 +245,11 @@ press('Escape'); wait(0.2)
 open_feature('jwt'); fill('.pk-feature textarea', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMiLCJleHAiOjEwMDAwMDAwMDB9.x'); wait(0.3)
 check('JWT 解码并提示已过期', '已过期' in js('document.querySelector(".fx-jwt")?.innerText||""'))
 press('Escape'); wait(0.2)
-open_feature('diff'); fill('.pk-feature textarea', 'a\nb\nc'); js('''(()=>{const el=document.querySelectorAll(".pk-feature textarea")[1];Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value").set.call(el,"a\\nB\\nc");el.dispatchEvent(new Event("input",{bubbles:true}));return 1})()'''); wait(0.5)
-check('文本对比', js('document.querySelectorAll(".fx-diff-line.is-add").length')==1 and js('document.querySelectorAll(".fx-diff-line.is-del").length')==1)
-shot('feature-diff'); press('Escape'); wait(0.2)
 open_feature('uuid'); wait(0.2)
 vals=texts('.pk-feature .fx-kv-val'); check('批量生成 UUID', len(vals)==5 and all(len(v)==36 for v in vals), vals[:1])
 press('Escape'); wait(0.2)
-open_feature('color'); fill('.pk-feature input:not([type=color])', 'rgb(255, 0, 0)'); wait(0.3)
-check('颜色转换', '#ff0000' in texts('.pk-feature .fx-kv-val'))
+open_feature('hsl'); fill('.pk-feature input:not([type=color]):not([type=range]):not([type=number])', 'rgb(255, 0, 0)'); wait(0.3)
+check('颜色转换', '#ff0000' in texts('.pk-feature .fx-kv-val'), (texts('.pk-feature .fx-kv-val'), rows()[:2] if js('!!document.querySelector(".pk-input")') else text_of('.pk-view-title')))
 shot('feature-color'); press('Escape'); wait(0.2)
 open_feature('urlp'); fill('.pk-feature input', 'https://a.com/p?q=%E5%8F%A3%E8%A2%8B&n=2'); wait(0.3)
 check('URL 解析查询参数', '口袋' in texts('.pk-feature .fx-kv-val'))
@@ -361,7 +389,7 @@ for _ in range(30):
     if '已复制识别结果' in tip: break
     wait(0.1)
 check('识别后给出提示', '已复制识别结果' in tip, tip)
-clip=js('mygo.call("Launcher.PluginCall","color-tool","readClipboard",[])') or ''
+clip=js('mygo.call("Launcher.PluginCall","color-tool","","readClipboard",[])') or ''
 check('识别并复制：结果进了剪贴板', '哈希计算' in clip and 'SHA-256' in clip, clip[:80])
 typed(''); wait(0.3); press('Enter'); wait(2.5)
 got=js('document.querySelector(".fx-ocr-text")?.value||""') or ''
@@ -391,20 +419,6 @@ js('mygo.call("E2E.SetSelection","")')
 ax=js('mygo.call("E2E.Selection")'); print('    辅助功能读取（只读，结果取决于当前前台应用和授权）:', {k:(v if k!='text' else len(v)) for k,v in (ax or {}).items()})
 
 # ================= 第四轮：右键菜单、排序、新页面、预览、发音 =================
-def soft(name, ok, detail=""):
-    """依赖联网或本机环境的检查：不通过只提示，不算失败。"""
-    print(('ok  ' if ok else 'WARN'), name, '' if ok else detail)
-def click(sel, win=None):
-    return js('(()=>{const el=document.querySelector(%s);if(!el)return false;el.click();return true})()' % json.dumps(sel), win)
-def wait_for(expr, timeout=4.0, win=None):
-    t=time.time()
-    while time.time()-t<timeout:
-        if js(expr, win): return True
-        time.sleep(0.15)
-    return False
-def close_window(w):
-    js('setTimeout(()=>mygo.call("Windows.Control","close",0),30);1', w['id']); wait(0.8)
-
 # --- 右键菜单：打开后鼠标划过别的图标，菜单不变
 js('mygo.call("E2E.Resume")'); wait(0.3); show(); typed(''); wait(0.4)
 tiles=texts('.pk-tile-title')
@@ -433,7 +447,7 @@ typed('jsq'); wait(0.5); r=rows(); check('jsq 找到计算器', '计算器' in r
 
 # --- 颜色：透明度
 COLOR_IN='.pk-feature input:not([type=color]):not([type=range]):not([type=number])'
-open_feature('color'); fill(COLOR_IN, '#2f6bff80'); wait(0.3)
+open_feature('hsl'); fill(COLOR_IN, '#2f6bff80'); wait(0.3)
 vals=texts('.pk-feature .fx-kv-val')
 check('颜色：8 位 HEX 带透明度', '#2f6bff80' in vals and 'rgba(47, 107, 255, 0.502)' in vals and '#802F6BFF' in vals, vals)
 fill(COLOR_IN, 'rgb(255 0 0 / 50%)'); wait(0.3)
@@ -621,13 +635,480 @@ if 'python3' in r:
 cfg['modules']['shell']['global']=False; json.dump(cfg, open(cfgp,'w'), ensure_ascii=False, indent=2); wait(1.0)
 typed('')
 
+# ================= 第六轮：笔记、对比、草稿（“写作与代码”扩展包） =================
+# 这三个工具在扩展里，页面在 iframe 中：下面带 e 前缀的函数都是到扩展页面里面去执行。
+def ejs(code, win=None): return ext_eval(code, win)
+def etexts(sel, win=None): return ejs('[...document.querySelectorAll(%s)].map(e=>e.innerText.trim())' % json.dumps(sel), win) or []
+def etext_of(sel, win=None): return (ejs('(document.querySelector(%s)||{}).innerText||""' % json.dumps(sel), win) or '').strip()
+def eclick(sel, win=None): return ejs('(()=>{const el=document.querySelector(%s);if(!el)return false;el.click();return true})()' % json.dumps(sel), win)
+def eclick_text(sel, text, win=None):
+    return ejs('(()=>{const el=[...document.querySelectorAll(%s)].find(b=>b.innerText.trim()==%s);if(!el)return false;el.click();return true})()' % (json.dumps(sel), json.dumps(text)), win)
+def efill(sel, value, win=None):
+    return ejs('(()=>{const el=document.querySelector(%s);if(!el)return false;const proto=el.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,"value").set.call(el,%s);el.dispatchEvent(new Event("input",{bubbles:true}));return true})()' % (json.dumps(sel), json.dumps(value)), win)
+def ewait_for(expr, timeout=4.0, win=None):
+    t=time.time()
+    while time.time()-t<timeout:
+        try:
+            if ejs(expr, win): return True
+        except RuntimeError: pass
+        time.sleep(0.2)
+    return False
+def cm_type(index, text, replace=True):
+    """往第 index 个代码编辑器里填文字：直接调编辑器实例，不依赖焦点，也不发真实按键。"""
+    return ejs('(()=>{const el=document.querySelectorAll(".cm-editor")[%d];const v=el&&el.__cm;if(!v)return false;v.dispatch({changes:{from:%s,to:v.state.doc.length,insert:%s}});return true})()' % (index, '0' if replace else 'v.state.doc.length', json.dumps(text)))
+def cm_text(index):
+    return ejs('(()=>{const el=document.querySelectorAll(".cm-content")[%d];return el?[...el.querySelectorAll(".cm-line")].map(l=>l.innerText.replace(/\\n$/,"")).join("\\n"):null})()' % index)
+def open_tool(keyword, ready, timeout=10):
+    """打开扩展里的一个工具，等它的页面加载出来。"""
+    typed(''); typed(keyword); press('Enter'); wait(0.8)
+    return wait_for('!!window.__pluginEval', 5) and ewait_for(ready, timeout)
+
+edzip=os.path.join(EXT,'editors-1.0.0.zip')
+info=js('mygo.call("Extensions.Install",%s)' % json.dumps(edzip)) if os.path.exists(edzip) else {}
+check('安装“写作与代码”扩展包（三个工具）', (info or {}).get('tools')==['Markdown 笔记','代码草稿','文本对比'], info or edzip)
+show(); typed('diff'); wait(0.4); r=rows(); check('主程序里已经没有这三个工具，装了扩展才有', r[:1]==['文本对比'], r[:3])
+
+# --- Markdown 笔记
+import datetime
+today=datetime.date.today().isoformat()
+check('md 打开笔记页', open_tool('md', '!!document.querySelector(".fx-notes")'))
+check('没有笔记时给出新建入口', ewait_for('!!document.querySelector(".fx-scratch-empty .ui-btn")', 3))
+eclick('.fx-scratch-empty .ui-btn'); wait(0.9)
+note=os.path.join(HOME,'notes',today+' 笔记.md')
+check('新建的笔记文件名带日期', os.path.exists(note) and ejs('document.querySelector(".fx-notes-title").value')==today+' 笔记', os.listdir(os.path.join(HOME,'notes')) if os.path.isdir(os.path.join(HOME,'notes')) else None)
+check('阅读模式编辑器加载出来', ewait_for('!!document.querySelector(".fx-notes-rich .ProseMirror")', 10), etext_of('.fx-notes-body')[:120])
+eclick_text('.fx-notes-head .ui-seg button, .fx-notes-head .ui-seg *', '源码'); wait(0.6)
+check('切到源码模式', ewait_for('!!document.querySelector(".fx-notes-body .cm-content")', 4))
+cm_type(0, '# 周会记录\n\n- 讨论 hello world 计划\n- [ ] 写文档\n'); wait(1.3)
+body=open(note,encoding='utf-8').read() if os.path.exists(note) else ''
+check('源码模式里写的内容自动保存到文件', '# 周会记录' in body and '- [ ] 写文档' in body, body[:80])
+st=etext_of('.fx-notes-status'); check('底部有字数统计和保存状态', '字' in st and '行' in st and ('已保存' in st or '自动保存' in st), st)
+eclick_text('.fx-notes-head .ui-seg button, .fx-notes-head .ui-seg *', '阅读'); wait(0.4)
+check('切回阅读模式，内容渲染成标题和待办', ewait_for('(()=>{const p=document.querySelector(".fx-notes-rich .ProseMirror");return !!p&&!!p.querySelector("h1")&&p.innerText.includes("周会记录")})()', 8), etext_of('.fx-notes-rich')[:100])
+shot('feature-notes')
+efill('.fx-notes-title', '周会记录'); ejs('document.querySelector(".fx-notes-title").dispatchEvent(new FocusEvent("blur"));1'); wait(0.9)
+check('点标题改名，文件跟着改', os.path.exists(os.path.join(HOME,'notes','周会记录.md')) and not os.path.exists(note), os.listdir(os.path.join(HOME,'notes')))
+eclick('.fx-side-head .ui-btn[title="新建文件夹"]'); wait(0.8)
+ejs('(()=>{const i=document.querySelector(".fx-side-rename");if(i){i.value="工作";i.dispatchEvent(new FocusEvent("blur"))}return 1})()'); wait(0.8)
+check('新建文件夹并改名', os.path.isdir(os.path.join(HOME,'notes','工作')), os.listdir(os.path.join(HOME,'notes')))
+moved=ejs('pocket.fs.move("notes","周会记录.md","工作")'); wait(0.3)
+check('笔记可以移进文件夹', moved=='工作/周会记录.md' and os.path.exists(os.path.join(HOME,'notes','工作','周会记录.md')), moved)
+bad=ext_error('pocket.fs.write("notes","../逃出去.md","x")')
+check('笔记接口拒绝目录外的路径', bad is not None and not os.path.exists(os.path.join(HOME,'逃出去.md')), bad)
+
+# --- 笔记：语法、块菜单、设置、链接、多窗口同步
+SAMPLE='---\ntitle: 语法测试\ntags: [demo, markdown]\n---\n\n[TOC]\n\n# 一级标题\n\n正文里有 **加粗**、*斜体*、~~删除线~~、`行内代码`，还有 [链接](https://example.com) 和 [另一篇](另一篇.md)。\n\n## 二级标题\n\n水的分子式 H~2~O，质能方程 E=mc^2^，<sup>上标</sup> 和 <sub>下标</sub>。按 <kbd>Ctrl</kbd> + <kbd>C</kbd> 复制，<u>原生下划线</u>，==高亮==。\n\n行内公式 $a^2 + b^2 = c^2$，价格 $5 和 $10 不是公式。\n\n$$\n\\int_0^1 x^2 \\, dx = \\frac{1}{3}\n$$\n\n### 三级标题\n\n这里有一个脚注[^dev-note]，还有一个[^2]。\n\n#### 四级标题\n\n##### 五级标题\n\n###### 六级标题\n\n```python\ndef fib(n: int) -> int:\n    """斐波那契"""\n    if n < 2:\n        return n\n    return fib(n - 1) + fib(n - 2)  # 递归\n\nprint([fib(i) for i in range(10)])\n```\n\n```js\nconst greet = (name) => `hello ${name}`;\nconsole.log(greet("world"), 42, true);\n```\n\n| 名称 | 说明 |\n| --- | --- |\n| 短的 | 普通文字 |\n| 长代码 | `aVeryLongInlineCodeIdentifier_that_keeps_going_and_going_without_any_spaces_until_it_overflows_the_cell_boundary_0123456789` 后面的文字 |\n\n- 列表一\n- 列表二\n  1. 有序\n  2. 有序二\n- [ ] 待办\n- [x] 完成\n\n> 引用的文字\n\n[^dev-note]: 这是开发备注的脚注内容。\n[^2]: 第二个脚注。\n'
+NOTES=os.path.join(HOME,'notes')
+RICH='.fx-notes-rich .ProseMirror'
+def note_file(name): return open(os.path.join(NOTES,name),encoding='utf-8').read()
+def count_of(sel, win=None): return ejs('document.querySelectorAll(%s).length' % json.dumps(sel), win)
+def pm_append(text, win=None):
+    """在正文末尾加一段字：直接调编辑器实例。"""
+    return ejs('(()=>{const v=document.querySelector(".fx-notes-rich").__pm;v.dispatch(v.state.tr.insertText(%s, v.state.doc.content.size-1));return 1})()' % json.dumps(text), win)
+ejs('pocket.fs.createFile("notes","","另一篇.md",%s)' % json.dumps('# 另一篇\n\n这是被链接到的笔记。\n')); wait(0.2)
+ejs('pocket.fs.createFile("notes","","语法测试.md",%s)' % json.dumps(SAMPLE)); wait(0.6)
+check('别处新建的笔记自动出现在列表里', '语法测试' in etexts('.fx-side-name') and '另一篇' in etexts('.fx-side-name'), etexts('.fx-side-name'))
+eclick_text('.fx-side-name', '语法测试'); wait(0.5)
+check('打开语法测试笔记', ewait_for('!!document.querySelector(%s+" h6")' % json.dumps(RICH), 10), etext_of('.fx-notes-rich')[:80])
+wait(1.0)
+size=lambda tag: float(ejs('parseFloat(getComputedStyle(document.querySelector(%s)).fontSize)' % json.dumps(RICH+' '+tag)))
+sizes=[size('h%d' % i) for i in range(1,7)]
+check('标题一级到六级逐级变小', all(sizes[i]>sizes[i+1] for i in range(5)), sizes)
+check('一、二级标题带分割线', all(ejs('getComputedStyle(document.querySelector(%s)).borderBottomStyle' % json.dumps(RICH+' '+t))=='solid' for t in ('h1','h2')))
+check('编辑区是文字光标', ejs('getComputedStyle(document.querySelector(%s)).cursor' % json.dumps(RICH+' p'))=='text')
+check('默认不做拼写检查', ejs('document.querySelector(%s).getAttribute("spellcheck")' % json.dumps(RICH))=='false')
+check('上标和下标（^x^、~x~、<sup>、<sub>）', count_of(RICH+' sup.md-sup')==2 and count_of(RICH+' sub.md-sub')==2)
+check('<kbd>、<u>、==高亮==', count_of(RICH+' kbd')==2 and count_of(RICH+' u')==1 and count_of(RICH+' mark')==1)
+check('行内公式渲染出来，价格里的 $ 不算', count_of(RICH+' span[data-type=math_inline] .katex')==1, count_of(RICH+' span[data-type=math_inline]'))
+check('块级公式有预览', (count_of('.fx-notes-rich .milkdown-code-block .preview .katex') or 0)>=1)
+check('脚注：角标和定义', count_of(RICH+' sup[data-type=footnote_reference]')==2 and count_of(RICH+' dl[data-type=footnote_definition]')==2)
+toc=etexts(RICH+' .md-toc .md-toc-item'); check('[TOC] 生成目录', toc[:3]==['一级标题','二级标题','三级标题'] and len(toc)==6, toc)
+check('frontmatter 单独收起来，不混进正文', etext_of('.fx-notes-front-keys')=='title、tags' and 'tags:' not in etext_of(RICH), etext_of('.fx-notes-front'))
+fit=ejs('(()=>{const c=[...document.querySelectorAll(%s)].find(e=>e.innerText.includes("aVeryLong"));const td=c.closest("td");const a=c.getBoundingClientRect(),b=td.getBoundingClientRect();return a.right<=b.right+1&&a.height>30})()' % json.dumps(RICH+' td code'))
+check('表格里的长行内代码在格子里折行，不溢出', fit is True, fit)
+shot('feature-notes')
+ejs('document.querySelector(".fx-notes-rich").scrollTop=880;1'); wait(0.5)
+# 代码块滚到看得见的地方才渲染
+check('代码块按语言高亮', ewait_for('document.querySelectorAll(".fx-notes-rich .milkdown-code-block .cm-content span[class]").length>20', 6), count_of('.fx-notes-rich .milkdown-code-block .cm-content span[class]'))
+shot('feature-notes-code')
+ejs('document.querySelector(".fx-notes-rich").scrollTop=0;1'); wait(0.2)
+
+# 改一个字，看存回去的文件有没有保持原来的写法
+pm_append('完'); wait(1.5)
+saved=note_file('语法测试.md')
+keep=['---\ntitle: 语法测试','\n[TOC]\n','H~2~O','mc^2^','<sup>上标</sup>','<kbd>Ctrl</kbd>','<u>原生下划线</u>','==高亮==','$a^2 + b^2 = c^2$','$$\n\\int_0^1','[^dev-note]: 这是','\n- 列表一','```python']
+missing=[k for k in keep if k not in saved]
+check('保存时保持原来的写法（frontmatter、[TOC]、上下标、公式、脚注……）', not missing and saved.rstrip().endswith('完'), missing or saved[-40:])
+
+# 块手柄：鼠标移到一段上出现，点一下打开菜单
+ejs('(()=>{const p=[...document.querySelectorAll(%s)].find(e=>e.innerText.startsWith("正文里有"));const r=p.getBoundingClientRect();p.dispatchEvent(new PointerEvent("pointermove",{bubbles:true,clientX:r.left+40,clientY:r.top+r.height/2}));return 1})()' % json.dumps(RICH+' > p')); wait(0.6)
+check('鼠标移到一段文字上，左边出现块手柄', ejs('document.querySelector(".milkdown-block-handle")?.dataset.show')=='true', ejs('document.querySelector(".milkdown-block-handle")?.outerHTML.slice(0,120)'))
+ejs('document.querySelector(".milkdown-block-handle .operation-item:last-child").dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true}));1'); wait(0.4)
+items=etexts('.fx-block-menu .fx-menu-item'); check('点块手柄弹出块菜单', '标题 3' in items and '删除' in items and '复制一份' in items, items)
+check('菜单里标出当前类型', etexts('.fx-block-menu .fx-menu-item.is-current')==['正文'], etexts('.fx-block-menu .fx-menu-item.is-current'))
+shot('feature-notes-blockmenu')
+eclick_text('.fx-block-menu .fx-menu-item', '引用'); wait(0.5)
+check('块菜单：转换成引用', ejs('!![...document.querySelectorAll(%s)].find(e=>e.innerText.startsWith("正文里有"))' % json.dumps(RICH+' > blockquote')) and count_of('.fx-block-menu')==0)
+
+# 右上角的“更多”：打开方式、另存为、拼写检查、代码配色
+eclick('.fx-notes-more > .ui-btn'); wait(0.3)
+items=etexts('.fx-notes-more .fx-menu-item'); check('更多菜单：用其他应用打开、另存为', '用其他应用打开…' in items and '另存为…' in items and '拼写检查' in items, items)
+eclick_text('.fx-notes-more .fx-menu-item', '拼写检查'); wait(0.3)
+check('拼写检查可以打开', ejs('document.querySelector(%s).getAttribute("spellcheck")' % json.dumps(RICH))=='true')
+eclick_text('.fx-notes-more .fx-menu-item', '拼写检查'); wait(0.2)
+eclick_text('.fx-notes-more .fx-menu-item', 'One Dark'); wait(0.4)
+bg=ejs('getComputedStyle(document.querySelector(".fx-notes-rich .milkdown-code-block")).backgroundColor')
+check('代码块配色可以换', bg=='rgb(40, 44, 52)', bg)
+ejs('document.dispatchEvent(new MouseEvent("mousedown",{bubbles:true}));1'); wait(0.2)
+check('点菜单外面关闭菜单', count_of('.fx-notes-more .fx-menu')==0)
+ejs('document.querySelector(".fx-notes-rich").scrollTop=880;1'); wait(0.5); shot('feature-notes-theme')
+eclick('.fx-notes-more > .ui-btn'); wait(0.2); eclick_text('.fx-notes-more .fx-menu-item', '跟随界面'); ejs('document.dispatchEvent(new MouseEvent("mousedown",{bubbles:true}));1'); wait(0.2)
+solid=ejs('(()=>{const c=getComputedStyle(document.querySelector(".fx-notes-body")).getPropertyValue("--note-float").trim();return c})()')
+check('弹出面板的底色不透明', solid in ('#fff','#ffffff','#2d3038'), solid)
+
+# 按钮的提示：鼠标放上去就出来（自己画的，不靠系统的 title）
+ejs('document.querySelector(".fx-notes-more > .ui-btn").dispatchEvent(new MouseEvent("mouseover",{bubbles:true}));1'); wait(0.6)
+check('扩展页面里：鼠标放到按钮上显示提示', '另存为' in etext_of('.ui-tip'), etext_of('.ui-tip'))
+ejs('document.querySelector(".fx-notes-more > .ui-btn").dispatchEvent(new MouseEvent("mouseout",{bubbles:true}));1'); wait(0.2)
+check('移开后提示消失', count_of('.ui-tip')==0)
+js('document.querySelector(".pk-view-head [title], .pk-header [title]").dispatchEvent(new MouseEvent("mouseover",{bubbles:true}));1'); wait(0.6)
+check('主窗口右上角的按钮：鼠标放上去显示提示', js('!!document.querySelector(".ui-tip.is-shown") && document.querySelector(".ui-tip").innerText.length>0'), js('[...document.querySelectorAll("[title],[data-tip]")].slice(0,6).map(e=>e.className)'))
+js('document.dispatchEvent(new MouseEvent("mousedown",{bubbles:true}));1'); wait(0.2)
+
+# ⌘ / Ctrl + 点击链接：指向另一篇笔记的就在这里打开
+ejs('(()=>{const a=[...document.querySelectorAll(%s)].find(e=>e.innerText==="另一篇");a.dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true,metaKey:true}));return 1})()' % json.dumps(RICH+' a')); wait(0.9)
+check('⌘ + 点击指向另一篇笔记的链接：打开那一篇', ejs('document.querySelector(".fx-notes-title").value')=='另一篇')
+eclick_text('.fx-side-name', '语法测试'); wait(0.8)
+
+# 同一篇笔记同时开在主窗口和独立窗口里
+files_before=sorted(os.listdir(NOTES))
+press('d', metaKey=True); wait(1.6)
+dw=window_by('plugin=editors') or window_by('feature.html')
+check('分离成独立窗口', dw is not None, [x.get('url') for x in windows()])
+if dw:
+    check('独立窗口里打开的是同一篇，没有多出新文件', ewait_for('document.querySelector(".fx-notes-title")?.value==="语法测试"', 8, dw['id']) and sorted(os.listdir(NOTES))==files_before, sorted(os.listdir(NOTES)))
+    show(); open_tool('md', '!!document.querySelector(".fx-notes-rich .ProseMirror h6")'); wait(0.6)
+    check('主窗口里再打开笔记，也是同一篇', ejs('document.querySelector(".fx-notes-title").value')=='语法测试' and sorted(os.listdir(NOTES))==files_before, sorted(os.listdir(NOTES)))
+    pm_append(' 主窗口写的'); wait(1.8)
+    check('主窗口里改了，独立窗口跟着变', ewait_for('document.querySelector(%s).innerText.includes("主窗口写的")' % json.dumps(RICH), 5, dw['id']), ejs('document.querySelector(%s).innerText.slice(-40)' % json.dumps(RICH), dw['id']))
+    pm_append(' 独立窗口写的', dw['id']); wait(1.8)
+    check('独立窗口里改了，主窗口跟着变', ewait_for('document.querySelector(%s).innerText.includes("独立窗口写的")' % json.dumps(RICH), 5))
+    tail=note_file('语法测试.md').rstrip()[-30:]
+    check('两边的修改都在文件里', '主窗口写的' in tail and '独立窗口写的' in tail and sorted(os.listdir(NOTES))==files_before, tail)
+    ejs('pocket.fs.rename("notes","语法测试.md","语法大全.md")', dw['id']); wait(0.8)
+    check('一边改名，另一边跟着改', ejs('document.querySelector(".fx-notes-title").value')=='语法大全' and '语法大全' in etexts('.fx-side-name'), etexts('.fx-side-name'))
+    js('setTimeout(()=>mygo.call("Windows.Control","close",0),30);1', dw['id']); wait(0.9)
+    check('关掉独立窗口后没有多出文件', sorted(os.listdir(NOTES))==sorted([f if f!='语法测试.md' else '语法大全.md' for f in files_before]), sorted(os.listdir(NOTES)))
+
+# 带着一段文字进来存成笔记：同一段内容不会存两遍
+show(); press('Escape'); wait(0.3)
+n0=len(os.listdir(NOTES))
+typed('md 随手记一句'); press('Enter'); wait(0.8)
+check('md 加一段文字：存成一篇新笔记', wait_for('!!window.__pluginEval', 5) and ewait_for('(document.querySelector(%s)?.innerText||"").includes("随手记一句")' % json.dumps(RICH), 10) and len(os.listdir(NOTES))==n0+1, sorted(os.listdir(NOTES)))
+press('Escape'); wait(0.4)
+typed('md 随手记一句'); press('Enter'); wait(0.8)
+check('同一段文字再带进来一次：打开刚才那篇，不重复新建', wait_for('!!window.__pluginEval', 5) and ewait_for('(document.querySelector(%s)?.innerText||"").includes("随手记一句")' % json.dumps(RICH), 10) and len(os.listdir(NOTES))==n0+1, sorted(os.listdir(NOTES)))
+press('Escape'); wait(0.3)
+
+# --- 文本对比
+check('对比页是左右两个编辑器', open_tool('diff', 'document.querySelectorAll(".fx-diff-merge .cm-content").length==2'))
+cm_type(0, '{"name":"pocket","tags":["a","b"],"n":1}'); cm_type(1, '{"name":"pocket","tags":["a","c"],"n":2}'); wait(0.6)
+st=etext_of('.fx-diff-status'); check('实时标出差异并统计', '处差异' in st and ejs('document.querySelectorAll(".fx-diff-merge .cm-changedText").length')>0, st)
+check('粘进内容后自动认出语言', etext_of('.fx-diff2 .lang-pick-btn')=='JSON', etext_of('.fx-diff2 .lang-pick-btn'))
+eclick_text('.fx-diff2 .fx-toolbar .ui-btn', '格式化'); wait(1.5)
+a=cm_text(0); b=cm_text(1)
+check('格式化两边后逐行对比', a and '"name": "pocket"' in a and b and '"n": 2' in b and '2 处差异' in etext_of('.fx-diff-status'), (a, etext_of('.fx-diff-status')))
+shot('feature-diff')
+ejs('(()=>{const s=document.querySelector(".fx-diff2 select.ui-select");s.value="upper";s.dispatchEvent(new Event("change",{bubbles:true}));return 1})()'); wait(0.5)
+check('文本处理：转大写', '"NAME": "POCKET"' in (cm_text(0) or ''), cm_text(0))
+cm_type(1, cm_text(0) or ''); wait(0.6)
+check('两边一样时提示完全相同', '完全相同' in etext_of('.fx-diff-status'), etext_of('.fx-diff-status'))
+press('Escape'); wait(0.3)
+
+# --- 代码草稿
+check('scratch 打开代码草稿页', open_tool('scratch', '!!document.querySelector(".fx-scratch")'))
+langs={l['id']:l for l in (ejs('pocket.runner.languages()') or [])}
+check('列出语言和本机能运行的环境', 'python' in langs and 'go' in langs and langs['sql'].get('tool','')=='' and langs['go'].get('formatter')=='gofmt', {k:v.get('tool') for k,v in langs.items()})
+eclick_text('.fx-scratch-quick .ui-btn', 'Python'); wait(1.0)
+check('新建草稿带示例代码', os.path.exists(os.path.join(HOME,'scratches','scratch.py')) and '你好，Pocket' in (cm_text(0) or ''), cm_text(0))
+if langs.get('python',{}).get('tool'):
+    eclick_text('.fx-scratch-main .fx-toolbar .ui-btn', '运行')
+    ok=ewait_for('!!document.querySelector(".fx-scratch-exit")', 15)
+    check('直接运行并显示输出', ok and '你好，Pocket' in etext_of('.fx-scratch-log') and '运行完成' in etext_of('.fx-scratch-exit'), (etext_of('.fx-scratch-log'), etext_of('.fx-scratch-exit')))
+    cm_type(0, 'import sys\nprint("in:", sys.stdin.readline().strip())\nsys.exit(3)\n'); wait(0.3)
+    eclick_text('.fx-scratch-out .ui-btn', '输入'); wait(0.3); efill('.fx-scratch-stdin', 'abc\n')
+    eclick_text('.fx-scratch-main .fx-toolbar .ui-btn', '运行')
+    ok=ewait_for('(document.querySelector(".fx-scratch-exit")||{}).innerText?.includes("退出码")', 15)
+    check('标准输入和退出码', ok and 'in: abc' in etext_of('.fx-scratch-log') and '退出码 3' in etext_of('.fx-scratch-exit'), (etext_of('.fx-scratch-log'), etext_of('.fx-scratch-exit')))
+    shot('feature-scratch')
+    # 输出里带终端颜色码（PowerShell 7 的表头就是这样）：画成颜色，不原样显示
+    cm_type(0, 'print("\\x1b[32;1m总进程数\\x1b[0m : 312")\nprint("\\x1b[2K\\x1b[31m错误\\x1b[0m")\n'); wait(0.3)
+    eclick_text('.fx-scratch-main .fx-toolbar .ui-btn', '运行')
+    ewait_for('(document.querySelector(".fx-scratch-exit")||{}).innerText?.includes("运行完成")', 15)
+    log=etext_of('.fx-scratch-log')
+    check('输出里的颜色码不原样显示', '总进程数 : 312' in log and '[32' not in log and '[0m' not in log and '\x1b' not in log, repr(log))
+    check('颜色码画成对应的颜色和粗体', etexts('.fx-scratch-log .ansi-green.ansi-bold')==['总进程数'] and etexts('.fx-scratch-log .ansi-red')==['错误'], ejs('document.querySelector(".fx-scratch-log").innerHTML.slice(0,300)'))
+else:
+    soft('这台电脑上没有 Python，跳过运行检查', False)
+# Ctrl + 滚轮：只在编辑区里调字号，别处什么都不发生（更不会缩放整个界面）
+wheel='(()=>{const el=document.querySelector(%s);const e=new WheelEvent("wheel",{ctrlKey:true,deltaY:%d,bubbles:true,cancelable:true});el.dispatchEvent(e);return e.defaultPrevented})()'
+fs0=ejs('parseFloat(getComputedStyle(document.querySelector(".code-editor .cm-editor")).fontSize)')
+p1=ejs(wheel % (json.dumps('.code-editor .cm-content'), -100)); wait(0.3)
+fs1=ejs('parseFloat(getComputedStyle(document.querySelector(".code-editor .cm-editor")).fontSize)')
+check('Ctrl + 滚轮在代码编辑区里放大字号', p1 is True and fs1>fs0 and etext_of('.ui-zoom-badge')=='110%', (fs0,fs1,etext_of('.ui-zoom-badge')))
+p2=ejs(wheel % (json.dumps('.fx-side'), -100)); wait(0.2)
+fs2=ejs('parseFloat(getComputedStyle(document.querySelector(".code-editor .cm-editor")).fontSize)')
+check('编辑区外面 Ctrl + 滚轮不改字号，也不缩放页面', p2 is True and fs2==fs1, (p2,fs1,fs2))
+ejs(wheel % (json.dumps('.code-editor .cm-content'), 100)); wait(0.3)
+check('往回滚恢复原来的字号', ejs('parseFloat(getComputedStyle(document.querySelector(".code-editor .cm-editor")).fontSize)')==fs0)
+p3=js('(()=>{const e=new WheelEvent("wheel",{ctrlKey:true,deltaY:-100,bubbles:true,cancelable:true});document.querySelector(".pk-panel").dispatchEvent(e);return e.defaultPrevented})()')
+check('主窗口里 Ctrl + 滚轮不缩放界面', p3 is True, p3)
+ejs('pocket.fs.createFile("scratches","","scratch.go","package main\\n")')
+r=ejs('pocket.runner.format("go",%s)' % json.dumps('package main\nfunc main(){\nprintln( 1 )}\n'))
+check('后端格式化 Go', r and '\tprintln(1)' in r, r)
+ejs('pocket.fs.rename("scratches","scratch.py","data.json")'); wait(0.2)
+press('Escape'); wait(0.3)
+check('重新打开草稿页', open_tool('scratch', '!!document.querySelector(".fx-scratch")'))
+files=etexts('.fx-scratch .fx-side-name'); check('草稿一直留着，重新打开还在', 'data.json' in files and 'scratch.go' in files, files)
+eclick_text('.fx-scratch .fx-side-name', 'data.json'); wait(0.8)
+cm_type(0, '{"a":1,"b":[1,2]}'); wait(0.3)
+eclick_text('.fx-scratch-main .fx-toolbar .ui-btn', '格式化'); wait(1.5)
+check('按语言格式化（JSON）', '"a": 1' in (cm_text(0) or ''), cm_text(0))
+press('Escape'); wait(0.3); typed('')
+js('mygo.call("Launcher.Hide")'); wait(0.2)
+js('mygo.call("E2E.Hotkey","plugins:editors/notes")'); wait(1.5)
+check('扩展里的工具也能绑快捷键打开', visible() and wait_for('!!window.__pluginEval', 4) and ewait_for('!!document.querySelector(".fx-notes")', 8))
+press('Escape'); wait(0.3); typed('')
+
+# ================= 第七轮：连点器、键盘宏、按键测试 =================
+def key_event(kind, code, k='', win=None, **mods):
+    return js('(()=>{const e=new KeyboardEvent(%s,%s);window.dispatchEvent(e);return e.defaultPrevented})()' % (json.dumps(kind), json.dumps(dict(key=k or code, code=code, bubbles=True, cancelable=True, **mods))), win)
+
+# 先把输入换成只记录的假实现；没换上就不测，绝不发真实的点击和按键。
+fake=js('mygo.call("E2E.FakeInput")')
+check('连点器和宏在测试里用假输入', fake is True, fake)
+if fake is True:
+    # --- 鼠标连点器
+    show(); open_feature('连点器', 0.8)
+    check('打开连点器页面', wait_for('!!document.querySelector(".fx-auto")', 5))
+    st=js('mygo.call("Auto.State")') or {}
+    check('默认不占用任何全局快捷键', st.get('clicker',{}).get('hotkey','')=='' and st.get('clicker',{}).get('failsafe') is True, st.get('clicker'))
+    js('mygo.call("Auto.SaveClicker",%s)' % json.dumps(dict(st['clicker'], button='right', kind='double', intervalMs=3, intervalMaxMs=9, stopMode='count', count=6, position='fixed', x=200, y=300, jitter=4, startDelaySec=0, failsafe=True)))
+    press('Escape'); wait(0.3); open_feature('连点器', 0.8)
+    check('设置保存后重新打开还在', '右键' in text_of('.fx-auto .ui-seg .is-active, .fx-auto .ui-seg [aria-checked=true], .fx-auto .ui-seg [aria-pressed=true]') or js('mygo.call("Auto.State").then(s=>s.clicker.button)')=='right')
+    js('mygo.call("E2E.InputLog")')
+    click_text('.fx-auto-bar .ui-btn', '开始')
+    ok=wait_for('document.querySelector(".fx-auto-status").innerText.includes("点完了 6 次")', 6)
+    log=js('mygo.call("E2E.InputLog")') or []
+    check('点够次数后自动停下', ok, text_of('.fx-auto-status'))
+    check('双击 6 次：12 下按下、12 下松开，都先移到固定位置附近', sum(1 for x in log if x.startswith('right true'))==12 and sum(1 for x in log if x.startswith('right false'))==12 and sum(1 for x in log if x.startswith('move '))==6 and all(196<=int(x[5:].split(',')[0])<=204 for x in log if x.startswith('move ')), log[:6])
+    js('mygo.call("Auto.SaveClicker",%s)' % json.dumps(dict(st['clicker'], kind='single', intervalMs=20, stopMode='manual', startDelaySec=0, failsafe=False)))
+    js('mygo.call("Auto.StartClicker")'); wait(0.5)
+    check('运行时显示次数和停止按钮', wait_for('!!document.querySelector(".fx-auto-status.is-running")', 2) and '停止' in text_of('.fx-auto-bar .ui-btn'), text_of('.fx-auto-bar'))
+    shot('feature-clicker')
+    click_text('.fx-auto-bar .ui-btn', '停止'); wait(0.5)
+    st2=js('mygo.call("Auto.State")') or {}
+    log=js('mygo.call("E2E.InputLog")') or []
+    check('手动停止，按下和松开成对', not st2['status']['running'] and st2['status'].get('note')=='已停止' and len(log)>4 and sum(1 for x in log if 'true' in x)==sum(1 for x in log if 'false' in x), st2.get('status'))
+    press('Escape'); wait(0.3)
+
+    # --- 键盘宏
+    typed(''); open_feature('键盘宏', 0.8)
+    check('打开键盘宏页面', wait_for('!!document.querySelector(".fx-macro")', 5))
+    click('.fx-scratch-empty .ui-btn'); wait(0.9)
+    check('新建宏', js('(document.querySelector(".fx-notes-title")||{}).value')=='新的宏', text_of('.fx-macro')[:60])
+    click_text('.fx-macro .fx-toolbar .ui-btn', '按键 / 组合键'); wait(0.4)
+    click('.fx-keycap'); wait(0.4)
+    key_event('keydown','ControlLeft','Control',ctrlKey=True); key_event('keydown','KeyK','k',ctrlKey=True); wait(0.5)
+    check('选按键：按着 Ctrl 再按 K 就是组合键', text_of('.fx-keycap')=='Ctrl + K', text_of('.fx-keycap'))
+    click_text('.fx-macro .fx-toolbar .ui-btn', '录制'); wait(0.4)
+    for c in ['KeyH','KeyI']:
+        key_event('keydown',c,c[-1].lower()); wait(0.06); key_event('keyup',c,c[-1].lower()); wait(0.08)
+    click_text('.fx-macro .fx-toolbar .ui-btn', '结束录制'); wait(0.9)
+    kinds=texts('.fx-step-type'); caps=texts('.fx-keycap')
+    check('录制：按过的键变成步骤，中间的停顿变成等待', caps[:3]==['Ctrl + K','H','I'] and '等待' in kinds, (kinds, caps))
+    click_text('.fx-macro .fx-toolbar .ui-btn', '文字'); wait(0.3)
+    fill('.fx-step-text', '你好 pocket'); wait(0.6)
+    mid=js('mygo.call("Auto.State").then(s=>s.macros[0])') or {}
+    check('宏自动保存', mid.get('id') and [s['type'] for s in mid.get('steps',[])][0]=='key' and mid['steps'][0]['keys']==['ControlLeft','KeyK'] and mid['steps'][-1].get('text')=='你好 pocket', mid.get('steps'))
+    js('mygo.call("Auto.SaveMacro",%s)' % json.dumps(dict(mid, loops=2, startDelaySec=0, speed=10))); wait(0.3)
+    js('mygo.call("E2E.InputLog")')
+    js('mygo.call("Auto.RunMacro",%s)' % json.dumps(mid.get('id')))
+    done=wait_for('mygo.call("Auto.State").then(s=>!s.status.running&&(s.status.note||"").includes("执行完了 2 遍"))', 8)
+    log=js('mygo.call("E2E.InputLog")') or []
+    check('运行宏：组合键按顺序按下、倒序松开，文字原样输入，跑两遍', done and log[:4]==['key ControlLeft true','key KeyK true','key KeyK false','key ControlLeft false'] and log.count('text 你好 pocket')==2 and log.count('key KeyH true')==2, log[:8])
+    shot('feature-macro')
+    bad=None
+    try: js('mygo.call("Auto.SaveMacro",{"name":"坏的","steps":[{"type":"key","keys":[]}]})')
+    except RuntimeError as e: bad=str(e)
+    check('没选按键的步骤保存不了', bad is not None and '还没有选按键' in bad, bad)
+    press('Escape'); wait(0.3)
+
+# --- 按键测试
+typed(''); open_feature('按键测试', 0.8)
+check('打开按键测试页面', wait_for('document.querySelectorAll(".fx-key").length>=100', 5), js('document.querySelectorAll(".fx-key").length'))
+p=key_event('keydown','KeyA','a'); p2=key_event('keydown','ShiftLeft','Shift',shiftKey=True); wait(0.3)
+check('按下时图上对应的键亮起来', p and p2 and js('document.querySelectorAll(".fx-key.is-down").length')==2 and js('[...document.querySelectorAll(".fx-key.is-down span")].map(s=>s.innerText).sort().join()')=='A,Shift')
+shot('feature-keytest')
+key_event('keyup','KeyA','a'); key_event('keyup','ShiftLeft','Shift'); wait(0.2)
+key_event('keydown','KeyA','a'); key_event('keyup','KeyA','a'); wait(0.3)
+stats=texts('.fx-test-stats b')
+check('松开后保留“测过”的标记，并统计次数', js('document.querySelectorAll(".fx-key.is-down").length')==0 and js('document.querySelectorAll(".fx-key.is-tested").length')==2 and stats[0]=='3' and stats[1].startswith('2 /') and stats[3]=='2', stats)
+esc=key_event('keydown','Escape','Escape'); key_event('keyup','Escape','Escape'); wait(0.3)
+check('测试时 Esc 也算按键，不会把页面关掉', esc and js('!!document.querySelector(".fx-inputtest")') and js('document.querySelectorAll(".fx-key.is-tested").length')==3)
+click_text('.fx-inputtest .ui-seg button, .fx-inputtest .ui-seg *', '鼠标'); wait(0.5)
+js('(()=>{const p=document.querySelector(".fx-mouse-pad");for(const b of [0,2]){p.dispatchEvent(new MouseEvent("mousedown",{button:b,bubbles:true,cancelable:true}));p.dispatchEvent(new MouseEvent("mouseup",{button:b,bubbles:true,cancelable:true}))}p.dispatchEvent(new MouseEvent("mousedown",{button:0,bubbles:true,cancelable:true}));p.dispatchEvent(new WheelEvent("wheel",{deltaY:-120,bubbles:true,cancelable:true}));return 1})()'); wait(0.4)
+stats=texts('.fx-test-stats b')
+check('鼠标：按键次数、滚轮和图上的按下状态', stats[0]=='2' and stats[2]=='1' and stats[5].startswith('1 /') and js('document.querySelectorAll(".fx-mouse-part.is-down").length')==1, stats)
+check('两次按下间隔太短会提示疑似连击', '疑似连击' in text_of('.fx-test-notes'), text_of('.fx-test-notes'))
+shot('feature-mousetest')
+press('Escape'); wait(0.4)
+check('切到鼠标页后 Esc 恢复正常', js('!document.querySelector(".fx-inputtest")'))
+typed('')
+
+# ================= 第八轮：扩展平台 =================
+# --- 自己写一个最小的扩展：一个页面、一份清单、一个后端脚本
+demo=os.path.join(HOME,'ext-src','demo'); os.makedirs(demo, exist_ok=True)
+json.dump({"id":"demo","name":"演示扩展","version":"0.3.0","api":1,
+  "tools":[{"id":"demo","title":"演示工具","keywords":["demo"],"height":240,"matches":[{"type":"text","regex":"^ORD-\\d+$","label":"查这个订单"}]},
+           {"id":"second","title":"第二个工具","keywords":["demo2"],"entry":"index.html#second"}],
+  "permissions":{"dirs":["demo-notes"],"fetch":["example.com"]},
+  "backend":{"command":["python3","backend.py"],"mode":"on-demand","idle":1}}, open(os.path.join(demo,'plugin.json'),'w'), ensure_ascii=False)
+open(os.path.join(demo,'index.html'),'w').write('<!doctype html><meta charset="utf-8"><script src="/__pocket.js"></script><body><h1 id="t">demo</h1><script>pocket.onEnter(c=>{document.getElementById("t").textContent=c.tool+":"+c.input})</script>')
+open(os.path.join(demo,'backend.py'),'w').write('import sys, json, os\nfor line in sys.stdin:\n    req = json.loads(line)\n    if req["method"] == "fail":\n        print(json.dumps({"id": req["id"], "error": "故意失败"}), flush=True)\n    else:\n        print(json.dumps({"id": req["id"], "result": {"echo": req["params"], "pid": os.getpid(), "plugin": os.environ.get("POCKET_PLUGIN_ID")}}), flush=True)\n')
+import shutil, zipfile
+zpath=os.path.join(HOME,'demo-0.3.0.zip')
+with zipfile.ZipFile(zpath,'w') as z:
+    for n in os.listdir(demo): z.write(os.path.join(demo,n), 'demo/'+n)   # 包里多套一层文件夹，也要能装
+
+check('一开始没有装任何扩展包', 'demo' not in installed() and 'pet' not in installed())
+info=js('mygo.call("Extensions.Install",%s)' % json.dumps(zpath)) or {}
+check('从 zip 安装扩展', info.get('id')=='demo' and info.get('version')=='0.3.0' and info.get('tools')==['演示工具','第二个工具'] and info.get('backend') is True and os.path.exists(os.path.join(HOME,'plugins','demo','plugin.json')), info)
+bad=os.path.join(HOME,'evil.zip')
+with zipfile.ZipFile(bad,'w') as z: z.writestr('../../escaped.txt','x'); z.writestr('plugin.json','{}')
+err=None
+try: js('mygo.call("Extensions.Install",%s)' % json.dumps(bad))
+except RuntimeError as e: err=str(e)
+check('路径不安全的包装不上', err is not None and '不安全' in err and not os.path.exists(os.path.join(HOME,'escaped.txt')), err)
+
+show(); typed('demo 带进来的字'); wait(0.4); r=rows(); check('扩展的工具出现在搜索里', r[:1]==['演示工具'], r[:3])
+press('Enter'); wait(0.8)
+ok=wait_for('!!window.__pluginEval', 5) and wait_for('window.__pluginEval("!!(window.pocket&&pocket.context)")', 8)
+check('打开扩展页面，宿主接口就绪', ok)
+c=ext_eval('pocket.context') or {}
+check('进入时带上了工具名和输入的内容', c.get('tool')=='demo' and c.get('input')=='带进来的字' and c.get('plugin')=='demo' and c.get('platform')=='darwin', c)
+check('页面的进入回调被调用', ext_eval('document.getElementById("t").textContent')=='demo:带进来的字')
+check('外观属性传给了扩展页面', ext_eval('document.documentElement.getAttribute("data-theme")') in ('light','dark'))
+# 文件：私有目录不用声明，声明过的用户目录可以用，其余的拒绝
+p=ext_eval('pocket.fs.createFile("", "", "a.txt", "你好")')
+check('私有目录读写', p=='a.txt' and ext_eval('pocket.fs.read("", "a.txt")')=='你好' and os.path.exists(os.path.join(HOME,'data','plugins','demo-files','a.txt')), p)
+ext_eval('pocket.fs.write("demo-notes", "x.md", "# hi")')
+check('声明过的用户目录可以读写', open(os.path.join(HOME,'demo-notes','x.md')).read()=='# hi')
+e1=ext_error('pocket.fs.tree("notes")'); e2=ext_error('pocket.fs.read("", "../../config.json")'); e3=ext_error('pocket.fs.write("commands", "x.sh", "rm -rf")')
+check('没声明的目录、跳出目录的路径、应用自己的目录都被拒绝', all(x is not None for x in (e1,e2,e3)) and '没有声明' in e1, (e1,e2,e3))
+e4=ext_error('pocket.fetch("https://not-declared.example.org/")'); e5=ext_error('pocket.fetch("http://127.0.0.1:1/")'); e6=ext_error('pocket.runner.languages()')
+check('没声明的域名、本机地址、没声明的代码运行权限都被拒绝', all(x is not None and '没有声明' in x for x in (e4,e5,e6)), (e4,e5,e6))
+ext_eval('pocket.storage.set("k", {"n": 1})'); check('扩展自己的存储', ext_eval('pocket.storage.get("k")')=={'n':1})
+# 后端进程：按需拉起、闲置自动关、再调用重新拉起
+check('没调用过后端时进程没有启动', js('mygo.call("E2E.BackendRunning","demo")') is False)
+b1=ext_eval('pocket.backend.call("echo", "hi", 2)') or {}
+check('调用后端程序', b1.get('echo')==['hi',2] and b1.get('plugin')=='demo' and js('mygo.call("E2E.BackendRunning","demo")') is True, b1)
+b2=ext_eval('pocket.backend.call("echo")') or {}
+check('接着调用用的是同一个进程', b2.get('pid')==b1.get('pid'), (b1.get('pid'), b2.get('pid')))
+check('后端报的错原样传回页面', '故意失败' in (ext_error('pocket.backend.call("fail")') or ''))
+wait(2.4)
+check('闲置后进程自动关掉，不占资源', js('mygo.call("E2E.BackendRunning","demo")') is False)
+b3=ext_eval('pocket.backend.call("echo")') or {}
+check('再调用时重新拉起', b3.get('pid') and b3.get('pid')!=b1.get('pid') and js('mygo.call("E2E.BackendRunning","demo")') is True, b3)
+press('Escape'); wait(0.3)
+# 带入内容匹配
+js('mygo.call("E2E.Summon","ORD-12345")'); wait(0.9)
+r=rows(); subs=js('[...document.querySelectorAll(".pk-row")].map(r=>(r.querySelector(".pk-row-subtitle")||{}).innerText||"")') or []
+check('选中的文字符合规则时，扩展出现在候选里', '演示工具' in r and '查这个订单' in subs, (r[:5], subs[:5]))
+press('Backspace'); wait(0.3); typed('')
+# 停用：搜不到，后端被结束；卸载：文件夹没了
+js('mygo.call("Extensions.SetEnabled","demo",false)'); wait(0.6)
+typed('demo'); wait(0.4); r=rows()
+check('停用后搜不到，后端进程被结束', '演示工具' not in r and js('mygo.call("E2E.BackendRunning","demo")') is False and installed()['demo']['enabled'] is False, r[:3])
+js('mygo.call("Extensions.SetEnabled","demo",true)'); wait(0.6); typed('demo2'); wait(0.4); r=rows()
+check('启用后回来了，一个扩展可以有多个工具', r[:1]==['第二个工具'], r[:3])
+js('mygo.call("Extensions.Uninstall","demo",false)'); wait(0.6); typed('demo'); wait(0.4); r=rows()
+check('卸载后文件夹删掉，存的设置按选择保留', '演示工具' not in r and not os.path.exists(os.path.join(HOME,'plugins','demo')) and os.path.exists(os.path.join(HOME,'data','plugins','demo.json')) and os.path.exists(os.path.join(HOME,'demo-notes','x.md')), r[:3])
+typed('')
+
+# --- 桌面宠物：现在是一个扩展包
+petzip=os.path.join(EXT,'pet-1.0.0.zip')
+if not os.path.exists(petzip):
+    check('找到宠物扩展包', False, petzip)
+else:
+    info=js('mygo.call("Extensions.Install",%s)' % json.dumps(petzip)) or {}
+    check('安装宠物扩展', info.get('id')=='pet' and info.get('backend') is False and window_by('float.html') is None, info)
+    typed('宠物'); wait(0.4); r=rows(); check('搜索框里能找到它', '桌面宠物' in r[:2], r[:3])
+    press('Enter'); wait(2.5)
+    pw=window_by('float.html'); check('回车后出现悬浮窗', pw is not None and not visible())
+    if pw:
+        pid=pw['id']
+        ok=wait_for('!!window.__pluginEval', 6, pid) and wait_for('window.__pluginEval("!!(window.__pet&&window.__pet.game())")', 12, pid)
+        check('3D 场景和存档加载出来', ok)
+        g=ext_eval('window.__pet.game()', pid) or {}
+        check('新领养：四项状态、等级、金币，当天签到领了见面礼', g.get('level')==1 and g.get('days')==1 and g.get('coins',0)>=45 and all(0<g.get(k,0)<=100 for k in ['hunger','mood','energy','clean']), g)
+        wait(1.0); shot('pet', pid)
+        h0=g['hunger']; ext_eval('window.__pet.feed("riceball");1', pid); wait(0.6)
+        g=ext_eval('window.__pet.game()', pid); act=ext_eval('window.__pet.pose().action', pid)
+        check('喂食：饱腹上升、背包减少、做出吃东西的动作', g['hunger']>h0 and g['food'].get('riceball')==0 and act=='eat', (g['hunger'], act))
+        ext_eval('window.__pet.play("pet");1', pid); wait(0.4)
+        check('抚摸：开心地跳', ext_eval('window.__pet.pose().action', pid)=='happy')
+        s0=js('[innerWidth,innerHeight]', pid)
+        ext_eval('document.querySelector(".pet-root").dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true}));1', pid); wait(0.9)
+        s1=js('[innerWidth,innerHeight]', pid)
+        check('右键打开面板，窗口变大', ext_eval('!!document.querySelector(".pet-panel")', pid) and s1[1]>s0[1]+150, (s0,s1))
+        shot('pet-panel', pid)
+        ext_eval('[...document.querySelectorAll(".pet-tabs button")].find(b=>b.innerText=="商店").click();1', pid); wait(0.4)
+        c0=ext_eval('window.__pet.game().coins', pid)
+        ext_eval('[...document.querySelectorAll(".pet-shop > div")].find(d=>d.innerText.includes("苹果")).querySelector("button").click();1', pid); wait(0.4)
+        g=ext_eval('window.__pet.game()', pid)
+        check('商店：买苹果扣金币、进背包', g['coins']==c0-3 and g['food']['apple']==3, (c0, g['coins']))
+        ext_eval('document.querySelector(".pet-close").click();1', pid); wait(0.8)
+        check('收起面板，窗口变回去', js('[innerWidth,innerHeight]', pid)[1]<s1[1])
+        m1=ext_eval('pocket.window.move(40,0)', pid); m2=ext_eval('pocket.window.move(-40,0)', pid)
+        check('可以在屏幕范围里走动', m1 and m2 and m1['x']-m2['x']==40, (m1,m2))
+        wait(0.4)
+        saved=os.path.join(HOME,'data','plugins','pet.json')
+        check('存档在扩展自己的存储里', os.path.exists(saved) and json.load(open(saved)).get('state',{}).get('stats',{}).get('fed')==1)
+        ext_eval('pocket.window.close();1', pid); wait(1.0)
+        check('收起来：窗口关闭', window_by('float.html') is None)
+        show(); typed('宠物'); press('Enter'); wait(2.5)
+        pw=window_by('float.html')
+        ok=pw and wait_for('!!window.__pluginEval', 6, pw['id']) and wait_for('window.__pluginEval("!!(window.__pet&&window.__pet.game())")', 12, pw['id'])
+        g=ext_eval('window.__pet.game()', pw['id']) if ok else {}
+        check('再叫出来接着养：存档还在，当天不重复签到', ok and g.get('stats',{}).get('fed')==1 and g.get('days')==1 and g['food'].get('apple')==3, g)
+        js('mygo.call("Extensions.SetEnabled","pet",false)'); wait(1.0)
+        check('停用扩展：悬浮窗跟着关掉', window_by('float.html') is None)
+        js('mygo.call("Extensions.SetEnabled","pet",true)'); wait(2.2)
+        check('重新启用：上次开着的悬浮窗回来了', window_by('float.html') is not None)
+        js('mygo.call("Extensions.Uninstall","pet",true)'); wait(1.0)
+        show(); typed('宠物'); wait(0.4); r=rows()
+        check('卸载：窗口、文件夹、存档都没了，搜索里也没有', window_by('float.html') is None and not os.path.exists(os.path.join(HOME,'plugins','pet')) and not os.path.exists(saved) and '桌面宠物' not in r, r[:3])
+        typed('')
+
+# ================= macOS 的权限状态 =================
+if sys.platform=='darwin':
+    perms=js('mygo.call("Settings.Permissions")') or {}
+    check('权限状态里有辅助功能、屏幕录制、完全磁盘访问和签名情况', all(k in perms for k in ('accessibility','screen','disk','adhoc')), perms)
+    doc={d['title']:d for d in (js('mygo.call("Settings.Doctor")') or [])}
+    disk=doc.get('完全磁盘访问权限（可选）')
+    check('环境检查列出完全磁盘访问权限', disk is not None and (disk['ok'] or disk.get('action')=='disk'), list(doc))
+    check('没有固定签名时说明更新后要重新授权', ('应用签名' in doc)==bool(perms.get('adhoc')), (perms.get('adhoc'), list(doc)))
+    r=js('mygo.call("Finder.Search",{query:"pocket-e2e-nothing-matches-this",kind:"all",scope:"home",limit:5})') or {}
+    check('搜索结果在缺少磁盘权限时带提示', r.get('engine')=='spotlight' and (r.get('hint')=='disk')==(not perms.get('disk')), (r.get('engine'), r.get('hint'), perms.get('disk')))
+
 # ================= 道具库 =================
 js('mygo.call("Settings.OpenCatalog")', panel_id()); wait(1.6)
 cw=window_by('catalog.html'); check('打开道具库窗口', cw is not None)
 if cw:
     n=js('document.querySelectorAll(".ct-card").length', cw['id']); check('道具库列出全部功能', n and n>40, n)
     op=js('getComputedStyle(document.querySelector(".ct-card")).opacity', cw['id']); check('道具库的卡片是可见的', op=='1', op)
-    cats=texts('.ct-nav .st-nav span', cw['id']); check('按分类展示', '效率工具' in cats and '开发工具' in cats and '脚本命令' in cats and '网页插件' in cats, cats)
+    cats=texts('.ct-nav .st-nav span', cw['id']); check('按分类展示', '效率工具' in cats and '开发工具' in cats and '脚本命令' in cats and '扩展' in cats, cats)
     shot('catalog', cw['id'])
     fill('.ct-search input', 'md5', cw['id']); wait(0.3)
     found=texts('.ct-card b', cw['id']); check('道具库按关键词搜索', '哈希计算' in found, found)
@@ -638,6 +1119,51 @@ if cw:
     show(); typed('regex'); check('停用后搜不到', '正则测试' not in rows())
     js('mygo.call("Catalog.SetEnabled","features:regex",true)', cw['id']); wait(0.4)
     typed('regex'); check('重新启用', '正则测试' in rows())
+
+    # --- 关键词和前缀：可以改、可以有多个，重复了有提示
+    cid=cw['id']
+    def item(i): return next((x for x in (js('mygo.call("Catalog.Items")', cid) or []) if x['id']==i), {})
+    def call_err(code):
+        try:
+            js(code, cid); return None
+        except RuntimeError as e:
+            return str(e)
+    base=js('mygo.call("Catalog.Conflicts")', cid) or {}
+    check('默认的关键词互不重复', base=={}, base)
+    js('mygo.call("Catalog.SetKeywords","features:json",["jj","格式化"])', cid); wait(0.5)
+    it=item('features:json'); check('关键词可以改成自己的，可以有多个', it.get('keywords')==['jj','格式化'] and it.get('customKeywords') is True and 'json' in it.get('defaultKeywords',[]), it)
+    typed('jj'); r=rows(); check('新关键词马上生效', r[:1]==['JSON 工具'], r[:3])
+    typed('格式化'); r=rows(); check('第二个关键词也生效', r[:1]==['JSON 工具'], r[:3])
+    typed('jj [1,2]'); wait(0.3); sub=js('document.querySelector(".pk-row.is-selected .pk-row-subtitle")?.innerText||""') or ''
+    check('新关键词后面跟内容：带着内容打开', rows()[:1]==['JSON 工具'] and '带入' in sub, (rows()[:2], sub))
+    js('mygo.call("Catalog.SetKeywords","features:regex",["JJ","re"])', cid); wait(0.5)
+    cf=js('mygo.call("Catalog.Conflicts")', cid) or {}
+    check('两项用了同一个关键词：两边都提示（不分大小写）', [c['with'] for c in cf.get('features:json',[])]==[['正则测试']] and [c['with'] for c in cf.get('features:regex',[])]==[['JSON 工具']], cf)
+    js('mygo.call("Catalog.SetKeywords","module:calc",["=","算"])', cid); wait(0.5)
+    check('内置模块可以有多个前缀', item('module:calc').get('prefix')=='= 算', item('module:calc'))
+    typed('算 1+2'); wait(0.4); alt=rows(); typed('=1+2'); wait(0.4)
+    check('第二个前缀和第一个进的是同一个模块', alt[:1]==['3'] and rows()[:1]==['3'], (alt[:3], rows()[:3]))
+    js('mygo.call("Catalog.SetKeywords","module:shell",[">","jj"])', cid); wait(0.5)
+    cf=js('mygo.call("Catalog.Conflicts")', cid) or {}
+    check('模块前缀和功能的关键词重复也会提示', any(c['keyword']=='jj' for c in cf.get('module:shell',[])), cf.get('module:shell'))
+    bad=call_err('mygo.call("Catalog.SetKeywords","features:json",["a b"])')
+    check('关键词里不能有空格', bad is not None and '空格' in bad, bad)
+    bad=call_err('mygo.call("Catalog.SetKeywords","scripts:示例/时间戳",["x"])')
+    check('脚本的关键词写在脚本里，不在这里改', bad is not None, bad)
+    js('mygo.call("Catalog.ResetKeywords","module:shell")', cid); js('mygo.call("Catalog.ResetKeywords","module:calc")', cid); js('mygo.call("Catalog.ResetKeywords","features:regex")', cid); wait(0.5)
+    check('恢复默认', item('module:shell').get('prefix')=='>' and item('features:regex').get('customKeywords') is not True and (js('mygo.call("Catalog.Conflicts")', cid) or {})=={}, js('mygo.call("Catalog.Conflicts")', cid))
+    # 界面：卡片上点“关键词”，在输入框里加一个
+    fill('.ct-search input', 'JSON 工具', cid); wait(0.4)
+    js('(()=>{const c=[...document.querySelectorAll(".ct-card")].find(c=>c.querySelector("b").innerText==="JSON 工具");[...c.querySelectorAll(".ct-actions .ui-btn")].find(b=>b.innerText.includes("关键词")).click();return 1})()', cid); wait(0.4)
+    check('卡片上可以打开关键词编辑', texts('.ct-words .ct-word', cid)==['jj','格式化'], texts('.ct-words .ct-word', cid))
+    js('(()=>{const i=document.querySelector(".ct-word-input");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(i,"re");i.dispatchEvent(new Event("input",{bubbles:true}));return 1})()', cid); wait(0.2)
+    js('document.querySelector(".ct-word-input").dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));1', cid); wait(0.8)
+    check('在编辑框里加一个关键词', texts('.ct-words .ct-word', cid)==['jj','格式化','re'], texts('.ct-words .ct-word', cid))
+    check('加的词和别人重复：编辑框里和卡片上都标出来', 're' in ''.join(texts('.ct-words-warn', cid)) and '正则测试' in ''.join(texts('.ct-words-warn', cid)) and len(texts('.ct-tag.is-conflict', cid))>=1 and len(texts('.ct-conflict-bar', cid))==1, (texts('.ct-words-warn', cid), texts('.ct-tag.is-conflict', cid)))
+    shot('catalog-keywords', cid)
+    js('[...document.querySelectorAll(".ct-words-foot .ui-btn")].find(b=>b.innerText.includes("恢复默认")).click();1', cid); wait(0.8)
+    check('编辑框里点恢复默认', 'json' in texts('.ct-words .ct-word', cid) and len(texts('.ct-conflict-bar', cid))==0, texts('.ct-words .ct-word', cid))
+    fill('.ct-search input', '', cid); wait(0.2)
     js('setTimeout(()=>mygo.call("Windows.Control","close",0),30);1', cw['id']); wait(0.4)
 
 # 设置：翻译与识别分区

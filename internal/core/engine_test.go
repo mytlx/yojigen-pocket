@@ -344,3 +344,33 @@ func TestAppsBeforeCommands(t *testing.T) {
 		t.Fatalf("完全匹配的命令应该排在只是前缀匹配的应用前面，得到 %s", out[0].ID)
 	}
 }
+
+// 一个模块可以配多个前缀；几个都对得上时取最长的。
+func TestMultiplePrefixes(t *testing.T) {
+	apps := &fakeProvider{id: "apps", items: []string{"report"}}
+	pfx := &fakeProvider{id: "pfx", items: []string{"report.pdf"}}
+	sym := &fakeProvider{id: "sym", items: []string{"12"}}
+	long := &fakeProvider{id: "long", items: []string{"12 long"}}
+	e, _, cfg := newEngine(t, apps, pfx, sym, long)
+	if err := cfg.Update(func(c *store.Config) {
+		c.Modules["pfx"] = store.Module{Enabled: true, Weight: 1, Prefix: "f file，文件"}
+		c.Modules["sym"] = store.Module{Enabled: true, Weight: 1, Prefix: "= calc"}
+		c.Modules["long"] = store.Module{Enabled: true, Weight: 1, Prefix: "=="}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"f report", "file report", "文件 report"} {
+		if got := titles(e, t, QueryRequest{Text: q}); !slices.Equal(got, []string{"report.pdf"}) {
+			t.Errorf("%q 应该走文件模块：%v", q, got)
+		}
+	}
+	if got := titles(e, t, QueryRequest{Text: "calc 12"}); !slices.Equal(got, []string{"12"}) {
+		t.Errorf("第二个前缀也要生效：%v", got)
+	}
+	if got := titles(e, t, QueryRequest{Text: "==12"}); !slices.Equal(got, []string{"12 long"}) {
+		t.Errorf("== 和 = 都对得上时取长的：%v", got)
+	}
+	if got := titles(e, t, QueryRequest{Text: "filereport"}); slices.Equal(got, []string{"report.pdf"}) {
+		t.Errorf("字母前缀后面没有空格时不算前缀：%v", got)
+	}
+}

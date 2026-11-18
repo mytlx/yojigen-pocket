@@ -187,7 +187,7 @@ func (w *WinTools) Launch(name string) error {
 		}
 		// start 会按文件关联打开 .cpl 和 .msc，也认 PATH 里的程序。
 		args := append([]string{"/c", "start", ""}, strings.Fields(line)...)
-		return platform.Command(context.Background(), "cmd", args...).Start()
+		return platform.DetachedCommand("cmd", args...).Start()
 	}
 	return errors.New("没有这个工具：" + name)
 }

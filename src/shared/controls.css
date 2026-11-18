@@ -230,3 +230,38 @@
     transform: rotate(360deg);
   }
 }
+
+/* 悬停提示（shared/tooltip.ts）：不透明的底，压在所有东西上面，不挡鼠标。 */
+.ui-tip {
+  position: fixed;
+  z-index: 2147483000;
+  max-width: 280px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--tip-bg, #24262b);
+  color: var(--tip-text, #fff);
+  font: 500 11.5px/1.45 var(--font-ui);
+  letter-spacing: 0.01em;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 90ms ease-out, transform 90ms ease-out;
+}
+.ui-tip.is-shown {
+  opacity: 1;
+  transform: none;
+}
+:root[data-theme="dark"] .ui-tip {
+  background: var(--tip-bg, #e9eaee);
+  color: var(--tip-text, #17181b);
+}
+
+/* Ctrl + 滚轮调字号时，编辑区右上角闪一下当前的比例（shared/zoom.ts）。 */
+.ui-zoom-badge {
+  font-variant-numeric: tabular-nums;
+}

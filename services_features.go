@@ -412,8 +412,27 @@ func (c *Catalog) SetEnabled(id string, enabled bool) error {
 	return err
 }
 
+// SetKeywords 改一项的关键词（内置模块就是它的前缀），可以有多个。空列表表示不要关键词。
+func (c *Catalog) SetKeywords(id string, words []string) error {
+	return c.a.setKeywords(id, words, false)
+}
+
+// ResetKeywords 把一项的关键词恢复成自带的。
+func (c *Catalog) ResetKeywords(id string) error { return c.a.setKeywords(id, nil, true) }
+
+// Conflicts 列出所有“同一个关键词被几项共用”的情况：命令 ID → 撞了的词。设置里的模块页用它提示。
+func (c *Catalog) Conflicts() map[string][]KeywordConflict {
+	out := map[string][]KeywordConflict{}
+	for _, it := range c.a.catalogItems() {
+		if len(it.Conflicts) > 0 {
+			out[it.ID] = it.Conflicts
+		}
+	}
+	return out
+}
+
 // SetHotkey 给一项绑定直达热键，返回注册失败的原因（成功时为空）。
-func (c *Catalog) SetHotkey(id, accel string, detach bool) (string, error) {
+func (c *Catalog) SetHotkey(id, accel string, detach bool, inputMode string) (string, error) {
 	err := c.a.config.Update(func(cfg *store.Config) {
 		if accel == "" {
 			delete(cfg.Hotkeys, id)
@@ -424,6 +443,12 @@ func (c *Catalog) SetHotkey(id, accel string, detach bool) (string, error) {
 			cfg.DetachOnHotkey[id] = true
 		} else {
 			delete(cfg.DetachOnHotkey, id)
+		}
+		switch inputMode {
+		case "clipboard", "both", "none":
+			cfg.HotkeyInput[id] = inputMode
+		default:
+			delete(cfg.HotkeyInput, id)
 		}
 	})
 	if err != nil {

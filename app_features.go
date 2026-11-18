@@ -33,6 +33,7 @@ import (
 	"yojigen-pocket/internal/ocr"
 	"yojigen-pocket/internal/platform"
 	"yojigen-pocket/internal/providers"
+	"yojigen-pocket/internal/store"
 	"yojigen-pocket/internal/translate"
 )
 
@@ -48,6 +49,7 @@ type DetachRequest struct {
 	Title   string            `json:"title"`
 	Icon    string            `json:"icon,omitempty"`
 	Height  int               `json:"height,omitempty"`
+	Width   int               `json:"width,omitempty"`
 	Mode    string            `json:"mode,omitempty"` // stealth：摸鱼小窗
 }
 
@@ -78,6 +80,10 @@ func (r DetachRequest) key() string {
 	case r.Mode == "stealth":
 		return "reader-stealth"
 	case r.Plugin != "":
+		// 一个扩展可以有几个工具，各开各的窗口。
+		if tool := r.Args["tool"]; tool != "" && tool != r.Plugin {
+			return "plugin-" + r.Plugin + "-" + tool
+		}
 		return "plugin-" + r.Plugin
 	}
 	return "feature-" + r.Feature
@@ -85,15 +91,15 @@ func (r DetachRequest) key() string {
 
 // detach 把功能页分离成独立窗口。同一个功能已经有窗口时，切过去并换上新的输入。
 // featureWidths 是需要更宽窗口的功能页分离出来时的宽度。
-var featureWidths = map[string]int{"find": 1080, "clipboard": 880, "calc": 760, "wintools": 820}
+var featureWidths = map[string]int{"find": 1080, "clipboard": 880, "calc": 760, "wintools": 820, "macro": 980, "clicker": 820, "inputtest": 1000}
 
 // modulePages 是有独立页面的内置模块：模块 ID → 功能页的 ID。
 var modulePages = map[string]string{"calc": "features:calc", "clipboard": "features:clipboard", "files": "features:find"}
 
 // openModule 带着模块的前缀打开搜索框（没有独立页面的模块）。
 func (a *App) openModule(name string) {
-	if m := a.config.Get().Modules[name]; m.Prefix != "" {
-		a.showPanel(m.Prefix + " ")
+	if prefixes := a.config.Get().Modules[name].Prefixes(); len(prefixes) > 0 {
+		a.showPanel(prefixes[0] + " ")
 		return
 	}
 	a.showPanel("")
@@ -153,7 +159,7 @@ func (a *App) detach(req DetachRequest) (int, error) {
 		opts.Frameless, opts.Transparent, opts.AlwaysOnTop, opts.SkipTaskbar, opts.DisableShadow = true, true, true, true, true
 		opts.Width, opts.Height, opts.MinWidth, opts.MinHeight = 560, 84, 200, 32
 	} else {
-		width := max(cfg.Appearance.Width, 640, featureWidths[req.Feature])
+		width := max(cfg.Appearance.Width, 640, featureWidths[req.Feature], req.Width)
 		height := 600
 		if req.Height > 0 {
 			height = req.Height + 56
@@ -168,6 +174,9 @@ func (a *App) detach(req DetachRequest) (int, error) {
 		}
 	}
 	win := mygo.NewWindow(opts)
+	if req.Plugin != "" {
+		a.pluginHost.bindPeerWindow(req.Plugin, win)
+	}
 	id := win.ID()
 	d := &detachedWindow{win: win, key: key, info: WindowInfo{ID: id, Title: req.Title, Icon: req.Icon, Feature: req.Feature, Mode: req.Mode}}
 	a.detachedMu.Lock()
@@ -505,7 +514,7 @@ func (a *App) trayMenu(list []WindowInfo) *mygo.Menu {
 	}
 	items = append(items,
 		mygo.Separator(),
-		&mygo.MenuItem{Label: "打开配置目录", Click: func(*mygo.MenuItem, *mygo.Window) { _ = mygo.Shell.OpenPath(a.paths.Home) }},
+		&mygo.MenuItem{Label: "打开配置目录", Click: func(*mygo.MenuItem, *mygo.Window) { _ = openPath(a.paths.Home) }},
 		&mygo.MenuItem{Label: "重新加载", Click: func(*mygo.MenuItem, *mygo.Window) { a.reloadAll() }},
 		mygo.Separator(),
 		&mygo.MenuItem{Label: "退出", Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }},
@@ -541,12 +550,14 @@ func (a *App) openCatalog() {
 	win := mygo.NewWindow(opts)
 	a.catalog = win
 	win.OnReadyToShow(func() {
+		a.registerHotkeyCapture(win)
 		win.Show()
 		win.Focus()
 		mygo.App.Focus()
 	})
 	win.OnClosed(func() {
 		a.catalog = nil
+		a.suspendHotkeys(false) // 录到一半就关了窗口：把热键恢复回来
 		a.updatePolicy()
 	})
 	a.updatePolicy()
@@ -647,7 +658,7 @@ func speakSystem(text, lang string, rate int) error {
 func speak(text, lang string) error {
 	go func() {
 		if err := speakSystem(translate.Truncate(text, 2000), lang, 0); err != nil {
-			log.Print(err)
+			log.Printf("[ERROR] %v", err)
 		}
 	}()
 	return nil
@@ -697,10 +708,15 @@ type CatalogItem struct {
 	CanDetach bool     `json:"canDetach"`
 	CanHotkey bool     `json:"canHotkey,omitempty"` // 能不能绑直达快捷键
 	Path      string   `json:"path,omitempty"`
+	// 关键词（内置模块就是前缀）：能不能在这里改、自带的是什么、是不是改过、哪些和别的项撞了。
+	CanKeywords     bool              `json:"canKeywords,omitempty"`
+	DefaultKeywords []string          `json:"defaultKeywords,omitempty"`
+	CustomKeywords  bool              `json:"customKeywords,omitempty"`
+	Conflicts       []KeywordConflict `json:"conflicts,omitempty"`
 }
 
 // 道具库的分类顺序。
-var catalogOrder = []string{"效率工具", "开发工具", "内置模块", "网页插件", "脚本命令", "系统指令", "网页搜索", "文本片段", "Pocket"}
+var catalogOrder = []string{"效率工具", "开发工具", "内置模块", "扩展", "脚本命令", "系统指令", "网页搜索", "文本片段", "Pocket"}
 
 func (a *App) catalogItems() []CatalogItem {
 	cfg := a.config.Get()
@@ -709,6 +725,7 @@ func (a *App) catalogItems() []CatalogItem {
 		hotkeys[id] = k
 	}
 	var out []CatalogItem
+	owners := a.keywordOwners(cfg)
 	add := func(it core.Item, category string, keywords []string) {
 		ui := a.engine.NormalizeIcon(it.Icon)
 		canDetach := false
@@ -716,33 +733,48 @@ func (a *App) catalogItems() []CatalogItem {
 			v := it.Actions[0].View
 			canDetach = v.Type == "feature" || (v.Type == "panel" && v.URL != "")
 		}
-		out = append(out, CatalogItem{
+		item := CatalogItem{
 			ID: it.ID, Title: it.Title, Subtitle: it.Subtitle, Icon: ui, Category: category, Keywords: keywords,
 			Hotkey: hotkeys[it.ID], Kind: "item", Enabled: !slices.Contains(cfg.Disabled, it.ID), CanDetach: canDetach, CanHotkey: true, Path: it.Path,
-		})
+		}
+		if defaults, ok := a.defaultKeywords(it.ID); ok {
+			item.CanKeywords, item.DefaultKeywords = true, defaults
+			_, item.CustomKeywords = cfg.Keywords[it.ID]
+		}
+		isCommand := strings.HasPrefix(it.ID, "features:") && a.features.Def(strings.TrimPrefix(it.ID, "features:")) == nil
+		if item.Enabled && !isCommand {
+			item.Conflicts = conflictsOf(owners, a.ownerKey(it.ID), keywords)
+		}
+		out = append(out, item)
 	}
 	for _, it := range a.features.CatalogItems() {
 		add(it, it.SourceLabel, a.features.KeywordsOf(it.ID))
 	}
 	// 内置模块：按前缀或全局搜索使用的能力。
-	moduleItems := map[string]struct{ title, icon string }{
-		"apps": {"应用搜索", "svg:app"}, "files": {"文件搜索", "svg:file"}, "clipboard": {"剪贴板历史", "svg:clipboard"},
-		"snippets": {"文本片段", "svg:snippet"}, "calc": {"计算器", "svg:calculator"}, "paths": {"路径浏览", "svg:folder"},
-		"shell": {"命令行", "svg:terminal"}, "web": {"网页搜索", "svg:globe"}, "tools": {"快捷小工具", "svg:wrench"},
-	}
-	for _, id := range []string{"apps", "files", "clipboard", "snippets", "calc", "paths", "shell", "web", "tools"} {
+	defaults := store.DefaultConfig()
+	for _, id := range moduleOrder {
 		m := cfg.Modules[id]
-		meta := moduleItems[id]
+		meta := moduleMeta[id]
 		_, hasPage := modulePages[id]
-		out = append(out, CatalogItem{
+		item := CatalogItem{
 			ID: "module:" + id, Title: meta.title, Subtitle: moduleDescriptions[id], Icon: meta.icon, Category: "内置模块",
 			Prefix: m.Prefix, Kind: "module", Enabled: m.Enabled,
 			// 有页面的能开独立窗口；有页面或有前缀的能绑快捷键（按下就是打开它）。
 			Hotkey: hotkeys["module:"+id], CanDetach: hasPage, CanHotkey: hasPage || m.Prefix != "",
-		})
+			CanKeywords: true, DefaultKeywords: defaults.Modules[id].Prefixes(), CustomKeywords: m.Prefix != defaults.Modules[id].Prefix,
+		}
+		if m.Enabled {
+			item.Conflicts = conflictsOf(owners, "module:"+id, m.Prefixes())
+		}
+		out = append(out, item)
 	}
 	for _, it := range a.plugins.CatalogItems() {
-		add(it, "网页插件", nil)
+		// 扩展里的工具可以声明自己归到哪一类（效率工具、开发工具），没写的归到“扩展”。
+		category := "扩展"
+		if slices.Contains(catalogOrder, it.SourceLabel) {
+			category = it.SourceLabel
+		}
+		add(it, category, a.plugins.KeywordsOf(it.ID))
 	}
 	for _, it := range a.commands.CatalogItems() {
 		add(it, "脚本命令", a.commands.KeywordsOf(it.ID))
@@ -795,5 +827,5 @@ func (a *App) openItem(id string, detached bool) error {
 }
 
 func detachRequestFor(v *core.View) DetachRequest {
-	return DetachRequest{Feature: v.Feature, Input: v.Input, Args: v.Args, URL: v.URL, Plugin: v.Plugin, Title: v.Title, Icon: v.Icon, Height: v.Height}
+	return DetachRequest{Feature: v.Feature, Input: v.Input, Args: v.Args, URL: v.URL, Plugin: v.Plugin, Title: v.Title, Icon: v.Icon, Height: v.Height, Width: v.Width}
 }

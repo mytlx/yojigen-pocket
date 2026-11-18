@@ -4,7 +4,9 @@ package main
 
 // 只有带 -tags e2e 构建时才启用自动化接口和下面的测试钩子，用于端到端测试，不进入正式版本。
 import (
+	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -108,3 +110,57 @@ func (e *E2E) HotkeysSuspended() bool {
 	defer e.a.hotkeyMu.Unlock()
 	return e.a.hotkeysSuspended
 }
+
+// recordingInjector 只记录、不发送：端到端测试里连点器和宏用它，不会碰到真实的鼠标键盘。
+type recordingInjector struct {
+	mu  sync.Mutex
+	log []string
+}
+
+func (r *recordingInjector) add(s string) {
+	r.mu.Lock()
+	r.log = append(r.log, s)
+	r.mu.Unlock()
+}
+func (r *recordingInjector) MousePos() (int, int, bool) { return 640, 360, true }
+func (r *recordingInjector) MouseMove(x, y int) error {
+	r.add(fmt.Sprintf("move %d,%d", x, y))
+	return nil
+}
+func (r *recordingInjector) MouseButton(b string, down bool, n int) error {
+	r.add(fmt.Sprintf("%s %v #%d", b, down, n))
+	return nil
+}
+func (r *recordingInjector) MouseScroll(lines int) error {
+	r.add(fmt.Sprintf("scroll %d", lines))
+	return nil
+}
+func (r *recordingInjector) Key(code string, down bool) error {
+	r.add(fmt.Sprintf("key %s %v", code, down))
+	return nil
+}
+func (r *recordingInjector) Text(s string) error { r.add("text " + s); return nil }
+
+// FakeInput 把连点器和宏的输入换成只记录的假实现，返回是否已经换上。
+func (e *E2E) FakeInput() bool {
+	e.a.auto.stop()
+	e.a.auto.inject = &recordingInjector{}
+	_, ok := e.a.auto.inject.(*recordingInjector)
+	return ok
+}
+
+// InputLog 返回假实现记下的全部输入，并清空。
+func (e *E2E) InputLog() []string {
+	r, ok := e.a.auto.inject.(*recordingInjector)
+	if !ok {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := r.log
+	r.log = nil
+	return out
+}
+
+// BackendRunning 报告一个扩展的后端进程是不是开着。
+func (e *E2E) BackendRunning(id string) bool { return e.a.pluginHost.backendRunning(id) }

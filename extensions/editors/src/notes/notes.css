@@ -1,0 +1,1269 @@
+/* Markdown 笔记：编辑区的样式。所见即所得用的是 Milkdown（Crepe），这里把它的外观接到应用自己的变量上。 */
+
+.fx-notes-bar {
+  flex: none;
+  display: flex;
+  gap: 2px;
+}
+.fx-notes-body {
+  flex: 1;
+  min-height: 0;
+  /* 弹出的小面板（选中文字的工具栏、链接提示、菜单）用的底色：必须不透明，否则会和后面的文字叠在一起。 */
+  --note-float: #ffffff;
+  --note-float-line: rgba(16, 18, 24, 0.12);
+  /* 代码块的配色，默认跟着界面的深浅色走。 */
+  --code-bg: rgba(16, 18, 24, 0.045);
+  --code-border: rgba(16, 18, 24, 0.08);
+  --code-text: var(--text);
+  --code-dim: var(--text-3);
+  --code-sel: rgba(var(--accent-rgb), 0.2);
+  --code-line: rgba(16, 18, 24, 0.04);
+}
+:root[data-theme="dark"] .fx-notes-body {
+  --note-float: #2d3038;
+  --note-float-line: rgba(255, 255, 255, 0.14);
+  --code-bg: rgba(0, 0, 0, 0.26);
+  --code-border: rgba(255, 255, 255, 0.08);
+  --code-sel: rgba(var(--accent-rgb), 0.34);
+  --code-line: rgba(255, 255, 255, 0.05);
+}
+
+/* --- 代码块的配色方案：每套就是一组变量，只作用在代码块上（正文里的行内代码不跟着变） --- */
+.fx-notes-body[data-code-theme="github-light"] .milkdown-code-block {
+  --code-bg: #f6f8fa; --code-border: #d8dee4; --code-text: #1f2328; --code-dim: #8c959f; --code-sel: rgba(84, 174, 255, 0.34); --code-line: rgba(31, 35, 40, 0.05);
+  --cm-keyword: #cf222e; --cm-string: #0a3069; --cm-number: #0550ae; --cm-comment: #6e7781; --cm-function: #8250df;
+  --cm-type: #953800; --cm-property: #0550ae; --cm-tag: #116329; --cm-punct: #1f2328; --cm-meta: #8250df;
+}
+.fx-notes-body[data-code-theme="github-dark"] .milkdown-code-block {
+  --code-bg: #161b22; --code-border: #30363d; --code-text: #e6edf3; --code-dim: #6e7681; --code-sel: rgba(56, 139, 253, 0.36); --code-line: rgba(255, 255, 255, 0.05);
+  --cm-keyword: #ff7b72; --cm-string: #a5d6ff; --cm-number: #79c0ff; --cm-comment: #8b949e; --cm-function: #d2a8ff;
+  --cm-type: #ffa657; --cm-property: #79c0ff; --cm-tag: #7ee787; --cm-punct: #e6edf3; --cm-meta: #d2a8ff;
+}
+.fx-notes-body[data-code-theme="one-dark"] .milkdown-code-block {
+  --code-bg: #282c34; --code-border: #3a3f4b; --code-text: #abb2bf; --code-dim: #636d83; --code-sel: rgba(103, 118, 150, 0.42); --code-line: rgba(255, 255, 255, 0.045);
+  --cm-keyword: #c678dd; --cm-string: #98c379; --cm-number: #d19a66; --cm-comment: #7f848e; --cm-function: #61afef;
+  --cm-type: #e5c07b; --cm-property: #e06c75; --cm-tag: #e06c75; --cm-punct: #abb2bf; --cm-meta: #56b6c2;
+}
+.fx-notes-body[data-code-theme="solarized-light"] .milkdown-code-block {
+  --code-bg: #fdf6e3; --code-border: #eee8d5; --code-text: #586e75; --code-dim: #93a1a1; --code-sel: rgba(147, 161, 161, 0.32); --code-line: rgba(88, 110, 117, 0.06);
+  --cm-keyword: #859900; --cm-string: #2aa198; --cm-number: #d33682; --cm-comment: #93a1a1; --cm-function: #268bd2;
+  --cm-type: #b58900; --cm-property: #268bd2; --cm-tag: #cb4b16; --cm-punct: #657b83; --cm-meta: #6c71c4;
+}
+.fx-notes-body[data-code-theme="monokai"] .milkdown-code-block {
+  --code-bg: #272822; --code-border: #3e3d32; --code-text: #f8f8f2; --code-dim: #75715e; --code-sel: rgba(117, 113, 94, 0.5); --code-line: rgba(255, 255, 255, 0.045);
+  --cm-keyword: #f92672; --cm-string: #e6db74; --cm-number: #ae81ff; --cm-comment: #88846f; --cm-function: #a6e22e;
+  --cm-type: #66d9ef; --cm-property: #a6e22e; --cm-tag: #f92672; --cm-punct: #f8f8f2; --cm-meta: #fd971f;
+}
+/* 菜单里每个方案前面的小色块 */
+.fx-code-swatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 0.5px var(--line-strong);
+  background: linear-gradient(135deg, var(--well) 50%, var(--text-3) 50%);
+}
+.fx-code-swatch.is-github-light { background: linear-gradient(135deg, #f6f8fa 50%, #cf222e 50%); }
+.fx-code-swatch.is-github-dark { background: linear-gradient(135deg, #161b22 50%, #ff7b72 50%); }
+.fx-code-swatch.is-one-dark { background: linear-gradient(135deg, #282c34 50%, #c678dd 50%); }
+.fx-code-swatch.is-solarized-light { background: linear-gradient(135deg, #fdf6e3 50%, #859900 50%); }
+.fx-code-swatch.is-monokai { background: linear-gradient(135deg, #272822 50%, #f92672 50%); }
+
+/* --- 所见即所得 --- */
+.fx-notes-rich {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.fx-notes-rich .milkdown {
+  --crepe-color-background: transparent;
+  --crepe-color-on-background: var(--text);
+  --crepe-color-surface: var(--note-float);
+  --crepe-color-surface-low: var(--note-float);
+  --crepe-color-on-surface: var(--text);
+  --crepe-color-on-surface-variant: var(--text-2);
+  --crepe-color-outline: var(--text-3);
+  --crepe-color-primary: var(--accent);
+  --crepe-color-secondary: rgba(var(--accent-rgb), 0.16);
+  --crepe-color-on-secondary: var(--text);
+  --crepe-color-inverse: var(--text);
+  --crepe-color-on-inverse: var(--note-float);
+  --crepe-color-inline-code: var(--cm-tag, #c23b3b);
+  --crepe-color-error: var(--danger);
+  --crepe-color-hover: var(--hover);
+  --crepe-color-selected: rgba(var(--accent-rgb), 0.22);
+  --crepe-color-inline-area: var(--well);
+  --crepe-font-title: var(--font-ui);
+  --crepe-font-default: var(--font-ui);
+  --crepe-font-code: var(--font-mono);
+  --crepe-base-font-size: calc(14px * var(--zoom-rich, 1));
+  --crepe-shadow-1: 0 6px 22px rgba(0, 0, 0, 0.16), 0 0 0 0.5px var(--note-float-line);
+  --crepe-shadow-2: 0 10px 30px rgba(0, 0, 0, 0.2), 0 0 0 0.5px var(--note-float-line);
+  min-height: 100%;
+  background: transparent;
+}
+.fx-notes-rich .milkdown .ProseMirror {
+  padding: 14px 26px 60px 64px;
+  outline: none;
+  cursor: text;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.fx-notes-rich .milkdown .ProseMirror p {
+  line-height: 1.7;
+  min-height: calc(1.7em + 6px);
+  padding: 3px 0;
+}
+
+/* 标题：一级到六级逐级递增清晰区分，H6 不小于正文，一、二级带分割线。 */
+.fx-notes-rich .milkdown .ProseMirror :is(h1, h2, h3, h4, h5, h6) {
+  font-weight: 600;
+  line-height: 1.38;
+  padding: 2px 0;
+  letter-spacing: -0.005em;
+}
+.fx-notes-rich .milkdown .ProseMirror h1 {
+  font-size: 1.85em;
+  font-weight: 700;
+  line-height: 1.28;
+  margin-top: 26px;
+  padding-bottom: 7px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--line-strong);
+}
+.fx-notes-rich .milkdown .ProseMirror h2 {
+  font-size: 1.5em;
+  font-weight: 700;
+  line-height: 1.32;
+  margin-top: 24px;
+  padding-bottom: 5px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.fx-notes-rich .milkdown .ProseMirror h3 {
+  font-size: 1.28em;
+  font-weight: 600;
+  margin-top: 20px;
+}
+.fx-notes-rich .milkdown .ProseMirror h4 {
+  font-size: 1.14em;
+  font-weight: 600;
+  margin-top: 16px;
+}
+.fx-notes-rich .milkdown .ProseMirror h5 {
+  font-size: 1.06em;
+  font-weight: 600;
+  margin-top: 14px;
+}
+.fx-notes-rich .milkdown .ProseMirror h6 {
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.5;
+  margin-top: 14px;
+  color: var(--text-2);
+  text-transform: none;
+}
+.fx-notes-rich .milkdown .ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.fx-notes-rich .milkdown .ProseMirror a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: rgba(var(--accent-rgb), 0.4);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.fx-notes-rich .milkdown .ProseMirror blockquote {
+  padding-left: 16px;
+  color: var(--text-2);
+}
+.fx-notes-rich .milkdown .ProseMirror blockquote::before {
+  width: 3px;
+  background: rgba(var(--accent-rgb), 0.5);
+}
+.fx-notes-rich .milkdown .ProseMirror hr {
+  background-color: var(--line-strong);
+}
+
+/* 行内代码：可以折行。原来是 inline-block，在表格里遇到长的会顶出格子，压到后面的文字上。 */
+.fx-notes-rich .milkdown .ProseMirror :not(pre) > code {
+  display: inline;
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 0.88em;
+  line-height: inherit;
+  background: var(--well);
+  color: var(--cm-tag, #c23b3b);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* 上标、下标、高亮、按键、下划线 */
+.fx-notes-rich .milkdown .ProseMirror :is(sup, sub) {
+  font-size: 0.75em;
+  line-height: 0;
+}
+.fx-notes-rich .milkdown .ProseMirror sup {
+  vertical-align: super;
+}
+.fx-notes-rich .milkdown .ProseMirror sub {
+  vertical-align: sub;
+}
+.fx-notes-rich .milkdown .ProseMirror mark {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: rgba(255, 213, 0, 0.42);
+  color: inherit;
+}
+.fx-notes-rich .milkdown .ProseMirror kbd {
+  display: inline-block;
+  min-width: 1.5em;
+  padding: 0 5px;
+  border-radius: 5px;
+  border: 0.5px solid var(--line-strong);
+  border-bottom-width: 2px;
+  background: var(--card-solid);
+  font: 500 0.85em/1.5 var(--font-mono);
+  text-align: center;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+.fx-notes-rich .milkdown .ProseMirror u {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* 脚注 */
+.fx-notes-rich .milkdown .ProseMirror sup[data-type="footnote_reference"] {
+  padding: 0 2px;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: default;
+}
+.fx-notes-rich .milkdown .ProseMirror sup[data-type="footnote_reference"]::before {
+  content: "[";
+}
+.fx-notes-rich .milkdown .ProseMirror sup[data-type="footnote_reference"]::after {
+  content: "]";
+}
+.fx-notes-rich .milkdown .ProseMirror dl[data-type="footnote_definition"] {
+  display: flex;
+  gap: 8px;
+  margin: 2px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--line-strong);
+  font-size: 0.92em;
+  color: var(--text-2);
+}
+.fx-notes-rich .milkdown .ProseMirror dl[data-type="footnote_definition"] > dt {
+  flex: none;
+  color: var(--accent);
+  font-weight: 600;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.fx-notes-rich .milkdown .ProseMirror dl[data-type="footnote_definition"] > dt::after {
+  content: "：";
+  color: var(--text-3);
+}
+.fx-notes-rich .milkdown .ProseMirror dl[data-type="footnote_definition"] > dd {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 公式 */
+.fx-notes-rich .milkdown .ProseMirror span[data-type="math_inline"] {
+  padding: 0 2px;
+  color: inherit;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+.fx-notes-rich .milkdown .ProseMirror span[data-type="math_inline"].ProseMirror-selectednode {
+  border-radius: 4px;
+}
+.fx-notes-rich .milkdown .katex {
+  font-size: 1.08em;
+}
+.fx-notes-rich .milkdown .milkdown-code-block .preview .katex-display {
+  margin: 6px 0;
+}
+
+/* [TOC] 目录 */
+.fx-notes-rich .milkdown .ProseMirror p.md-toc-marker {
+  padding: 0;
+  font: 500 11px/1.6 var(--font-mono);
+  color: var(--text-3);
+}
+.fx-notes-rich .milkdown .ProseMirror .md-toc {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 2px 0 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--well);
+  font-size: 0.93em;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+.fx-notes-rich .milkdown .ProseMirror .md-toc.is-empty {
+  color: var(--text-3);
+}
+.fx-notes-rich .milkdown .ProseMirror .md-toc-item {
+  display: block;
+  margin: 0;
+  border-radius: 5px;
+  color: var(--text);
+  text-decoration: none;
+  line-height: 1.75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.fx-notes-rich .milkdown .ProseMirror .md-toc-item:hover {
+  color: var(--accent);
+}
+
+/* 列表的圆点和序号对齐到行高 */
+.fx-notes-rich .milkdown .milkdown-list-item-block li .label-wrapper {
+  height: calc(1.7em + 6px);
+}
+.fx-notes-rich .milkdown .milkdown-list-item-block li .label-wrapper .label {
+  height: auto;
+  padding: 0;
+  line-height: 1.7;
+}
+
+/* --- 表格 --- */
+.fx-notes-rich .milkdown .milkdown-table-block {
+  margin: 8px 0;
+  max-width: 100%;
+}
+.fx-notes-rich .milkdown .milkdown-table-block table {
+  border-collapse: collapse;
+}
+.fx-notes-rich .milkdown .milkdown-table-block :is(th, td) {
+  padding: 5px 12px;
+  border: 1px solid var(--line-strong);
+  vertical-align: top;
+  /* 格子里的内容可以在任意位置折行，长网址、长代码不会把表格撑出去。 */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 48px;
+}
+.fx-notes-rich .milkdown .milkdown-table-block th {
+  background: var(--well);
+  font-weight: 650;
+}
+.fx-notes-rich .milkdown .milkdown-table-block :is(th, td) p {
+  padding: 0;
+}
+
+/* --- 代码块 --- */
+.fx-notes-rich .milkdown .milkdown-code-block {
+  margin: 8px 0;
+  padding: 6px 12px 10px;
+  border-radius: 10px;
+  background: var(--code-bg);
+  box-shadow: inset 0 0 0 0.5px var(--code-border);
+  color: var(--code-text);
+}
+.fx-notes-rich .milkdown .milkdown-code-block.selected {
+  outline: 1.5px solid rgba(var(--accent-rgb), 0.55);
+}
+.fx-notes-rich .milkdown .milkdown-code-block .cm-editor,
+.fx-notes-rich .milkdown .milkdown-code-block .cm-gutters {
+  background: transparent;
+}
+.fx-notes-rich .milkdown .milkdown-code-block .cm-content,
+.fx-notes-rich .milkdown .milkdown-code-block .cm-line {
+  cursor: text;
+}
+.fx-notes-rich .milkdown .milkdown-code-block .cm-foldGutter {
+  display: none !important;
+}
+/* 代码块里的选中颜色由编辑器自己画（--code-sel），不要再叠一层系统的选中色。 */
+.fx-notes-rich .milkdown .ProseMirror .milkdown-code-block .cm-content ::selection,
+.fx-notes-rich .milkdown .ProseMirror .milkdown-code-block .cm-line::selection {
+  background: transparent;
+}
+.fx-notes-rich .milkdown .milkdown-code-block .tools {
+  min-height: 24px;
+  margin-bottom: 2px;
+}
+.fx-notes-rich .milkdown .milkdown-code-block .tools .language-button {
+  margin: 0;
+  padding: 2px 4px 2px 8px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--code-dim);
+  font: 500 11px/16px var(--font-ui);
+  opacity: 1;
+}
+.fx-notes-rich .milkdown .milkdown-code-block .tools .language-button:hover {
+  background: var(--code-line);
+  color: var(--code-text);
+}
+.fx-notes-rich .milkdown .milkdown-code-block .tools .language-button .expand-icon svg {
+  color: var(--code-dim);
+}
+.fx-notes-rich .milkdown .milkdown-code-block .tools .tools-button-group > button {
+  padding: 2px 8px;
+  border-radius: 6px !important;
+  background: transparent;
+  color: var(--code-dim);
+  font: 500 11px/16px var(--font-ui);
+}
+.fx-notes-rich .milkdown .milkdown-code-block .tools .tools-button-group > button svg {
+  fill: currentColor;
+}
+.fx-notes-rich .milkdown .milkdown-code-block .tools .tools-button-group > button:hover {
+  background: var(--code-line);
+  color: var(--code-text);
+}
+.fx-notes-rich .milkdown .milkdown-code-block .list-wrapper {
+  border-radius: 10px;
+  background: var(--note-float);
+  color: var(--text);
+  box-shadow: var(--crepe-shadow-2);
+  padding-top: 8px;
+}
+.fx-notes-rich .milkdown .milkdown-code-block .language-list {
+  height: 240px;
+}
+.fx-notes-rich .milkdown .milkdown-code-block .language-list-item {
+  padding: 3px 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.fx-notes-rich .milkdown .milkdown-code-block .language-list-item .leading:empty {
+  display: none;
+}
+.fx-notes-rich .milkdown .milkdown-code-block .search-box {
+  margin: 0 8px 6px;
+  padding: 4px 8px;
+  outline: 0;
+  border-radius: 7px;
+  background: var(--well);
+}
+.fx-notes-rich .milkdown .milkdown-code-block .search-box:has(input:focus) {
+  outline: 1.5px solid var(--accent);
+}
+.fx-notes-rich .milkdown .milkdown-code-block .search-box input {
+  font-size: 12.5px;
+  color: var(--text);
+}
+.fx-notes-rich .milkdown .milkdown-code-block .preview-panel .preview-label {
+  color: var(--code-dim);
+  text-transform: none;
+  font-size: 11px;
+}
+
+/* --- 悬浮的小面板：选中文字的工具栏、链接提示、斜杠菜单、块手柄 --- */
+.fx-notes-rich .milkdown :is(.milkdown-toolbar, .milkdown-link-preview > .link-preview, .milkdown-link-edit > .link-edit, .milkdown-slash-menu, .milkdown-latex-inline-edit) {
+  background: var(--note-float);
+  color: var(--text);
+  z-index: 30;
+}
+.fx-notes-rich .milkdown .milkdown-toolbar .toolbar-item svg {
+  fill: var(--text-2);
+}
+.fx-notes-rich .milkdown .milkdown-toolbar .toolbar-item.active svg {
+  fill: var(--accent);
+}
+.fx-notes-rich .milkdown .milkdown-link-preview .link-display {
+  max-width: 320px;
+  font-size: 12.5px;
+}
+.fx-notes-rich .milkdown .milkdown-slash-menu {
+  font-size: 13px;
+}
+.fx-notes-rich .milkdown .milkdown-block-handle {
+  gap: 0;
+  cursor: default;
+}
+.fx-notes-rich .milkdown .milkdown-block-handle .operation-item {
+  width: 22px;
+  height: 24px;
+  padding: 3px 2px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.fx-notes-rich .milkdown .milkdown-block-handle .operation-item:last-child {
+  cursor: grab;
+}
+.fx-notes-rich .milkdown .milkdown-block-handle .operation-item svg {
+  width: 18px;
+  height: 18px;
+  fill: var(--text-3);
+}
+.fx-notes-rich .milkdown .milkdown-block-handle .operation-item:hover svg {
+  fill: var(--text);
+}
+
+/* --- 菜单（块菜单、右上角的“更多”） --- */
+.fx-menu {
+  position: absolute;
+  z-index: 60;
+  min-width: 190px;
+  padding: 5px;
+  border-radius: 11px;
+  background: var(--note-float, var(--card-solid));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2), 0 0 0 0.5px var(--line-strong);
+  color: var(--text);
+  font-size: 12.5px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+:root {
+  --note-float: #ffffff;
+}
+:root[data-theme="dark"] {
+  --note-float: #2d3038;
+}
+.fx-block-menu {
+  position: fixed;
+}
+.fx-notes-more {
+  position: relative;
+}
+.fx-notes-more > .fx-menu {
+  top: calc(100% + 4px);
+  right: 0;
+}
+.fx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.fx-menu-item > span:not(.fx-code-swatch) {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+.fx-menu-item > svg:first-child {
+  flex: none;
+  color: var(--text-2);
+}
+.fx-menu-item:hover:not(:disabled) {
+  background: var(--hover);
+}
+.fx-menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.fx-menu-item.is-current {
+  color: var(--accent);
+}
+.fx-menu-item.is-current > svg:first-child,
+.fx-menu-check {
+  color: var(--accent);
+}
+.fx-menu-item.is-danger,
+.fx-menu-item.is-danger > svg:first-child {
+  color: var(--danger);
+}
+.fx-menu-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px 3px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+.fx-menu-sep {
+  height: 0.5px;
+  margin: 4px 6px;
+  background: var(--line-strong);
+}
+.fx-block-kinds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 4px;
+}
+.fx-block-menu {
+  min-width: 250px;
+}
+
+/* --- 文档属性（frontmatter） --- */
+.fx-notes-front {
+  flex: none;
+  border-radius: var(--radius-control);
+  background: var(--well);
+  font-size: 12px;
+}
+.fx-notes-front-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.fx-notes-front-label {
+  flex: none;
+  font-weight: 600;
+}
+.fx-notes-front-keys {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fx-notes-front-text {
+  display: block;
+  width: 100%;
+  padding: 2px 12px 10px 28px;
+  border: 0;
+  outline: 0;
+  resize: vertical;
+  background: transparent;
+  color: var(--text);
+  font: 12px/1.6 var(--font-mono);
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+/* 源码模式和代码草稿：编辑区里是文字光标。 */
+.code-editor .cm-content,
+.code-editor .cm-line {
+  cursor: text;
+}
+
+/* 笔记导航、可调三栏、右键菜单与确认弹窗。 */
+.fx-notes {
+  gap: 0;
+}
+.fx-notes > .fx-side,
+.fx-notes > .pocket-note-outline {
+  flex: none;
+  min-height: 0;
+  overflow: hidden;
+  transition: width var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out), border-color var(--dur-fast);
+}
+.fx-notes > .fx-side[hidden],
+.fx-notes > .pocket-note-outline[hidden],
+.fx-notes-resizer[hidden] {
+  display: none;
+}
+.fx-notes > .fx-side.is-collapsed,
+.fx-notes > .pocket-note-outline.is-collapsed {
+  width: 0 !important;
+  opacity: 0;
+  border-color: transparent;
+  pointer-events: none;
+}
+.fx-notes.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.fx-notes.is-resizing > .fx-side,
+.fx-notes.is-resizing > .pocket-note-outline,
+.fx-notes.is-resizing > .fx-notes-resizer {
+  transition: none !important;
+}
+.fx-notes.is-resizing .fx-notes-body,
+.fx-notes.is-resizing .pocket-html-preview {
+  pointer-events: none;
+}
+
+.fx-notes-resizer {
+  position: relative;
+  flex: none;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+  transition: width var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+.fx-notes-resizer::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 50%;
+  width: 2px;
+  border-radius: 2px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background var(--dur-fast);
+}
+.fx-notes-resizer:hover::after,
+.fx-notes-resizer.is-active::after {
+  background: var(--accent);
+}
+.fx-notes-resizer.is-collapsed {
+  width: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 文件栏头部两行结构：第一行工具栏，第二行独占搜索框。 */
+.fx-notes .fx-side-toolbar {
+  min-height: 34px;
+  padding: 0 6px;
+  gap: 4px;
+  white-space: nowrap;
+}
+.fx-side-search-row {
+  flex: none;
+  padding: 6px 8px;
+  border-bottom: 0.5px solid var(--line);
+}
+.fx-side-search-row .fx-side-search {
+  width: 100%;
+  height: 28px;
+  margin-left: 0;
+  padding: 0 6px 0 8px;
+  border-radius: 7px;
+  background: var(--well);
+  box-shadow: inset 0 0 0 0.5px var(--line);
+  transition: box-shadow var(--dur-fast);
+}
+.fx-side-search-row .fx-side-search:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.fx-side-search-row .fx-side-search.is-invalid {
+  box-shadow: inset 0 0 0 1.5px var(--danger);
+}
+.fx-side-regex {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-2);
+  font: 700 12.5px/1 var(--font-mono);
+  cursor: pointer;
+}
+.fx-side-regex:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.fx-side-regex.is-active {
+  background: var(--sel);
+  border-color: var(--sel-rim);
+  color: var(--accent);
+}
+.fx-side-clear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 5px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.fx-side-clear:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.fx-notes .fx-side-list {
+  outline: none;
+  overflow: auto;
+}
+.fx-notes .fx-side-item {
+  position: relative;
+  min-width: 100%;
+  width: max-content;
+  box-sizing: border-box;
+}
+.fx-notes .fx-side-name {
+  flex: 1 0 auto;
+  min-width: auto;
+  overflow: visible;
+  text-overflow: clip;
+}
+.fx-notes .fx-side-tools {
+  position: sticky;
+  right: 2px;
+  margin-left: auto;
+  padding: 2px 3px 2px 10px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 5%, var(--note-float)) 10px);
+}
+.fx-notes .fx-side-item.is-selected .fx-side-tools {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, rgb(var(--accent-rgb)) 16%, var(--note-float)) 10px);
+}
+:root[data-theme="dark"] .fx-notes .fx-side-item.is-selected .fx-side-tools {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, rgb(var(--accent-rgb)) 34%, var(--note-float)) 10px);
+}
+.fx-notes .fx-side-item.is-picked .fx-side-tools {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, rgb(var(--accent-rgb)) 15%, var(--note-float)) 10px);
+}
+.fx-notes .fx-side-item.is-confirming .fx-side-tools {
+  display: inline-flex;
+}
+.fx-notes .fx-side-del.is-confirm {
+  width: auto;
+  padding: 0 7px;
+  opacity: 1;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--note-float));
+  background: color-mix(in srgb, var(--danger) 18%, var(--note-float));
+}
+.fx-notes .fx-side-del.is-confirm:hover {
+  background: var(--danger);
+  color: #fff;
+}
+.fx-side-item.is-ctx-target {
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.6);
+  background: rgba(var(--accent-rgb), 0.06);
+}
+.fx-side-item.is-picked {
+  background: rgba(var(--accent-rgb), 0.14);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.45);
+}
+.fx-notes .fx-side-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  white-space: nowrap;
+}
+.fx-side-selcount {
+  font-size: 11px;
+  color: var(--accent);
+}
+.fx-notes-empty-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
+}
+
+/* 大纲栏与编辑器快捷键、块源码。 */
+.pocket-note-outline {
+  flex: none;
+  min-height: 0;
+}
+.pocket-note-outline .fx-side-head {
+  min-height: 34px;
+  padding: 0 6px 0 11px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.pocket-note-outline .fx-side-list {
+  overflow: auto;
+  padding: 5px;
+}
+.pocket-outline-tree {
+  min-width: 100%;
+  width: max-content;
+  display: flex;
+  flex-direction: column;
+}
+.pocket-outline-node {
+  display: flex;
+  flex-direction: column;
+}
+.pocket-outline-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 26px;
+  padding: 0 8px 0 4px;
+  border-radius: 6px;
+  color: var(--text-2);
+}
+.pocket-outline-row:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.pocket-outline-toggle,
+.pocket-outline-spacer {
+  flex: none;
+  width: 16px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--text-3);
+}
+.pocket-outline-toggle {
+  cursor: pointer;
+}
+.pocket-outline-toggle:hover {
+  background: var(--well);
+  color: var(--text);
+}
+.pocket-outline-label {
+  flex: 1 0 auto;
+  border: 0;
+  padding: 4px 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pocket-outline-children {
+  margin-left: 12px;
+  padding-left: 6px;
+  border-left: 1px solid var(--line-strong);
+  display: flex;
+  flex-direction: column;
+  transition: border-color var(--dur-fast);
+}
+.pocket-outline-node:hover > .pocket-outline-children {
+  border-left-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+}
+.pocket-note-shortcuts { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.pocket-note-shortcuts label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.pocket-note-shortcuts input { width: 175px; padding: 6px; background: var(--well); color: var(--text); border: 1px solid var(--line); border-radius: 5px; }
+.fx-notes-rich .ProseMirror:has(.pocket-block-source, .pocket-syntax-input:focus, .pocket-html-input:focus) .prosemirror-virtual-cursor {
+  display: none;
+}
+
+/* Typora 行内语法显隐与块前缀实时渲染（模式一）。 */
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap {
+  position: relative;
+  display: inline-grid;
+  align-items: baseline;
+  vertical-align: baseline;
+  margin: 0 1px;
+  border-radius: 4px;
+  background: rgba(var(--accent-rgb), 0.11);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  line-height: 1.35;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap::after {
+  content: attr(data-text);
+  grid-area: 1 / 1;
+  visibility: hidden;
+  white-space: pre;
+  min-width: 1ch;
+  padding: 0 3px;
+  font: inherit;
+  line-height: inherit;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap.is-url::after {
+  max-width: 320px;
+  overflow: hidden;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap > .pocket-syntax-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0 3px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--accent);
+  caret-color: var(--text);
+  font: inherit;
+  line-height: inherit;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap.is-block-prefix {
+  margin-right: 4px;
+  background: rgba(var(--accent-rgb), 0.14);
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap.is-url {
+  max-width: 320px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-static {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--text-3);
+  padding: 0 1px;
+  user-select: none;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-link-tail {
+  display: inline-flex;
+  align-items: baseline;
+  vertical-align: baseline;
+}
+.fx-notes-rich .milkdown .ProseMirror .milkdown-list-item-block.pocket-active-prefix-li > .list-item > .label-wrapper {
+  display: none;
+}
+.fx-notes-rich .milkdown .ProseMirror .milkdown-list-item-block.pocket-active-prefix-li > .list-item > .children > .content-dom > p:first-of-type ~ * {
+  margin-left: 34px;
+}
+.fx-notes-rich .milkdown .ProseMirror blockquote:has(> p.pocket-active-prefix-quote) {
+  padding-left: 0;
+}
+.fx-notes-rich .milkdown .ProseMirror blockquote:has(> p.pocket-active-prefix-quote)::before {
+  display: none;
+}
+.fx-notes-rich .milkdown .ProseMirror blockquote:has(> p.pocket-active-prefix-quote) > :not(.pocket-active-prefix-quote) {
+  padding-left: 16px;
+  border-left: 3px solid rgba(var(--accent-rgb), 0.5);
+}
+.fx-notes-rich .milkdown .ProseMirror blockquote:has(> p.pocket-active-prefix-quote) > blockquote:not(.pocket-active-prefix-quote) {
+  padding-left: 30px;
+}
+.fx-notes-rich .milkdown .ProseMirror blockquote:has(> p.pocket-active-prefix-quote) > blockquote:not(.pocket-active-prefix-quote)::before {
+  left: 14px;
+}
+
+/* 阅读模式下 HTML 与 <br> 直接渲染。 */
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-br {
+  display: inline;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-br:only-child::after {
+  content: "\200b";
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-style,
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-comment {
+  display: none;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-live {
+  display: inline;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-live.is-block {
+  display: block;
+  width: 100%;
+  margin: 4px 0;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-block {
+  margin: 6px 0;
+}
+.fx-notes-rich .milkdown .ProseMirror details.pocket-html-block {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--well) 45%, transparent);
+}
+.fx-notes-rich .milkdown .ProseMirror details.pocket-html-block > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+  user-select: none;
+}
+.fx-notes-rich .milkdown .ProseMirror details.pocket-html-block[open] > summary {
+  margin-bottom: 6px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-live :is(ul, ol) {
+  padding-left: 22px;
+  margin: 4px 0;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-live details {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-live details > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-live table {
+  border-collapse: collapse;
+  margin: 4px 0;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-live :is(th, td) {
+  border: 1px solid var(--line-strong);
+  padding: 4px 10px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-editing {
+  display: inline-block;
+  max-width: 100%;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-editing:has(> textarea) {
+  display: block;
+  width: 100%;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-input {
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid rgba(var(--accent-rgb), 0.55);
+  border-radius: 5px;
+  background: var(--well);
+  color: var(--text);
+  caret-color: var(--text);
+  font: 13px/1.55 var(--font-mono);
+  outline: none;
+  max-width: 100%;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-html-editing > textarea.pocket-html-input {
+  width: 100%;
+  display: block;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-block-source {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  overflow: hidden;
+  padding: 2px 6px;
+  margin: 1px 0;
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--well) 70%, transparent);
+  color: var(--text);
+  caret-color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 1em;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  outline: none;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-block-source[data-heading-level="1"] {
+  font-size: 1.65em;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-block-source[data-heading-level="2"] {
+  font-size: 1.38em;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-block-source[data-heading-level="3"] {
+  font-size: 1.2em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-block-source[data-heading-level="4"] {
+  font-size: 1.1em;
+  font-weight: 600;
+  line-height: 1.45;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-block-source[data-heading-level="5"] {
+  font-size: 1.04em;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-block-source[data-heading-level="6"] {
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.pocket-html-preview { border: 0; width: 100%; height: 100%; flex: 1; background: var(--card); }
+.fx-notes-head { flex-wrap: wrap; }
+.fx-notes-head-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+.fx-notes-title { min-width: 100px; }
+
+/* 文件栏右键菜单 */
+.fx-side-menu {
+  position: fixed;
+  min-width: 196px;
+}
+.fx-menu-kbd {
+  flex: none;
+  margin-left: 8px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--well);
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+}
+
+/* 统一删除二次确认对话框 */
+.fx-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.32);
+  animation: q-fade-up 120ms var(--ease-out);
+}
+.fx-confirm-dialog {
+  width: min(360px, 100%);
+  padding: 16px;
+  border-radius: 13px;
+  background: var(--note-float, var(--card-solid));
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.28), 0 0 0 0.5px var(--line-strong);
+  color: var(--text);
+}
+.fx-confirm-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.fx-confirm-desc {
+  margin-top: 8px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+.fx-confirm-desc p {
+  margin: 0;
+}
+.fx-confirm-list {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  list-style: none;
+  border-radius: 8px;
+  background: var(--well);
+  font-size: 12px;
+  color: var(--text);
+}
+.fx-confirm-list li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.65;
+}
+.fx-confirm-list li.is-more {
+  color: var(--text-3);
+}
+.fx-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.fx-confirm-actions .ui-btn.is-primary.is-danger {
+  background: var(--danger);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 1px 2px rgba(212, 49, 43, 0.35);
+}
+.fx-confirm-actions .ui-btn.is-primary.is-danger:hover:not(:disabled) {
+  background: var(--danger);
+  filter: brightness(1.08);
+}

@@ -47,6 +47,8 @@ var (
 	PayloadArrived = mygo.NewEvent[PayloadInfo]("panel:payload")
 	// ClipboardChanged 在剪贴板历史有变化时发送（剪贴板页据此刷新）。
 	ClipboardChanged = mygo.NewEvent[struct{}]("clipboard:changed")
+	// HotkeyCaptured 在系统保留按键（如 Windows 的 Alt+Space）被窗口快捷键录制拦截时发送。
+	HotkeyCaptured = mygo.NewEvent[string]("hotkey:captured")
 )
 
 // PanelShownEvent 描述这次唤出。
@@ -73,7 +75,8 @@ type UserAssets struct {
 
 // AppInfo 是页面启动时需要的信息。
 type AppInfo struct {
-	Platform       string      `json:"platform"` // darwin | windows | linux
+	E2E            bool        `json:"e2e,omitempty"` // 测试构建：允许端到端测试查看扩展页面内部
+	Platform       string      `json:"platform"`      // darwin | windows | linux
 	Version        string      `json:"version"`
 	GlassSupported bool        `json:"glassSupported"`
 	Dark           bool        `json:"dark"`
@@ -127,6 +130,7 @@ func (l *Launcher) Info() AppInfo {
 		GlassSupported: platform.GlassSupported(),
 		Dark:           mygo.Theme.IsDark(),
 		Paths:          l.a.paths,
+		E2E:            allowSecondInstance, // 只有测试构建里为真
 	}
 }
 
@@ -173,6 +177,9 @@ func (l *Launcher) Execute(ctx context.Context, req core.ExecRequest, out *mygo.
 // Hide 隐藏主窗口。
 func (l *Launcher) Hide() { l.a.hidePanel() }
 
+// SetInTool 记录主窗口当前是否停留在工具页面或命令作用域中（隐藏后不自动重置）。
+func (l *Launcher) SetInTool(active bool) { l.a.panelInTool.Store(active) }
+
 // ClipboardPayload 把剪贴板里的内容（文件、图片或文字）做成一块带进搜索框。剪贴板是空的时返回 null。
 func (l *Launcher) ClipboardPayload() *PayloadInfo {
 	return l.a.payloadInfo(l.a.clipboardPayload("paste"))
@@ -198,7 +205,7 @@ func (l *Launcher) OpenExternal(target string) error {
 		return errors.New("只能打开 http / https 链接")
 	}
 	l.a.hidePanel()
-	return mygo.Shell.OpenExternal(target)
+	return openExternal(target)
 }
 
 // OpenSettings 打开设置窗口。
@@ -225,47 +232,9 @@ func (l *Launcher) PickFile(ctx context.Context) (string, error) {
 }
 
 // PluginCall 转发插件的请求。主页面只把来自当前插件 iframe 的消息转过来，
-// 插件 ID 由主页面根据视图给出，插件自己无法冒充。
-func (l *Launcher) PluginCall(plugin, method string, args []any) (any, error) {
-	a := l.a
-	str := func(i int) string {
-		if i < len(args) {
-			s, _ := args[i].(string)
-			return s
-		}
-		return ""
-	}
-	switch method {
-	case "copyText":
-		mygo.Clipboard.WriteText(str(0))
-	case "readClipboard":
-		return mygo.Clipboard.ReadText(), nil
-	case "pasteText":
-		mygo.Clipboard.WriteText(str(0))
-		a.hidePanel()
-		return nil, platform.SendPaste()
-	case "openExternal":
-		target := str(0)
-		if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
-			return nil, errors.New("只能打开 http / https 链接")
-		}
-		return nil, mygo.Shell.OpenExternal(target)
-	case "notify":
-		a.host.Notify(str(0), str(1))
-	case "hide":
-		a.hidePanel()
-	case "getStorage":
-		return a.pluginStorageGet(plugin, str(0))
-	case "setStorage":
-		var value any
-		if len(args) > 1 {
-			value = args[1]
-		}
-		return nil, a.pluginStorageSet(plugin, str(0), value)
-	default:
-		return nil, fmt.Errorf("不支持的调用：%s", method)
-	}
-	return nil, nil
+// PluginCall 是扩展页面里 window.pocket 的调用入口：tool 是页面属于哪个工具，按清单里声明的权限放行。
+func (l *Launcher) PluginCall(ctx context.Context, plugin, tool, method string, args []any) (any, error) {
+	return l.a.pluginHost.call(ctx, plugin, tool, method, args)
 }
 
 // Settings 是设置窗口调用的服务。
@@ -428,7 +397,7 @@ func (s *Settings) OpenFolder(which string) error {
 	if target == "" {
 		return fmt.Errorf("未知的目录：%s", which)
 	}
-	return mygo.Shell.OpenPath(target)
+	return openPath(target)
 }
 
 // EditFile 用编辑器打开文件。只能打开用户目录里的文件。
@@ -485,9 +454,9 @@ func (s *Settings) Doctor() []DoctorItem {
 	}
 	if runtime.GOOS == "darwin" {
 		trusted := platform.AccessibilityTrusted()
-		item := DoctorItem{Title: "辅助功能权限", OK: trusted, Detail: "已授权，可以自动粘贴"}
+		item := DoctorItem{Title: "辅助功能权限", OK: trusted, Detail: "已授权，可以自动粘贴、模拟按键"}
 		if !trusted {
-			item.Detail = "未授权：回车只会复制，不会自动粘贴到当前窗口"
+			item.Detail = "未授权：回车只会复制，不会自动粘贴；连点器和键盘宏用不了。" + staleGrantHint
 			item.Action = "accessibility"
 		}
 		out = append(out, item)
@@ -496,10 +465,20 @@ func (s *Settings) Doctor() []DoctorItem {
 		ok := platform.ScreenCaptureAllowed()
 		item := DoctorItem{Title: "屏幕录制权限", OK: ok, Detail: "已授权，可以截图识别文字"}
 		if !ok {
-			item.Detail = "未授权：截图识别只能截到桌面背景"
+			item.Detail = "未授权：截图识别只能截到桌面背景。授权后要重启本应用才生效。" + staleGrantHint
 			item.Action = "screen"
 		}
 		out = append(out, item)
+		disk := platform.FullDiskAccess()
+		item = DoctorItem{Title: "完全磁盘访问权限（可选）", OK: disk, Detail: "已授权，文件搜索能搜到其他应用数据目录里的文件"}
+		if !disk {
+			item.Detail = "未授权：其他应用数据目录里的文件（比如微信收到的文件）搜不到，系统会把这部分结果去掉。不需要的话可以不管。授权后要重启本应用"
+			item.Action = "disk"
+		}
+		out = append(out, item)
+		if platform.AdHocSigned() {
+			out = append(out, DoctorItem{Title: "应用签名", OK: true, Detail: "这个版本没有固定的开发者签名。每次更新后，系统会把它当成一个新应用：上面的权限要点“重置”后重新授权"})
+		}
 	}
 	if runtime.GOOS == "windows" {
 		if p, ok := providers.EverythingStatus(s.a.config.Get()); ok {
@@ -530,10 +509,37 @@ func (s *Settings) Doctor() []DoctorItem {
 // ResetPanelPosition 让主窗口回到屏幕中间，忘掉拖动过的位置。
 func (s *Settings) ResetPanelPosition() { s.a.resetPanelPosition() }
 
-// Permissions 报告系统权限的状态。
+// staleGrantHint 解释 macOS 上最让人困惑的一种情况：系统设置里的开关开着，应用却没有权限。
+const staleGrantHint = "系统设置里已经打开了还是这样？更新或重装之后，系统认的是旧版本的授权：点“重置”清掉旧记录，再重新打开开关"
+
+// Permissions 报告系统权限的状态。disk 是“完全磁盘访问”，adhoc 表示应用没有固定的签名（更新后要重新授权）。
 func (s *Settings) Permissions() map[string]bool {
-	return map[string]bool{"accessibility": platform.AccessibilityTrusted(), "screen": platform.ScreenCaptureAllowed()}
+	return map[string]bool{
+		"accessibility": platform.AccessibilityTrusted(),
+		"screen":        platform.ScreenCaptureAllowed(),
+		"disk":          platform.FullDiskAccess(),
+		"adhoc":         platform.AdHocSigned(),
+	}
 }
+
+// ResetPermission 清掉系统里旧的授权记录，再把授权流程重新走一遍（kind：accessibility | screen）。
+// 用来处理“系统设置里明明开着、应用却说没有权限”：更新或重装之后系统认的是旧版本。
+func (s *Settings) ResetPermission(kind string) error {
+	if err := platform.ResetPermission(kind); err != nil {
+		return err
+	}
+	switch kind {
+	case "accessibility":
+		platform.PromptAccessibility() // 把应用重新加进列表，用户只需要打开开关
+		platform.OpenAccessibilitySettings()
+	case "screen":
+		platform.RequestScreenCapture()
+	}
+	return nil
+}
+
+// OpenFullDisk 打开系统设置里的“完全磁盘访问权限”。
+func (s *Settings) OpenFullDisk() { platform.OpenFullDiskAccessSettings() }
 
 // Relaunch 重启应用（授予系统权限后需要重启才生效）。
 func (s *Settings) Relaunch() { mygo.App.Relaunch() }

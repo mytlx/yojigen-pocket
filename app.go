@@ -34,12 +34,13 @@ var trayIconColor []byte
 
 // App 把引擎、窗口和系统能力粘在一起。
 type App struct {
-	paths   store.Paths
-	config  *store.ConfigStore
-	usage   *store.Usage
-	engine  *core.Engine
-	host    *host
-	version string
+	diagnostic diagnosticLog
+	paths      store.Paths
+	config     *store.ConfigStore
+	usage      *store.Usage
+	engine     *core.Engine
+	host       *host
+	version    string
 
 	apps      *providers.Apps
 	clipboard *providers.Clipboard
@@ -64,6 +65,8 @@ type App struct {
 	pendingView atomic.Pointer[core.View]
 
 	payloads          payloadStore
+	auto              *autoEngine
+	pluginHost        *pluginHost
 	media             *mediaServer
 	calcHistory       *calcHistory
 	wintools          *providers.WinTools
@@ -90,15 +93,17 @@ type App struct {
 	registered   []string
 	// hotkeysSuspended 为真时不注册任何全局热键：设置里正在录快捷键，按下的组合要交给页面，而不是触发它。
 	hotkeysSuspended bool
+	hotkeyCapture    atomic.Bool
 
 	urlMu      sync.Mutex
 	pendingURL string
 	isReady    bool
 
-	blurPaused atomic.Bool
-	quitting   atomic.Bool
-	lastHidden atomic.Int64
-	cancel     context.CancelFunc
+	blurPaused  atomic.Bool
+	quitting    atomic.Bool
+	lastHidden  atomic.Int64
+	panelInTool atomic.Bool
+	cancel      context.CancelFunc
 }
 
 // ready 在应用就绪后初始化一切。
@@ -107,14 +112,16 @@ func (a *App) ready() {
 	a.version = mygo.App.Version()
 	a.paths = store.ResolvePaths(mygo.IsDev())
 	if err := a.paths.Ensure(); err != nil {
-		log.Printf("创建用户目录失败：%v", err)
+		log.Printf("[ERROR] 创建用户目录失败：%v", err)
 	}
 	if _, err := os.Stat(a.paths.Config); os.IsNotExist(err) {
 		if err := seed.Install(a.paths.Home); err != nil {
-			log.Printf("写入示例文件失败：%v", err)
+			log.Printf("[ERROR] 写入示例文件失败：%v", err)
 		}
 	}
 	a.config = store.NewConfigStore(a.paths.Config)
+	a.configureLog()
+	log.Printf("启动版本 %s", a.version)
 	a.detached = map[int]*detachedWindow{}
 	a.dragOrigin = map[int]mygo.Point{}
 	a.loadState()
@@ -125,27 +132,19 @@ func (a *App) ready() {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 
+	a.startMedia()
 	a.registerProtocols()
 	a.buildEngine(ctx)
 
 	cfg := a.config.Get()
 	a.applyTheme(cfg)
 	a.createPanel(cfg)
-	a.startMedia()
 	a.createTray()
+	a.pluginHost.restoreFloats()
 	a.applyHotkeys(cfg)
 	a.watchHome(ctx)
 	mygo.Theme.OnUpdated(func() { ThemeChanged.Broadcast(mygo.Theme.IsDark()) })
 
-	// 手动打开时直接显示主窗口，让人知道它已经在运行了；开机启动时安静地待在后台。
-	if !mygo.App.WasOpenedAtLogin() && os.Getenv("POCKET_HIDDEN") == "" {
-		a.panel.OnReadyToShow(func() {
-			a.showPanel("")
-			a.flushPendingURL()
-		})
-	} else {
-		a.panel.OnReadyToShow(a.flushPendingURL)
-	}
 }
 
 func (a *App) flushPendingURL() {
@@ -184,12 +183,12 @@ func (a *App) buildEngine(ctx context.Context) {
 			return out, nil
 		},
 		Launch: func(e providers.AppEntry) error {
-			return mygo.Shell.LaunchApp(mygo.InstalledApp{ID: e.ID, Name: e.Name, Path: e.Path})
+			return launchApp(e.Path)
 		},
 	}
 	go func() {
 		if err := a.apps.Refresh(); err != nil {
-			log.Printf("读取应用列表失败：%v", err)
+			log.Printf("[ERROR] 读取应用列表失败：%v", err)
 		}
 	}()
 
@@ -213,10 +212,23 @@ func (a *App) buildEngine(ctx context.Context) {
 	}
 	a.commands.Reload()
 
-	a.plugins = &providers.Plugins{Dir: a.paths.Plugins, URL: pluginURL}
+	a.pluginHost = newPluginHost(a)
+	a.plugins = &providers.Plugins{
+		Dir: a.paths.Plugins, URL: a.pluginURL,
+		Disabled:  func(id string) bool { return slices.Contains(a.config.Get().DisabledPlugins, id) },
+		OpenFloat: a.pluginHost.toggleFloat,
+		Detach: func(v *core.View) error {
+			_, err := a.detach(detachRequestFor(v))
+			return err
+		},
+	}
+	a.plugins.Custom = a.customKeywords
 	a.plugins.Reload()
 
 	a.files = &providers.Files{Config: get}
+	a.auto = newAutoEngine(filepath.Join(a.paths.Data, "auto.json"))
+	a.auto.onStatus = func(st AutoStatus) { AutoChanged.Broadcast(st) }
+	a.auto.onHotkeys = func() { a.applyHotkeys(a.config.Get()) }
 	a.calcHistory = &calcHistory{file: filepath.Join(a.paths.Data, "calc-history.json")}
 	a.calcHistory.load()
 	a.wintools = providers.NewWinTools()
@@ -228,6 +240,7 @@ func (a *App) buildEngine(ctx context.Context) {
 		return err
 	})
 	a.features.PayloadCommands = a.payloadCommands()
+	a.features.Custom = a.customKeywords
 	windows := &providers.Windows{
 		List: func() []providers.WindowEntry {
 			var out []providers.WindowEntry
@@ -287,7 +300,7 @@ func (a *App) selfCommands() []*providers.SelfCommand {
 			Keywords: []string{"config folder", "home", "data"},
 			Run: func(_ context.Context, r *core.Run) error {
 				r.Hide()
-				return mygo.Shell.OpenPath(a.paths.Home)
+				return openPath(a.paths.Home)
 			}},
 		{ID: "reload", Title: "重新加载", Subtitle: "重新读取配置、脚本和插件", Icon: "svg:refresh",
 			Keywords: []string{"reload", "refresh"}, KeepOpen: true,
@@ -376,6 +389,15 @@ func (a *App) createPanel(cfg *store.Config) {
 		opts.BackgroundColor = "light-dark(#f4f5f7, #1d1f24)"
 	}
 	a.panel = mygo.NewWindow(opts)
+	// 手动打开时直接显示主窗口，让人知道它已经在运行了；开机启动时安静地待在后台。
+	if !mygo.App.WasOpenedAtLogin() && os.Getenv("POCKET_HIDDEN") == "" {
+		a.panel.OnReadyToShow(func() {
+			a.showPanel("")
+			a.flushPendingURL()
+		})
+	} else {
+		a.panel.OnReadyToShow(a.flushPendingURL)
+	}
 	if glass && material(cfg) != mygo.VibrancyGlass {
 		a.panel.SetVibrancy(material(cfg))
 	}
@@ -448,7 +470,8 @@ func (a *App) showPanelWith(query string, activate bool) {
 
 	payload := a.pendingPayload.Swap(nil)
 	view := a.pendingView.Swap(nil)
-	if payload == nil && query == "" && view == nil && cfg.AutoFillSeconds > 0 && cfg.Modules["clipboard"].Enabled {
+	inTool := a.panelInTool.Load()
+	if payload == nil && query == "" && view == nil && !inTool && cfg.AutoFillSeconds > 0 && cfg.Modules["clipboard"].Enabled {
 		// 刚复制的内容（文字、图片、文件）自动带进来，每次复制只带一次。
 		if e := a.clipboard.Recent(time.Duration(cfg.AutoFillSeconds) * time.Second); e != nil {
 			payload = a.entryPayload(e)
@@ -505,6 +528,11 @@ func (a *App) togglePanel() {
 	}
 	go func() {
 		defer a.summoning.Store(false)
+		// 当前停留在工具页面或命令作用域时，唤出直接恢复原状态，不抓取外部选中文字。
+		if a.panelInTool.Load() {
+			a.showPanel("")
+			return
+		}
 		// 快的路：选中的文字能直接读到（或者根本不用读），几毫秒，读完就显示。
 		text, done := a.selectionFast()
 		if done {
@@ -570,6 +598,7 @@ func (a *App) openSettings(section, arg string) {
 	win := mygo.NewWindow(opts)
 	a.settings = win
 	win.OnReadyToShow(func() {
+		a.registerHotkeyCapture(win)
 		win.Show()
 		win.Focus()
 		mygo.App.Focus()
@@ -594,8 +623,12 @@ func (a *App) createTray() {
 		Menu:           a.trayMenu(nil),
 	})
 	if err != nil {
-		log.Printf("创建托盘图标失败：%v", err)
+		log.Printf("[ERROR] 创建托盘图标失败：%v", err)
 		return
+	}
+	// Windows 托盘左键触发 OnClick、右键弹出 Menu；macOS/Linux 有 Menu 时左键直接展开菜单（Linux 注册 OnClick 还会拖慢菜单响应）。
+	if runtime.GOOS == "windows" {
+		tray.OnClick(func() { a.showPanel("") })
 	}
 	a.tray = tray
 }
@@ -616,6 +649,7 @@ func (a *App) applyTheme(cfg *store.Config) {
 // configApplied 让新配置生效：主题、材质、热键，并通知所有窗口。
 func (a *App) configApplied() {
 	cfg := a.config.Get()
+	a.configureLog()
 	a.applyTheme(cfg)
 	if a.panel != nil && platform.GlassSupported() {
 		a.panel.SetVibrancy(material(cfg))
@@ -631,9 +665,16 @@ func (a *App) suspendHotkeys(suspend bool) {
 	changed := a.hotkeysSuspended != suspend
 	a.hotkeysSuspended = suspend
 	a.hotkeyMu.Unlock()
+	a.hotkeyCapture.Store(suspend)
 	if changed {
 		a.applyHotkeys(a.config.Get())
 	}
+}
+
+func (a *App) registerHotkeyCapture(win *mygo.Window) {
+	platform.RegisterHotkeyCapture(win.NativeHandle(), &a.hotkeyCapture, func(accel string) {
+		_ = HotkeyCaptured.Emit(win, accel)
+	})
 }
 
 func (a *App) applyHotkeys(cfg *store.Config) {
@@ -680,6 +721,10 @@ func (a *App) applyHotkeys(cfg *store.Config) {
 	for id, accel := range all {
 		register(id, accel, func() { a.runByHotkey(id) })
 	}
+	// 连点器和键盘宏的开始 / 停止键。
+	for id, accel := range a.auto.hotkeys() {
+		register(id, accel, func() { a.auto.toggle(id, a.host.Notify) })
+	}
 	r := cfg.Reader
 	register("reader-boss", r.BossKey, a.toggleReader)
 	register("reader-prev", r.PrevKey, func() { a.readerCommand("prev") })
@@ -687,8 +732,42 @@ func (a *App) applyHotkeys(cfg *store.Config) {
 	a.hotkeyErrors = errs
 }
 
+func normalizeHotkeyInputMode(v string) string {
+	switch v {
+	case "selection", "clipboard", "both", "none":
+		return v
+	default:
+		return "selection"
+	}
+}
+
+func resolveHotkeyInput(mode string, readSelection, readClipboard func() string) string {
+	clipboardText := func() string {
+		if text := readClipboard(); strings.TrimSpace(text) != "" {
+			return text
+		}
+		return ""
+	}
+	switch normalizeHotkeyInputMode(mode) {
+	case "none":
+		return ""
+	case "clipboard":
+		return clipboardText()
+	case "both":
+		if text := readSelection(); text != "" {
+			return text
+		}
+		return clipboardText()
+	default:
+		return readSelection()
+	}
+}
+
 func (a *App) runByHotkey(id string) {
 	go func() {
+		cfg := a.config.Get()
+		detach := cfg.DetachOnHotkey[id]
+		inputMode := cfg.HotkeyInput[id]
 		// 内置模块：有页面的开页面（计算器、剪贴板、文件搜索），其余的带着前缀打开搜索框。
 		if name, isModule := strings.CutPrefix(id, "module:"); isModule {
 			page, hasPage := modulePages[name]
@@ -696,36 +775,38 @@ func (a *App) runByHotkey(id string) {
 				a.openModule(name)
 				return
 			}
-			// 独立窗口的选择记在模块自己的 ID 上，这里换成页面的 ID 之前先读出来。
-			if a.config.Get().DetachOnHotkey[id] {
-				if it, ok := a.engine.Resolve(page); ok && len(it.Actions) > 0 && it.Actions[0].View != nil {
-					if _, err := a.detach(detachRequestFor(it.Actions[0].View)); err != nil {
-						a.host.Notify("打开失败", err.Error())
-					}
-					return
-				}
-			}
 			id = page
+			if !detach {
+				detach = cfg.DetachOnHotkey[id]
+			}
+			if inputMode == "" {
+				inputMode = cfg.HotkeyInput[id]
+			}
 		}
 		it, ok := a.engine.Resolve(id)
 		isView := ok && len(it.Actions) > 0 && it.Actions[0].Type == core.ActionView && it.Actions[0].View != nil
-		// 功能页和脚本：先读取选中的文字。功能页直接带进去（选中一段话按翻译的快捷键，就开始翻译），
-		// 脚本可以用 {selection} 和 POCKET_SELECTION 拿到。
-		selection := ""
+		// 功能页和脚本：按该快捷键的带入设置读取选中的文字或剪贴板文字。
+		// 功能页直接填进输入框；脚本可以用 {selection} 和 POCKET_SELECTION 拿到。
+		captured := ""
 		if ok && ((isView && it.Actions[0].View.Type == "feature") || it.Source == "scripts") {
-			if selection = a.captureSelection(); selection != "" {
-				c := a.engine.Context()
-				c.Selection = selection
-				a.engine.SetContext(c)
-			}
+			// 带入的内容可能来自剪贴板；上下文里的“选中文字”只记真正选中的，
+			// 免得脚本的 {selection} / POCKET_SELECTION 拿到的其实是剪贴板。
+			selected := ""
+			captured = resolveHotkeyInput(inputMode, func() string {
+				selected = a.captureSelection()
+				return selected
+			}, mygo.Clipboard.ReadText)
+			c := a.engine.Context()
+			c.Selection = selected
+			a.engine.SetContext(c)
 		}
 		if isView {
 			view := *it.Actions[0].View
-			if selection != "" && view.Type == "feature" && view.Input == "" {
-				view.Input = selection
+			if captured != "" && view.Type == "feature" && view.Input == "" {
+				view.Input = captured
 			}
 			v := &view
-			if a.config.Get().DetachOnHotkey[id] && (v.Type == "feature" || v.URL != "") {
+			if (detach || cfg.DetachOnHotkey[id]) && (v.Type == "feature" || v.URL != "") {
 				if _, err := a.detach(detachRequestFor(v)); err != nil {
 					a.host.Notify("打开失败", err.Error())
 				}
@@ -808,7 +889,7 @@ func (a *App) watchHome(ctx context.Context) {
 		},
 	})
 	if err != nil {
-		log.Printf("监听用户目录失败：%v", err)
+		log.Printf("[ERROR] 监听用户目录失败：%v", err)
 		return
 	}
 	go func() {

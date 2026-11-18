@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
-import { Copy, ExternalLink, FolderOpen, Info, PanelRight, Search } from "lucide-preact";
-import { Finder, type FileHit, type FinderInfo } from "../mygo";
+import { Copy, ExternalLink, FolderOpen, Info, PanelRight, Search, ShieldAlert } from "lucide-preact";
+import { Finder, Settings, type FileHit, type FinderInfo } from "../mygo";
 import { Icon } from "../shared/icons";
 import { FilePreview } from "../shared/filepreview";
 import { Btn, Empty, keepVisible, useDebounced } from "./ui";
@@ -22,8 +22,24 @@ export function FindTool({ input, args, ctx }: FeatureProps) {
   const [info, setInfo] = useState<FinderInfo | null>(null);
   const [scope, setScope] = useState("home");
   const [sort, setSort] = useState<Sort>("relevance");
+  // “给完全磁盘访问权限才能搜全”的提示：不想给的人点一次“不再提示”就不再出现。
+  const [hideDiskHint, setHideDiskHint] = useState(() => {
+    try {
+      return localStorage.getItem("pocket.find.noDiskHint") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const dismissDiskHint = () => {
+    setHideDiskHint(true);
+    try {
+      localStorage.setItem("pocket.find.noDiskHint", "1");
+    } catch {
+      /* 存不了就只在这次生效 */
+    }
+  };
   const [hits, setHits] = useState<FileHit[]>([]);
-  const [state, setState] = useState<{ busy: boolean; engine: string; note: string; truncated: boolean; searched: boolean }>({ busy: false, engine: "", note: "", truncated: false, searched: false });
+  const [state, setState] = useState<{ busy: boolean; engine: string; note: string; truncated: boolean; searched: boolean; hint?: string }>({ busy: false, engine: "", note: "", truncated: false, searched: false });
   const [selected, setSelected] = useState(0);
   const [panes, setPanes] = useState({ preview: true, meta: true });
   const field = useRef<HTMLInputElement>(null);
@@ -59,7 +75,7 @@ export function FindTool({ input, args, ctx }: FeatureProps) {
         if (my !== seq.current) return;
         setHits(r.items ?? []);
         setSelected(0);
-        setState({ busy: false, engine: r.engine, note: r.note ?? "", truncated: r.truncated, searched: true });
+        setState({ busy: false, engine: r.engine, note: r.note ?? "", truncated: r.truncated, searched: true, hint: r.hint });
       },
       () => my === seq.current && setState((s) => ({ ...s, busy: false })),
     );
@@ -139,6 +155,15 @@ export function FindTool({ input, args, ctx }: FeatureProps) {
           <Info size={15} />
         </Btn>
       </div>
+      {state.searched && state.hint === "disk" && !hideDiskHint && (
+        <div class="fx-warn fx-find-hint">
+          <ShieldAlert size={15} />
+          <span>聚焦能搜到、这里搜不到的文件，多半在其他应用的数据目录里（比如微信收到的文件）。系统只把这部分结果给有“完全磁盘访问权限”的应用。</span>
+          <Btn small onClick={() => void Finder.openFullDisk()}>去授权</Btn>
+          <Btn small onClick={() => void Settings.relaunch()}>重启应用</Btn>
+          <Btn small ghost onClick={dismissDiskHint}>不再提示</Btn>
+        </div>
+      )}
       <div class="fx-find-body">
         <nav class="fx-find-kinds" aria-label="类型">
           {(info?.kinds ?? []).map((k) => (

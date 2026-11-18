@@ -1,0 +1,224 @@
+html,
+body,
+#app {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+body {
+  font-family: var(--font-ui);
+  font-size: var(--font-size, 14px);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+.pk-empty {
+  padding: 26px 16px;
+  text-align: center;
+  color: var(--text-2);
+}
+
+/* --- 文本对比（合并视图） --- */
+.fx-diff-box {
+  min-height: 0;
+}
+.fx-diff-heads {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 0.5px solid var(--line);
+}
+.fx-diff-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 0 6px 0 12px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.fx-diff-head + .fx-diff-head {
+  border-left: 0.5px solid var(--line);
+}
+.fx-diff-merge {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.fx-diff-merge .cm-mergeView {
+  min-height: 100%;
+}
+.fx-diff-merge .cm-mergeViewEditors {
+  min-height: 100%;
+}
+.fx-diff-merge .cm-mergeViewEditor + .cm-mergeViewEditor,
+.fx-diff-merge .cm-merge-revert {
+  border-left: 0.5px solid var(--line);
+}
+.fx-diff-merge .cm-merge-revert {
+  width: 22px;
+  background: transparent;
+}
+.fx-diff-merge .cm-merge-revert button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.fx-diff-merge .cm-merge-revert button:hover {
+  background: var(--hover);
+}
+.fx-diff-merge .cm-merge-a .cm-changedLine,
+.fx-diff-merge .cm-deletedChunk {
+  background: var(--diff-del);
+}
+.fx-diff-merge .cm-merge-b .cm-changedLine,
+.fx-diff-merge .cm-inlineChangedLine {
+  background: var(--diff-add);
+}
+.fx-diff-merge .cm-merge-a .cm-changedText,
+.fx-diff-merge .cm-deletedChunk .cm-deletedText {
+  background: var(--diff-del-strong);
+  border-radius: 2px;
+}
+.fx-diff-merge .cm-merge-b .cm-changedText {
+  background: var(--diff-add-strong);
+  border-radius: 2px;
+}
+.fx-diff-merge .cm-changeGutter {
+  width: 3px;
+  padding: 0;
+}
+.fx-diff-merge .cm-merge-a .cm-changedLineGutter {
+  background: #e5534b;
+}
+.fx-diff-merge .cm-merge-b .cm-changedLineGutter {
+  background: #2ea043;
+}
+.fx-diff-merge .cm-collapsedLines {
+  padding: 3px 12px;
+  background: var(--well);
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.fx-diff-status {
+  flex: none;
+}
+.fx-diff-add {
+  color: #2ea043;
+  font-weight: 600;
+}
+.fx-diff-del {
+  color: #e5534b;
+  font-weight: 600;
+}
+.fx-diff-same {
+  color: #2ea043;
+  font-weight: 600;
+}
+
+/* --- 代码草稿 --- */
+.fx-scratch-quick {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.fx-scratch-editor {
+  flex: 1.6;
+  min-height: 80px;
+}
+.fx-scratch-out {
+  flex: 1;
+  min-height: 90px;
+  max-height: 46%;
+}
+.fx-scratch-out .fx-out-title {
+  flex: none;
+  min-height: 32px;
+  padding: 0 6px 0 12px;
+  gap: 8px;
+  border-bottom: 0.5px solid var(--line);
+}
+.fx-scratch-exit {
+  font-weight: 400;
+  color: #2ea043;
+}
+.fx-scratch-exit.is-bad {
+  color: var(--danger);
+}
+.fx-scratch-log {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 8px 12px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.fx-scratch-log .is-stderr {
+  color: var(--danger);
+}
+.fx-scratch-log .is-info {
+  color: var(--text-3);
+}
+.fx-scratch-stdin {
+  flex: none;
+  height: 56px;
+  border-radius: 0;
+  border-bottom: 0.5px solid var(--line);
+  background: var(--well);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.fx-scratch-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+
+/* 运行输出里的终端颜色（code/ansi.ts） */
+.fx-scratch-log {
+  --ansi-black: #4b5263; --ansi-red: #c4372f; --ansi-green: #238636; --ansi-yellow: #9a6700;
+  --ansi-blue: #0a66d6; --ansi-magenta: #8f3fc7; --ansi-cyan: #0f7c8a; --ansi-white: #6e7781;
+}
+:root[data-theme="dark"] .fx-scratch-log {
+  --ansi-black: #7d8590; --ansi-red: #ff7b72; --ansi-green: #6fd08c; --ansi-yellow: #e3b341;
+  --ansi-blue: #79b8ff; --ansi-magenta: #d79bf0; --ansi-cyan: #6fd3dd; --ansi-white: #d0d7de;
+}
+.ansi-black, .ansi-bright-black { color: var(--ansi-black); }
+.ansi-red, .ansi-bright-red { color: var(--ansi-red); }
+.ansi-green, .ansi-bright-green { color: var(--ansi-green); }
+.ansi-yellow, .ansi-bright-yellow { color: var(--ansi-yellow); }
+.ansi-blue, .ansi-bright-blue { color: var(--ansi-blue); }
+.ansi-magenta, .ansi-bright-magenta { color: var(--ansi-magenta); }
+.ansi-cyan, .ansi-bright-cyan { color: var(--ansi-cyan); }
+.ansi-white, .ansi-bright-white { color: var(--ansi-white); }
+.ansi-bold { font-weight: 700; }
+.ansi-dim { opacity: 0.65; }
+.ansi-italic { font-style: italic; }
+.ansi-underline { text-decoration: underline; }

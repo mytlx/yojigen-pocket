@@ -16,6 +16,8 @@ export default defineConfig({
         settings: resolve(import.meta.dirname, "settings.html"),
         feature: resolve(import.meta.dirname, "feature.html"),
         catalog: resolve(import.meta.dirname, "catalog.html"),
+        // 扩展的悬浮窗（桌面宠物这类）用的宿主页面
+        float: resolve(import.meta.dirname, "float.html"),
       },
     },
   },

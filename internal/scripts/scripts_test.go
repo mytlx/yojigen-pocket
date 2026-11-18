@@ -182,3 +182,20 @@ func TestRunMissingInterpreter(t *testing.T) {
 		t.Errorf("应报错")
 	}
 }
+
+func TestStripANSI(t *testing.T) {
+	cases := map[string]string{
+		"\x1b[32;1m总进程数\x1b[0m : 312":          "总进程数 : 312",
+		"plain text":                           "plain text",
+		"\x1b[2J\x1b[Hcleared":                 "cleared",
+		"\x1b]0;window title\x07after":         "after",
+		"\x1b[38;5;208morange\x1b[0m \x1b[1mb": "orange b",
+		"keep [32;1m without escape":           "keep [32;1m without escape",
+		"\x1b[?25lhidden cursor\x1b[?25h":      "hidden cursor",
+	}
+	for in, want := range cases {
+		if got := StripANSI(in); got != want {
+			t.Errorf("StripANSI(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

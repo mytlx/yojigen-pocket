@@ -124,6 +124,7 @@ export function App() {
 
   const enterScope = useCallback(
     (s: Scope) => {
+      setView(null);
       setScope(s);
       setText("");
       setActionsOpen(false);
@@ -175,13 +176,14 @@ export function App() {
     setToast(null);
   }, [setPayload]);
 
-  /** 把块变回普通文字放进输入框，可以接着编辑；图片和文件的块直接去掉。 */
+  /** 把块变回普通文字放进输入框并默认全选（方便继续编辑或直接按退格/输入清空替换）；图片和文件的块直接去掉。 */
   const editPayload = useCallback(() => {
     const p = payloadRef.current;
     if (!p) return;
     setPayload(null);
     if (p.kind !== "text") {
       runQuery(latest.current.text, null);
+      setTimeout(() => input.current?.focus());
       return;
     }
     void Launcher.payloadText(p.id).then((full) => {
@@ -190,7 +192,10 @@ export function App() {
       runQuery(value, null);
       setTimeout(() => {
         const el = input.current;
-        if (el) el.setSelectionRange(value.length, value.length);
+        if (el) {
+          el.focus();
+          el.select();
+        }
       });
     });
   }, [runQuery, setPayload]);
@@ -356,6 +361,10 @@ export function App() {
   }, [setInput]);
 
   useEffect(() => {
+    void Launcher.setInTool(Boolean(view || scope));
+  }, [view, scope]);
+
+  useEffect(() => {
     const offs = [
       events.panelShown.on((shown) => {
         setConfirm(null);
@@ -384,6 +393,16 @@ export function App() {
           resetAll();
           setText(shown.query);
           runQuery(shown.query, null);
+        } else if (viewRef.current) {
+          // 停留在已打开的工具页面时，无论隐藏多久，再次唤出都原样回到这个工具。
+          return;
+        } else if (latest.current.scope) {
+          // 停留在命令作用域里时同样保留作用域；超过记忆时间只清掉作用域里的搜索文字。
+          const keepText = shown.keep ? latest.current.text : "";
+          setText(keepText);
+          setPayload(null);
+          runQuery(keepText, latest.current.scope);
+          if (shown.keep) setTimeout(() => input.current?.select());
         } else if (shown.keep) {
           runQuery(latest.current.text, latest.current.scope);
           setTimeout(() => input.current?.select());
@@ -622,6 +641,7 @@ export function App() {
       setView({ type: "feature", feature, title: featureTitles[feature] ?? feature, icon: featureIcons[feature], input: featureInput ?? "", args: args ?? {}, content: "" }),
     close: closeView,
     detach: detachView,
+    detachKey,
     remember: (value) => {
       featureInput.current = value;
     },

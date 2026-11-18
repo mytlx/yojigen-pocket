@@ -2,7 +2,7 @@
   "title": "颜色工具",
   "description": "选一个颜色，复制 HEX / RGB / HSL",
   "icon": "🎨",
-  "keywords": ["color", "hex", "rgb", "颜色"],
+  "keywords": ["palette", "调色板"],
   "main": "index.html",
   "height": 300
 }

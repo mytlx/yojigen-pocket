@@ -1,0 +1,20 @@
+{
+  "id": "peer",
+  "name": "口袋直传",
+  "version": "1.1.0",
+  "api": 2,
+  "description": "通过 IPv6 将文件直接送到对方电脑，数字确认、加密传输与本地记录",
+  "icon": "svg:send",
+  "tools": [{
+    "id": "peer",
+    "title": "口袋直传",
+    "description": "IPv6 点对点文件传输",
+    "category": "效率工具",
+    "keywords": ["peer", "p2p", "send", "直传", "传输", "点对点", "ipv6"],
+    "window": "window",
+    "width": 1000,
+    "height": 690,
+    "entry": "index.html"
+  }],
+  "permissions": { "peer": true, "files": true }
+}

@@ -84,7 +84,8 @@ func (f *Features) SearchPayload(ctx context.Context, req *core.Request, p *core
 			out = append(out, it)
 			return
 		}
-		if hit, alias := keywordOf(d, first); hit {
+		words := f.words(d.ID, d.Keywords)
+		if hit, alias := keywordOf(d, words, first); hit {
 			if args == nil {
 				it = f.item(d, input, alias)
 				it.Subtitle = d.Desc
@@ -99,7 +100,7 @@ func (f *Features) SearchPayload(ctx context.Context, req *core.Request, p *core
 			out = append(out, it)
 			return
 		}
-		if r := match.Best(req.Query, d.target, d.kw...); r.OK && r.Score > 0 {
+		if r := match.Best(req.Query, d.target, f.kws.targets(words)...); r.OK && r.Score > 0 {
 			it.Score, it.Highlights = r.Score, r.Positions
 			out = append(out, it)
 		}

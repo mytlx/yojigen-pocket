@@ -12,6 +12,11 @@ import { applyAppearance, applyUserStyles } from "../shared/theme";
 import { FeatureHost, PanelView, type ActiveView } from "../launcher/views";
 import type { FeatureCtx } from "../features/types";
 import { featureIcons as icons, featureTitles as titles } from "../features/meta";
+import { installTooltips } from "../shared/tooltip";
+import { installZoom } from "../shared/zoom";
+
+installTooltips();
+installZoom();
 
 const params = new URLSearchParams(location.search);
 const initial: ActiveView = {
@@ -125,7 +130,7 @@ function App() {
         </div>
       </header>
       <main class="dt-body" key={version}>
-        {view.type === "panel" ? <PanelView view={view} onClose={() => void Windows.control("close", 0)} fill /> : <FeatureHost view={view} ctx={ctx} fill />}
+        {view.type === "panel" ? <PanelView view={view} onClose={() => void Windows.control("close", 0)} fill detached hooks={{ toast: ctx.toast, remember: ctx.remember }} /> : <FeatureHost view={view} ctx={ctx} fill />}
       </main>
       {toast && (
         <div class={`dt-toast${toast.error ? " is-error" : ""}`} key={toast.text}>

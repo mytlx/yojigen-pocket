@@ -1,0 +1,154 @@
+# 手动触发或推送 ext-<id>-v<version> 标签时，单独构建并发布官方扩展包，
+# 同时更新固定 Pre-release（tag: extensions）下的在线索引 extensions.json（含各扩展 changelog）。
+name: Release Extension
+
+on:
+  push:
+    tags:
+      - "ext-*"
+  workflow_dispatch:
+    inputs:
+      extension:
+        description: "要发布的扩展 ID（选 all 会逐个构建并更新全部官方扩展）"
+        required: true
+        default: "editors"
+        type: choice
+        options:
+          - editors
+          - peer
+          - pet
+          - all
+      changelog:
+        description: "更新说明（留空则自动从 extensions/<id>/ 的 Git 提交历史提取；选 all 时请留空）"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  release-extension:
+    name: Release Extension
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # 多个扩展同时发布或与主程序发版重叠时排队更新 extensions.json，避免相互覆盖。
+    concurrency:
+      group: extensions-registry
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: Run extension tests
+        run: |
+          go test ./internal/providers/...
+          bun test tools/tests
+
+      - name: Validate manifest and release target
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_EXTENSION: ${{ inputs.extension }}
+          MANUAL_CHANGELOG: ${{ inputs.changelog }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ]; then
+            bun tools/extension-registry.ts check --tag "$REF_NAME"
+          else
+            bun tools/extension-registry.ts check --id "$INPUT_EXTENSION" --manual "$MANUAL_CHANGELOG"
+          fi
+
+      - name: Build, publish extension releases, and update extensions.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_EXTENSION: ${{ inputs.extension }}
+          MANUAL_CHANGELOG: ${{ inputs.changelog }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ext-release
+
+          if gh release view extensions >/dev/null 2>&1; then
+            gh release download extensions -p extensions.json --dir .ext-release || true
+          fi
+
+          if [ "$EVENT_NAME" = "push" ]; then
+            IDS=$(bun tools/extension-registry.ts meta --tag "$REF_NAME" --field id)
+            EXPLICIT_TAG="$REF_NAME"
+          else
+            IDS=$(bun tools/extension-registry.ts list --id "$INPUT_EXTENSION")
+            EXPLICIT_TAG=""
+          fi
+
+          for id in $IDS; do
+            echo "::group::Packaging and releasing extension: $id"
+            version=$(bun tools/extension-registry.ts meta --id "$id" --field version)
+            name=$(bun tools/extension-registry.ts meta --id "$id" --field name)
+            zip_path=$(bun tools/extension-registry.ts meta --id "$id" --field zip)
+            ext_tag="${EXPLICIT_TAG:-ext-${id}-v${version}}"
+
+            bun tools/build-extensions.ts "$id"
+
+            changelog_file=".ext-release/${id}-changelog.md"
+            notes_file=".ext-release/${id}-notes.md"
+            if [ -n "${MANUAL_CHANGELOG:-}" ]; then
+              bun tools/extension-registry.ts changelog --id "$id" --tag "$ext_tag" --manual "$MANUAL_CHANGELOG" --out "$changelog_file"
+              bun tools/extension-registry.ts changelog --id "$id" --tag "$ext_tag" --manual "$MANUAL_CHANGELOG" --release-notes --out "$notes_file"
+            else
+              bun tools/extension-registry.ts changelog --id "$id" --tag "$ext_tag" --out "$changelog_file"
+              bun tools/extension-registry.ts changelog --id "$id" --tag "$ext_tag" --release-notes --out "$notes_file"
+            fi
+
+            if gh release view "$ext_tag" >/dev/null 2>&1; then
+              gh release upload "$ext_tag" "$zip_path" --clobber
+              gh release edit "$ext_tag" --notes-file "$notes_file"
+            elif git rev-parse -q --verify "refs/tags/$ext_tag" >/dev/null; then
+              gh release create "$ext_tag" "$zip_path" \
+                --latest=false \
+                --title "${name} (${id}) v${version}" \
+                --notes-file "$notes_file"
+            else
+              gh release create "$ext_tag" "$zip_path" \
+                --target "$GITHUB_SHA" \
+                --latest=false \
+                --title "${name} (${id}) v${version}" \
+                --notes-file "$notes_file"
+            fi
+
+            if [ -n "${MANUAL_CHANGELOG:-}" ]; then
+              bun tools/extension-registry.ts update \
+                --registry .ext-release/extensions.json \
+                --id "$id" \
+                --zip "$zip_path" \
+                --tag "$ext_tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --changelog-file "$changelog_file" \
+                --changelog-explicit
+            else
+              bun tools/extension-registry.ts update \
+                --registry .ext-release/extensions.json \
+                --id "$id" \
+                --zip "$zip_path" \
+                --tag "$ext_tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --changelog-file "$changelog_file"
+            fi
+            echo "::endgroup::"
+          done
+
+          if gh release view extensions >/dev/null 2>&1; then
+            gh release upload extensions .ext-release/extensions.json --clobber
+          else
+            gh release create extensions .ext-release/extensions.json \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --latest=false \
+              --title "官方扩展在线索引" \
+              --notes "供 Yojigen Pocket 客户端在线读取官方扩展目录、版本号与更新日志（extensions.json）。如需安装扩展，请下载各扩展或主程序 Release 中的 zip 包。"
+          fi

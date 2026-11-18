@@ -32,6 +32,8 @@ func main() {
 	mygo.Bind(&Clips{a: a})
 	mygo.Bind(&WinTools{a: a})
 	mygo.Bind(&Speech{a: a})
+	mygo.Bind(&Auto{a: a})
+	mygo.Bind(&Extensions{a: a})
 	if bindExtra != nil {
 		bindExtra(a)
 	}
@@ -44,9 +46,33 @@ func main() {
 	mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
 	mygo.App.OnWindowAllClosed(func() {}) // 没有窗口也继续运行
 	mygo.App.OnSecondInstance(func([]string, string) { a.showPanel("") })
+	if runtime.GOOS == "darwin" {
+		mygo.App.OnActivate(func(visible bool) {
+			a.urlMu.Lock()
+			ready := a.isReady
+			a.urlMu.Unlock()
+			if ready && !visible {
+				a.showPanel("")
+			}
+		})
+	}
 	mygo.App.OnOpenURL(a.handleURL)
-	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { a.quitting.Store(true) })
-	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { a.flush() })
+	mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
+		if a.pluginHost != nil {
+			if err := a.pluginHost.closePeersForQuit(); err != nil {
+				e.PreventDefault()
+				a.host.Notify("传输进行中", err.Error())
+				return
+			}
+		}
+		a.quitting.Store(true)
+	})
+	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
+		a.flush()
+		if a.pluginHost != nil {
+			a.pluginHost.stopAll() // 扩展的后端进程不能留在后台
+		}
+	})
 	mygo.App.WhenReady(a.ready)
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)

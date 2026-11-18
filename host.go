@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,14 +25,55 @@ import (
 	"yojigen-pocket/internal/store"
 )
 
+func launchApp(path string) error {
+	if path == "" {
+		return errors.New("应用路径为空")
+	}
+	if runtime.GOOS == "windows" {
+		return platform.ShellOpen("", path)
+	}
+	return mygo.Shell.LaunchApp(mygo.InstalledApp{Path: path})
+}
+
+func openPath(p string) error {
+	if runtime.GOOS == "windows" {
+		return platform.ShellOpen("open", p)
+	}
+	return mygo.Shell.OpenPath(p)
+}
+
+func openExternal(rawURL string) error {
+	if runtime.GOOS == "windows" {
+		return platform.ShellOpen("open", rawURL)
+	}
+	return mygo.Shell.OpenExternal(rawURL)
+}
+
+func platformPaste() error { return platform.SendPaste() }
+
+// openWith 让用户选一个应用来打开文件。
+func openWith(p string) error {
+	switch runtime.GOOS {
+	case "windows":
+		return platform.DetachedCommand("rundll32.exe", "shell32.dll,OpenAs_RunDLL", p).Start()
+	case "darwin":
+		apps, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "选择用来打开的应用", DefaultPath: "/Applications", Filters: []mygo.FileFilter{{Name: "应用", Extensions: []string{"app"}}}})
+		if err != nil || len(apps) == 0 {
+			return err
+		}
+		return platform.DetachedCommand("open", "-a", apps[0], p).Start()
+	}
+	return openPath(p)
+}
+
 // host 实现 core.Host：引擎需要的系统能力。
 type host struct{ a *App }
 
 func (h *host) OpenTarget(t string) error {
 	if strings.Contains(t, "://") || strings.HasPrefix(t, "mailto:") {
-		return mygo.Shell.OpenExternal(t)
+		return openExternal(t)
 	}
-	return mygo.Shell.OpenPath(platform.ExpandHome(t))
+	return openPath(platform.ExpandHome(t))
 }
 func (h *host) Reveal(p string)   { mygo.Shell.ShowItemInFolder(platform.ExpandHome(p)) }
 func (h *host) CopyText(t string) { mygo.Clipboard.WriteText(t) }
@@ -55,7 +97,7 @@ func (h *host) Notify(title, body string) {
 	go func() {
 		n := mygo.NewNotification(mygo.NotificationOptions{Title: title, Body: body})
 		if err := n.Show(); err != nil {
-			log.Printf("通知失败（%s：%s）：%v", title, body, err)
+			log.Printf("[ERROR] 通知失败（%s：%s）：%v", title, body, err)
 		}
 	}()
 }
@@ -63,7 +105,8 @@ func (h *host) Notify(title, body string) {
 func (h *host) EditFile(p string) error {
 	if editor := h.a.config.Get().Editor; editor != "" {
 		parts := strings.Fields(editor)
-		cmd := platform.Command(ctxBackground(), parts[0], append(parts[1:], p)...)
+		cmd := platform.DetachedCommand(parts[0], append(parts[1:], p)...)
+		cmd.Dir = platform.WorkDir(p)
 		return cmd.Start()
 	}
 	return platform.OpenInEditor(p)
@@ -100,18 +143,20 @@ func iconURL(kind, p string) string {
 	return schemeURL("pocketicon", "", "/"+kind+"?path="+url.QueryEscape(p))
 }
 
-func pluginURL(id, main string) string {
-	return schemeURL("pocketplugin", id, "/"+strings.TrimPrefix(path.Clean("/"+filepath.ToSlash(main)), "/"))
+// pluginURL 生成扩展页面的地址。
+func (a *App) pluginURL(id, main string) string {
+	p := "/" + strings.TrimPrefix(path.Clean("/"+filepath.ToSlash(main)), "/")
+	return schemeURL("pocketplugin", id, p)
 }
 
 var imageExts = []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp", ".heic", ".tiff", ".icns"}
 
 func (a *App) registerProtocols() {
 	if err := mygo.Protocol.HandleFunc("pocketicon", a.serveIcon); err != nil {
-		log.Printf("注册协议失败：%v", err)
+		log.Printf("[ERROR] 注册协议失败：%v", err)
 	}
 	if err := mygo.Protocol.HandleFunc("pocketplugin", a.servePlugin); err != nil {
-		log.Printf("注册协议失败：%v", err)
+		log.Printf("[ERROR] 注册协议失败：%v", err)
 	}
 }
 
@@ -178,27 +223,85 @@ func (a *App) fileIcon(p string) ([]byte, error) {
 	return data, nil
 }
 
-// pluginRuntime 是插件页面里的 window.pocket。插件跑在 iframe 里，只能用这里列出的能力，
-// 请求经由主页面转发给后端，后端按插件 ID 隔离存储。
+// pluginRuntime 是扩展页面里的 window.pocket。扩展跑在 iframe 里，只能用这里列出的能力：
+// 请求经由宿主页面转发给后端，后端按清单里声明的权限放行。
 const pluginRuntime = `(() => {
   let seq = 0;
+  let context = null;
+  let resolveReady;
   const pending = new Map();
+  const listeners = {};
+  const ready = new Promise((r) => (resolveReady = r));
+  const post = (msg) => window.parent.postMessage(msg, "*");
+  const emit = (name, data) => (listeners[name] || []).slice().forEach((fn) => { try { fn(data); } catch (e) { console.error(e); } });
+  const on = (name, fn) => {
+    (listeners[name] = listeners[name] || []).push(fn);
+    return () => { listeners[name] = (listeners[name] || []).filter((f) => f !== fn); };
+  };
+  // 外观跟着宿主走：把宿主页面上的主题属性和 CSS 变量原样搬过来。
+  const applyTheme = (t) => {
+    if (!t) return;
+    const el = document.documentElement;
+    for (const [k, v] of Object.entries(t.attrs || {})) el.setAttribute(k, v);
+    if (typeof t.style === "string") el.style.cssText = t.style;
+  };
   window.addEventListener("message", (e) => {
-    if (e.source !== window.parent || !e.data || e.data.__pocketReply !== true) return;
-    const p = pending.get(e.data.id);
-    if (!p) return;
-    pending.delete(e.data.id);
-    e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.result);
+    if (e.source !== window.parent || !e.data) return;
+    const d = e.data;
+    if (d.__pocketReply === true) {
+      const p = pending.get(d.id);
+      if (!p) return;
+      pending.delete(d.id);
+      d.error ? p.reject(new Error(d.error)) : p.resolve(d.result);
+    } else if (d.__pocketEvent) {
+      if (d.__pocketEvent === "theme") applyTheme(d.data);
+      if (d.__pocketEvent === "enter") { context = Object.assign({}, context, d.data); pocket.context = context; }
+      emit(d.__pocketEvent, d.data);
+    } else if (d.__pocketEval && context && context.e2e) {
+      // 只在测试构建里：让端到端测试能看到页面里面。
+      Promise.resolve().then(() => (0, eval)(d.code)).then(
+        (result) => post({ __pocketEvalReply: true, id: d.id, result }),
+        (err) => post({ __pocketEvalReply: true, id: d.id, error: String(err) }),
+      );
+    }
   });
   const call = (method, ...args) => new Promise((resolve, reject) => {
     const id = ++seq;
     pending.set(id, { resolve, reject });
-    window.parent.postMessage({ __pocket: true, id, method, args }, "*");
+    post({ __pocket: true, id, method, args });
   });
+  // 串行发送 setStorage：后端每次 IPC 调用在独立 goroutine 里执行，排队发送保证同一页面连续写入时顺序不乱。
+  let storageQueue = Promise.resolve();
+  const setStorageQueued = (key, value) => {
+    const next = storageQueue.then(() => call("setStorage", String(key), value));
+    storageQueue = next.catch(() => {});
+    return next;
+  };
+  // Esc 返回（仅主窗口面板有效，独立窗口按 Esc 不关闭）、分离窗口快捷键：页面自己没处理时才交给宿主。
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { e.preventDefault(); window.parent.postMessage({ __pocket: true, method: "back" }, "*"); }
+    if (e.defaultPrevented || e.isComposing) return;
+    if (e.key === "Escape") {
+      if (context && (context.detached || context.float)) return;
+      e.preventDefault();
+      post({ __pocket: true, method: "back" });
+      return;
+    }
+    const k = context && context.detachKey;
+    if (k && e.key.toLowerCase() === k.key && !!k.mod === (e.metaKey || e.ctrlKey) && !!k.shift === e.shiftKey && !!k.alt === e.altKey) {
+      e.preventDefault();
+      post({ __pocket: true, method: "ui.detach" });
+    }
   });
-  window.pocket = {
+  // Ctrl + 滚轮：WebView 默认会缩放整个页面，拦掉。扩展想用它调字号可以自己处理这个事件。
+  window.addEventListener("wheel", (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false, capture: true });
+  const pocket = (window.pocket = {
+    api: 2,
+    context: null,
+    ready,
+    call,
+    on,
+    onEnter(fn) { const off = on("enter", fn); if (context) fn(context); return off; },
+    // 老接口，保留。
     copyText: (text) => call("copyText", String(text)),
     readClipboard: () => call("readClipboard"),
     pasteText: (text) => call("pasteText", String(text)),
@@ -206,9 +309,83 @@ const pluginRuntime = `(() => {
     notify: (title, body) => call("notify", String(title), String(body ?? "")),
     hide: () => call("hide"),
     getStorage: (key) => call("getStorage", String(key)),
-    setStorage: (key, value) => call("setStorage", String(key), value),
-  };
+    setStorage: setStorageQueued,
+    ui: {
+      toast: (text, error) => call("ui.toast", String(text), !!error),
+      copy: (text, label) => call("ui.copy", String(text), label),
+      close: () => call("ui.close"),
+      detach: () => call("ui.detach"),
+      remember: (value) => call("ui.remember", String(value ?? "")),
+    },
+    storage: { get: (key) => call("getStorage", String(key)), set: setStorageQueued },
+    fs: {
+      tree: (root = "") => call("fs.tree", root),
+      read: (root, path) => call("fs.read", root, path),
+      write: (root, path, content) => call("fs.write", root, path, content),
+      createFile: (root, dir, name, content = "") => call("fs.createFile", root, dir, name, content),
+      createFolder: (root, dir, name) => call("fs.createFolder", root, dir, name),
+      rename: (root, path, name) => call("fs.rename", root, path, name),
+      move: (root, path, dir) => call("fs.move", root, path, dir),
+      delete: (root, path) => call("fs.delete", root, path),
+      reveal: (root, path = "") => call("fs.reveal", root, path),
+      abs: (root, path = "") => call("fs.abs", root, path),
+      open: (root, path) => call("fs.open", root, path),
+      openWith: (root, path) => call("fs.openWith", root, path),
+      pick: (exts = []) => call("fs.pick", exts),
+      saveAs: (name, content) => call("fs.saveAs", name, content),
+    },
+    fetch: (url, options = {}) => call("fetch", String(url), options),
+    runner: {
+      languages: () => call("runner.languages"),
+      format: (lang, code) => call("runner.format", lang, code),
+      stop: () => call("runner.stop"),
+      run(request, onEvent) {
+        const id = Date.now() + "-" + ++seq;
+        const off = on("run", (d) => { if (d && d.id === id && onEvent) onEvent(d.event); });
+        return call("runner.run", request, id).finally(off);
+      },
+    },
+    window: {
+      info: () => call("window.info"),
+      move: (dx, dy) => call("window.move", dx, dy),
+      ground: () => call("window.ground"),
+      resize: (width, height) => call("window.resize", width, height),
+      dragStart: () => call("window.dragStart"),
+      dragMove: (dx, dy) => call("window.dragMove", dx, dy),
+      setAlwaysOnTop: (on) => call("window.setAlwaysOnTop", !!on),
+      close: () => call("window.close"),
+    },
+    backend: {
+      call: (method, ...params) => call("backend.call", method, ...params),
+      on: (fn) => on("backend", fn),
+    },
+  });
+  call("init").then((c) => {
+    context = c;
+    pocket.context = c;
+    applyTheme(c.theme);
+    resolveReady(c);
+    emit("enter", c);
+  });
 })();`
+
+// setPluginCORS 只对当前被请求扩展自身的源（pocketplugin://<id> 或 http://<id>.pocketplugin.localhost[:port]）开放跨域读取，
+// 供构建工具生成的 <script type="module" crossorigin> 和 <link rel="stylesheet" crossorigin> 使用，拒绝其他扩展或外部站点。
+func setPluginCORS(w http.ResponseWriter, r *http.Request, id string) {
+	origin := r.Header.Get("Origin")
+	if origin == "" || id == "" {
+		return
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return
+	}
+	host := strings.ToLower(u.Hostname())
+	if (u.Scheme == "pocketplugin" && host == id) || (u.Scheme == "http" && host == id+".pocketplugin.localhost") {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
+	}
+}
 
 // servePlugin 提供插件的文件。地址的 host 部分是插件 ID。
 func (a *App) servePlugin(w http.ResponseWriter, r *http.Request) {
@@ -216,15 +393,28 @@ func (a *App) servePlugin(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		id = strings.ToLower(r.Host)
 	}
+	if h, _, err := net.SplitHostPort(id); err == nil {
+		id = h
+	}
 	id = strings.TrimSuffix(id, ".pocketplugin.localhost")
-	if r.URL.Path == "/__pocket.js" {
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		_, _ = w.Write([]byte(pluginRuntime))
+	setPluginCORS(w, r, id)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	dir, ok := a.plugins.DirOf(id)
 	if !ok {
 		http.NotFound(w, r)
+		return
+	}
+	if r.URL.Path == "/__pocket.js" {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(pluginRuntime))
 		return
 	}
 	root, err := os.OpenRoot(dir) // os.Root 保证路径逃不出插件目录，符号链接也不行
