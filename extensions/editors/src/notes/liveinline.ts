@@ -1,7 +1,7 @@
 import { lift, setBlockType } from "@milkdown/kit/prose/commands";
 import type { Fragment, Mark, Node as PMNode, ResolvedPos, Slice } from "@milkdown/kit/prose/model";
 import { liftListItem, wrapInList } from "@milkdown/kit/prose/schema-list";
-import { NodeSelection, Plugin, PluginKey, TextSelection } from "@milkdown/kit/prose/state";
+import { NodeSelection, Plugin, PluginKey, TextSelection, type Transaction } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { $prose } from "@milkdown/kit/utils";
 
@@ -586,6 +586,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
     let cachedDecos: DecorationSet | null = null;
     let cachedState: EditorView["state"] | null = null;
     let dirtyDuringCompose = false;
+    let composeRefreshTimer = 0;
 
     const currentParaPos = (state: EditorView["state"]): number | null => {
       const $from = state.selection.$from;
@@ -701,6 +702,10 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
             }
           },
           destroy() {
+            if (composeRefreshTimer) {
+              window.clearTimeout(composeRefreshTimer);
+              composeRefreshTimer = 0;
+            }
             editorView.dom.removeEventListener("pocket-html-dismiss", onDismiss);
             editorView.dom.removeEventListener("pointerdown", onGutterPointerDown, true);
             boundView = null;
@@ -743,13 +748,23 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
           return false;
         },
         handleDOMEvents: {
+          compositionstart() {
+            if (composeRefreshTimer) {
+              window.clearTimeout(composeRefreshTimer);
+              composeRefreshTimer = 0;
+            }
+            return false;
+          },
           compositionend(view) {
-            requestAnimationFrame(() => {
+            if (composeRefreshTimer) window.clearTimeout(composeRefreshTimer);
+            // 延后到 ProseMirror endComposition(20ms) 之后再兜底刷新，避免抢先触发 selectionToDOM 覆盖刚提交的光标。
+            composeRefreshTimer = window.setTimeout(() => {
+              composeRefreshTimer = 0;
               if (!view.isDestroyed && !view.composing && options().enabled && dirtyDuringCompose) {
                 dirtyDuringCompose = false;
                 view.dispatch(view.state.tr.setMeta(liveKey, true));
               }
-            });
+            }, 32);
             return false;
           },
           mousedown() {
@@ -787,11 +802,26 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
 
 const listGuardKey = new PluginKey("pocket-list-selection-guard");
 const NAV_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Escape"]);
+const CJK_PUNCT_RE = /^[\u2014\u2018-\u201F\u2026\u00B7\u3000-\u303F\uFF01-\uFF5E]{1,4}$/;
+
+function txChangedRange(tr: Transaction, targetFrom: number, targetTo: number): boolean {
+  for (let i = 0; i < tr.mapping.maps.length; i++) {
+    let hit = false;
+    const tail = tr.mapping.slice(i + 1);
+    tr.mapping.maps[i]!.forEach((_os, _oe, newStart, newEnd) => {
+      if (hit) return;
+      const from = tail.map(newStart, -1);
+      const to = tail.map(newEnd, 1);
+      if (from <= targetFrom && to >= targetTo) hit = true;
+    });
+    if (hit) return true;
+  }
+  return false;
+}
 
 /**
- * 拦截 @milkdown/components 列表项在 onMount 下一帧异步执行 scheduleRestore 时的过期选区回退：
- * 当文档较长导致帧耗时变长、用户在换行或建列表后立即连续输入文字或正在中文输入法拼写时，
- * 阻止延迟到达的 rAF 把光标强行拉回创建瞬间的行首位置。
+ * 拦截 @milkdown/components 列表项在 onMount 下一帧异步执行 scheduleRestore 时的过期选区回退，
+ * 同时防止中文输入法在写入中文标点符号（如 ， 。 ？ ！ 等）时短暂带出的选区残留并触发浮动工具栏。
  */
 export const listSelectionGuardPlugin = $prose(() => {
   let boundView: EditorView | null = null;
@@ -799,6 +829,34 @@ export const listSelectionGuardPlugin = $prose(() => {
   let armedAnchor: number | null = null;
   let dirtySinceArm = false;
   let lastNavAt = 0;
+  let lastManualSelAt = 0;
+  let composeStartPos: number | null = null;
+  let composeCheckTimer1 = 0;
+  let composeCheckTimer2 = 0;
+
+  const clearComposeTimers = () => {
+    if (composeCheckTimer1) {
+      window.clearTimeout(composeCheckTimer1);
+      composeCheckTimer1 = 0;
+    }
+    if (composeCheckTimer2) {
+      window.clearTimeout(composeCheckTimer2);
+      composeCheckTimer2 = 0;
+    }
+  };
+
+  const collapseSpuriousCjkSymbolSelection = (view: EditorView) => {
+    if (view.isDestroyed || view.composing) return;
+    if (performance.now() - lastManualSelAt < 200) return;
+    const sel = view.state.selection;
+    if (!(sel instanceof TextSelection) || sel.empty || !sel.$from.sameParent(sel.$to)) return;
+    if (composeStartPos !== null && sel.from < composeStartPos) return;
+    const len = sel.to - sel.from;
+    if (len < 1 || len > 4) return;
+    const text = view.state.doc.textBetween(sel.from, sel.to);
+    if (!CJK_PUNCT_RE.test(text)) return;
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, sel.to)).setMeta("pocket-selection", true));
+  };
 
   return new Plugin({
     key: listGuardKey,
@@ -808,20 +866,51 @@ export const listSelectionGuardPlugin = $prose(() => {
       armedAnchor = editorView.state.selection.from;
       dirtySinceArm = false;
       const onNav = (e: KeyboardEvent) => {
-        if (NAV_KEYS.has(e.key)) lastNavAt = performance.now();
+        if (NAV_KEYS.has(e.key)) {
+          lastNavAt = performance.now();
+          if (e.shiftKey) lastManualSelAt = lastNavAt;
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+          lastManualSelAt = performance.now();
+        }
       };
       const onPointer = () => {
-        lastNavAt = performance.now();
+        const now = performance.now();
+        lastNavAt = now;
+        lastManualSelAt = now;
       };
       editorView.dom.addEventListener("keydown", onNav, true);
       editorView.dom.addEventListener("pointerdown", onPointer, true);
       return {
         destroy() {
+          clearComposeTimers();
+          composeStartPos = null;
           editorView.dom.removeEventListener("keydown", onNav, true);
           editorView.dom.removeEventListener("pointerdown", onPointer, true);
           boundView = null;
         },
       };
+    },
+    props: {
+      handleDOMEvents: {
+        compositionstart(view) {
+          clearComposeTimers();
+          composeStartPos = view.state.selection.from;
+          return false;
+        },
+        compositionend(view) {
+          clearComposeTimers();
+          composeCheckTimer1 = window.setTimeout(() => {
+            composeCheckTimer1 = 0;
+            collapseSpuriousCjkSymbolSelection(view);
+          }, 0);
+          composeCheckTimer2 = window.setTimeout(() => {
+            composeCheckTimer2 = 0;
+            collapseSpuriousCjkSymbolSelection(view);
+            composeStartPos = null;
+          }, 28);
+          return false;
+        },
+      },
     },
     filterTransaction(tr, state) {
       if (
@@ -837,7 +926,7 @@ export const listSelectionGuardPlugin = $prose(() => {
         const now = performance.now();
         const navFresh = now - lastNavAt < 80;
         if (!navFresh && !tr.selection.eq(state.selection)) {
-          if (boundView?.composing) return false;
+          if (boundView?.composing && tr.selection.from < state.selection.to) return false;
           if (tr.selection.from < state.selection.from) {
             const curFrom = state.selection.$from;
             const nextFrom = tr.selection.$from;
@@ -849,6 +938,19 @@ export const listSelectionGuardPlugin = $prose(() => {
         }
       }
       return true;
+    },
+    appendTransaction(transactions, _oldState, newState) {
+      if (boundView?.composing) return null;
+      if (performance.now() - lastManualSelAt < 200) return null;
+      if (transactions.some((tr) => tr.getMeta("history$") || tr.getMeta("pointer"))) return null;
+      const sel = newState.selection;
+      if (!(sel instanceof TextSelection) || sel.empty || !sel.$from.sameParent(sel.$to)) return null;
+      const len = sel.to - sel.from;
+      if (len < 1 || len > 4) return null;
+      const text = newState.doc.textBetween(sel.from, sel.to);
+      if (!CJK_PUNCT_RE.test(text)) return null;
+      if (!transactions.some((tr) => tr.docChanged && txChangedRange(tr, sel.from, sel.to))) return null;
+      return newState.tr.setSelection(TextSelection.create(newState.doc, sel.to)).setMeta("pocket-selection", true);
     },
     state: {
       init: () => null,
