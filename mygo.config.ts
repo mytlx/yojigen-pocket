@@ -11,7 +11,7 @@ export default defineConfig({
   name: "Yojigen Pocket",
   slug: "yojigen-pocket",
   identifier: "com.yojigen.pocket",
-  version: "0.1.0",
+  version: "0.2.0",
   copyright: "© 2026 Yojigen Pocket",
   publisher: "Yojigen Pocket",
   // `mygo dev` 运行 devCommand 并加载 devUrl；`mygo build` 运行 buildCommand 并把 frontendDist 打进程序。

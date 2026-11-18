@@ -49,8 +49,10 @@ plugins/hello/
 `plugins/color-tool` 是随应用附带的一个完整例子。
 
 要用构建工具（TypeScript、Preact、打包依赖），参考仓库里的 `extensions/`：每个子目录是一个扩展，
-`bun run build:ext` 会逐个构建并打成 `build/extensions/<id>-<版本>.zip`。
+`bun run build:ext` 会逐个构建并打成 `build/extensions/<id>-<版本>.zip`（加参数可单独打某个，如 `bun tools/build-extensions.ts editors`）。
 `extensions/sdk/pocket.ts` 是宿主接口的类型定义。
+
+如需单独发布某个官方扩展，在更新对应 `plugin.json` 的 `version` 后，可在 GitHub Actions 手动运行 **Release Extension**，或推送 `ext-<id>-v<版本>` 标签（例如 `ext-editors-v1.0.1`）；CI 会生成独立 Release 并同步更新固定预发布标签 `extensions` 下的在线索引 `extensions.json`（含 `changelog` 与 `sha256`）。
 
 ### 清单 plugin.json
 

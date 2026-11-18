@@ -342,7 +342,7 @@ bunx mygo build -platform darwin/universal,windows/amd64,windows/arm64
 bun run build:ext
 ```
 
-推送 `v*` 标签时，`.github/workflows/build.yml` 会在 CI 上测试并打包，安装包和扩展包一起发到 Release。
+推送 `v*` 标签时，`.github/workflows/build.yml` 会在 CI 上测试并打包，安装包和扩展包一起发到 Release，并同步更新在线扩展索引 `extensions.json`。如需单独发布某个扩展，推送 `ext-<id>-v<版本>` 标签或在 GitHub Actions 运行 `Release Extension`（由 `.github/workflows/release-extension.yml` 触发并自动提取 `changelog`）。
 
 端到端测试会启动一个真实的应用（只在 macOS 上跑过），用临时目录和测试热键，不影响你的配置，但主窗口会出现在屏幕上，运行期间剪贴板也会被覆盖：
 
