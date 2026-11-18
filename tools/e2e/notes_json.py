@@ -13,7 +13,7 @@ check('JSON key 样式与键盘按键隔离', js('(()=>{const k=document.querySe
 check('JSON key 跟随输出滚动', js('(()=>{const p=document.querySelector(".fx-code"),k=p.querySelector(".fx-json-key");const before=k.getBoundingClientRect().top;p.scrollTop=80;return Math.abs((before-k.getBoundingClientRect().top)-80)<2})()'))
 shot('json-fixed')
 press('Escape')
-js('mygo.call("Extensions.Install",%s)' % json.dumps(os.path.join(EXT,'editors-1.0.0.zip')))
+js('mygo.call("Extensions.Install",%s)' % json.dumps(os.path.join(EXT,'editors-1.0.1.zip')))
 os.makedirs(os.path.join(HOME,'notes'),exist_ok=True)
 name=os.path.join(HOME,'notes','回归.md')
 original='\n\n# 一级标题\n\n正文 **加粗** 结尾\n\n## 二级标题\n\n<style>.demo { color: rgb(220, 30, 40); font-size: 28px; }</style>\n\n<div class="demo">HTML 样式预览</div>\n'
