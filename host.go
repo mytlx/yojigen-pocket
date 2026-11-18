@@ -144,13 +144,8 @@ func iconURL(kind, p string) string {
 }
 
 // pluginURL 生成扩展页面的地址。
-// Windows 的 WebView2 里，跨源 iframe 内部的脚本和样式请求不会触发 AddWebResourceRequestedFilter，
-// 自定义协议在 iframe 里只能加载到 HTML 空壳；因此 Windows 上走本机回环 HTTP 服务（<id>.pocketplugin.localhost:<port>）。
 func (a *App) pluginURL(id, main string) string {
 	p := "/" + strings.TrimPrefix(path.Clean("/"+filepath.ToSlash(main)), "/")
-	if runtime.GOOS == "windows" && a.media != nil && a.media.port > 0 {
-		return fmt.Sprintf("http://%s.pocketplugin.localhost:%d%s", id, a.media.port, p)
-	}
 	return schemeURL("pocketplugin", id, p)
 }
 

@@ -41,7 +41,6 @@ func newTestPluginApp(t *testing.T) (*App, string) {
 
 	a := &App{
 		paths: paths,
-		media: &mediaServer{port: 18663, cache: paths.Cache},
 	}
 	a.plugins = &providers.Plugins{
 		Dir:      paths.Plugins,
@@ -57,7 +56,7 @@ func TestPluginURLAndServeIsolation(t *testing.T) {
 
 	gotURL := a.pluginURL("editors", "index.html")
 	if runtime.GOOS == "windows" {
-		want := "http://editors.pocketplugin.localhost:18663/index.html"
+		want := "http://editors.pocketplugin.localhost/index.html"
 		if gotURL != want {
 			t.Fatalf("pluginURL = %q, want %q", gotURL, want)
 		}
@@ -68,23 +67,23 @@ func TestPluginURLAndServeIsolation(t *testing.T) {
 		}
 	}
 
-	// 同扩展 Origin 访问自身静态资源：应剥离端口并返回匹配的 CORS 头。
+	// 同扩展 Origin 访问自身静态资源：应返回匹配的 CORS 头。
 	req := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
-	req.Host = "editors.pocketplugin.localhost:18663"
-	req.Header.Set("Origin", "http://editors.pocketplugin.localhost:18663")
+	req.Host = "editors.pocketplugin.localhost"
+	req.Header.Set("Origin", "http://editors.pocketplugin.localhost")
 	rec := httptest.NewRecorder()
 	a.servePlugin(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `console.log("loaded")`) {
 		t.Fatalf("servePlugin assets/app.js: status=%d body=%q", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://editors.pocketplugin.localhost:18663" {
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://editors.pocketplugin.localhost" {
 		t.Fatalf("CORS Allow-Origin = %q, want plugin origin", got)
 	}
 
 	// 其他扩展的 Origin（如 pet 请求 editors）：不应获得 CORS 放行头。
 	reqOtherPlugin := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
-	reqOtherPlugin.Host = "editors.pocketplugin.localhost:18663"
-	reqOtherPlugin.Header.Set("Origin", "http://pet.pocketplugin.localhost:18663")
+	reqOtherPlugin.Host = "editors.pocketplugin.localhost"
+	reqOtherPlugin.Header.Set("Origin", "http://pet.pocketplugin.localhost")
 	recOtherPlugin := httptest.NewRecorder()
 	a.servePlugin(recOtherPlugin, reqOtherPlugin)
 	if got := recOtherPlugin.Header().Get("Access-Control-Allow-Origin"); got != "" {
@@ -93,7 +92,7 @@ func TestPluginURLAndServeIsolation(t *testing.T) {
 
 	// 外部网站 Origin：不应获得 CORS 放行头。
 	reqEvil := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
-	reqEvil.Host = "editors.pocketplugin.localhost:18663"
+	reqEvil.Host = "editors.pocketplugin.localhost"
 	reqEvil.Header.Set("Origin", "https://example.com")
 	recEvil := httptest.NewRecorder()
 	a.servePlugin(recEvil, reqEvil)
@@ -103,7 +102,7 @@ func TestPluginURLAndServeIsolation(t *testing.T) {
 
 	// 非只读请求应被拒绝。
 	reqPost := httptest.NewRequest(http.MethodPost, "/index.html", nil)
-	reqPost.Host = "editors.pocketplugin.localhost:18663"
+	reqPost.Host = "editors.pocketplugin.localhost"
 	recPost := httptest.NewRecorder()
 	a.servePlugin(recPost, reqPost)
 	if recPost.Code != http.StatusMethodNotAllowed {
@@ -124,7 +123,7 @@ func TestPluginRuntimeIsStaticAndChecksInstalled(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/__pocket.js", nil)
-	req.Host = "editors.pocketplugin.localhost:18663"
+	req.Host = "editors.pocketplugin.localhost"
 	rec := httptest.NewRecorder()
 	a.servePlugin(rec, req)
 	if rec.Code != http.StatusOK {
@@ -139,15 +138,14 @@ func TestPluginRuntimeIsStaticAndChecksInstalled(t *testing.T) {
 		t.Fatal(err)
 	}
 	reqGhost := httptest.NewRequest(http.MethodGet, "/__pocket.js", nil)
-	reqGhost.Host = "uninstalled-ext.pocketplugin.localhost:18663"
+	reqGhost.Host = "uninstalled-ext.pocketplugin.localhost"
 	recGhost := httptest.NewRecorder()
 	a.servePlugin(recGhost, reqGhost)
 	if recGhost.Code != http.StatusNotFound {
 		t.Fatalf("uninstalled plugin /__pocket.js status = %d, want 404", recGhost.Code)
 	}
 
-	// 各键在宿主存储中独立保存、互不覆盖，且跨端口重启后仍可按扩展 ID 读回。
-	a.media.port = 29120
+	// 各键在宿主存储中独立保存、互不覆盖，且重启后仍可按扩展 ID 读回。
 	if got, err := a.pluginStorageGet("editors", "notes.last"); err != nil || got != secret {
 		t.Fatalf("pluginStorageGet(notes.last) = %v, %v", got, err)
 	}

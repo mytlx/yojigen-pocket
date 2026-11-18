@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -24,15 +23,13 @@ import (
 	"yojigen-pocket/internal/store"
 )
 
-// --- 本地媒体与扩展服务 ---
+// --- 本地媒体服务 ---
 //
-// 视频、音频和 PDF 要能拖动进度、按范围读取，自定义协议做不到；
-// Windows 下扩展页面在跨源 iframe 里加载脚本和样式也依赖它，所以在本机回环地址上开一个只读的小服务。
-// 媒体地址带随机口令，扩展路由仅在 Windows 下按 *.pocketplugin.localhost 域名分发。
+// 视频、音频和 PDF 要能拖动进度、按范围读取，自定义协议做不到，
+// 所以在本机回环地址上开一个只读的小服务，地址带随机口令防止其他网页访问。
 
 type mediaServer struct {
 	base  string
-	port  int
 	token string
 	cache string
 }
@@ -47,7 +44,6 @@ func (a *App) startMedia() {
 	_, _ = rand.Read(raw)
 	m := &mediaServer{
 		base:  "http://" + ln.Addr().String(),
-		port:  ln.Addr().(*net.TCPAddr).Port,
 		token: hex.EncodeToString(raw),
 		cache: a.paths.Cache,
 	}
@@ -66,22 +62,8 @@ func (a *App) startMedia() {
 		w.Header().Set("Cache-Control", "no-store")
 		http.ServeFile(w, r, p)
 	})
-	var handler http.Handler = mux
-	if runtime.GOOS == "windows" {
-		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			host := strings.ToLower(r.Host)
-			if h, _, err := net.SplitHostPort(host); err == nil {
-				host = h
-			}
-			if strings.HasSuffix(host, ".pocketplugin.localhost") {
-				a.servePlugin(w, r)
-				return
-			}
-			mux.ServeHTTP(w, r)
-		})
-	}
 	a.media = m
-	go func() { _ = (&http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}).Serve(ln) }()
+	go func() { _ = (&http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}).Serve(ln) }()
 }
 
 func (m *mediaServer) allowed(p string) bool {

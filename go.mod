@@ -6,7 +6,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go/v2 v2.8.0
 	github.com/coder/websocket v1.8.15
 	github.com/ebitengine/purego v0.11.1
-	github.com/egoist/mygo v0.7.4
+	github.com/egoist/mygo v0.10.0
 	github.com/mozillazg/go-pinyin v0.21.0
 	github.com/pion/stun/v3 v3.1.7
 	github.com/quic-go/quic-go v0.65.0
