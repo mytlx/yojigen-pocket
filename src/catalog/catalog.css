@@ -162,7 +162,10 @@
 
 /* 扩展管理 */
 .ct-ext-actions {
+  flex: none;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
 }
 .ct-ext-list {
@@ -186,6 +189,28 @@
   font-size: 11.5px;
   color: var(--text-2);
 }
+.ct-ext-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-style: normal;
+  font-weight: 500;
+  font-size: 11px;
+  vertical-align: middle;
+}
+.ct-ext-badge.is-update {
+  background: rgba(24, 134, 75, 0.14);
+  color: var(--ok);
+}
+.ct-ext-badge.is-warn {
+  background: rgba(230, 150, 0, 0.16);
+  color: #a65f00;
+}
+:root[data-theme="dark"] .ct-ext-badge.is-warn {
+  color: #ffc56b;
+}
 .ct-ext-meta {
   display: flex;
   flex-direction: column;
@@ -196,6 +221,83 @@
 }
 .ct-ext-warn {
   color: var(--danger);
+}
+.ct-ext-changelog {
+  margin: 8px 0 10px;
+  padding: 9px 11px;
+  border-radius: var(--radius-control);
+  background: var(--well);
+  font: 11.5px/1.55 var(--font-mono);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.ct-ext-update-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  border-radius: var(--radius-control);
+  background: var(--sel);
+  box-shadow: inset 0 0 0 0.5px var(--sel-rim);
+  color: var(--text);
+  font-size: 12.5px;
+}
+.ct-ext-update-bar > svg {
+  flex: none;
+  color: var(--accent);
+}
+:root[data-theme="dark"] .ct-ext-update-bar > svg {
+  color: #fff;
+}
+.ct-ext-update-bar > span {
+  flex: 1;
+  min-width: 0;
+}
+.ct-ext-source {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: inset 0 0 0 0.5px var(--line);
+  animation: q-fade-up var(--dur) var(--ease-out);
+}
+.ct-ext-source-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ct-ext-source-row label {
+  flex: none;
+  width: 118px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.ct-ext-source-row input {
+  flex: 1;
+}
+.ct-ext-source-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 4px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.ct-spin {
+  animation: ct-rotate 900ms linear infinite;
+}
+@keyframes ct-rotate {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* --- 关键词 / 前缀：冲突提示和编辑 --- */

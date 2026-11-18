@@ -10,6 +10,14 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
+export interface PluginPermissions {
+  peer?: boolean;
+  dirs?: string[];
+  fetch?: string[];
+  runner?: boolean;
+  files?: boolean;
+}
+
 export interface PluginManifest {
   id?: string;
   name?: string;
@@ -19,6 +27,9 @@ export interface PluginManifest {
   version?: string;
   author?: string;
   api?: number;
+  tools?: Array<{ id: string; title?: string }>;
+  permissions?: PluginPermissions;
+  backend?: unknown;
 }
 
 export interface RegistryArtifact {
@@ -39,6 +50,9 @@ export interface RegistryExtension extends RegistryArtifact {
   description?: string;
   icon?: string;
   author?: string;
+  tools?: string[];
+  permissions?: PluginPermissions;
+  backend?: boolean;
   compat: Record<string, RegistryArtifact>;
 }
 
@@ -54,6 +68,9 @@ export interface IncomingExtensionRelease extends RegistryArtifact {
   description?: string;
   icon?: string;
   author?: string;
+  tools?: string[];
+  permissions?: PluginPermissions;
+  backend?: boolean;
   changelogExplicit?: boolean;
 }
 
@@ -181,6 +198,34 @@ function toArtifact(item: IncomingExtensionRelease): RegistryArtifact {
   };
 }
 
+function extractManifestTools(manifest: PluginManifest, fallbackName: string): string[] {
+  if (manifest.tools && manifest.tools.length > 0) {
+    return manifest.tools.map((t) => (t.title || t.id || "").trim()).filter(Boolean);
+  }
+  const title = (manifest.title || manifest.name || fallbackName).trim();
+  return title ? [title] : [];
+}
+
+function buildMetaFields(src: {
+  name: string;
+  description?: string;
+  icon?: string;
+  author?: string;
+  tools?: string[];
+  permissions?: PluginPermissions;
+  backend?: boolean;
+}) {
+  return {
+    name: src.name,
+    ...(src.description ? { description: src.description } : {}),
+    ...(src.icon ? { icon: src.icon } : {}),
+    ...(src.author ? { author: src.author } : {}),
+    ...(src.tools && src.tools.length > 0 ? { tools: src.tools } : {}),
+    ...(src.permissions && Object.keys(src.permissions).length > 0 ? { permissions: src.permissions } : {}),
+    ...(src.backend ? { backend: true } : {}),
+  };
+}
+
 /** 将新发布的扩展版本合并进现有在线索引，保留历史 API 兼容槽位与未变更扩展。 */
 export function mergeRegistry(
   existing: ExtensionRegistry | null | undefined,
@@ -202,10 +247,7 @@ export function mergeRegistry(
   if (idx < 0) {
     list.push({
       id: incoming.id,
-      name: incoming.name,
-      ...(incoming.description ? { description: incoming.description } : {}),
-      ...(incoming.icon ? { icon: incoming.icon } : {}),
-      ...(incoming.author ? { author: incoming.author } : {}),
+      ...buildMetaFields(incoming),
       ...incomingArtifact,
       compat: { [String(incoming.api)]: incomingArtifact },
     });
@@ -245,12 +287,7 @@ export function mergeRegistry(
       (topCmp === 0 && incoming.api > prev.api);
 
     let topArtifact: RegistryArtifact;
-    let meta = {
-      name: prev.name,
-      description: prev.description,
-      icon: prev.icon,
-      author: prev.author,
-    };
+    let meta = buildMetaFields(prev);
 
     if (shouldUpdateTop) {
       topArtifact =
@@ -267,22 +304,14 @@ export function mergeRegistry(
               changelog: prev.changelog,
             }
           : incomingArtifact;
-      meta = {
-        name: incoming.name,
-        description: incoming.description,
-        icon: incoming.icon,
-        author: incoming.author,
-      };
+      meta = buildMetaFields(incoming);
       if (
         topArtifact.version !== prev.version ||
         topArtifact.api !== prev.api ||
         topArtifact.sha256 !== prev.sha256 ||
         topArtifact.url !== prev.url ||
         topArtifact.changelog !== prev.changelog ||
-        meta.name !== prev.name ||
-        meta.description !== prev.description ||
-        meta.icon !== prev.icon ||
-        meta.author !== prev.author
+        JSON.stringify(meta) !== JSON.stringify(buildMetaFields(prev))
       ) {
         changed = true;
       }
@@ -294,10 +323,7 @@ export function mergeRegistry(
 
     list[idx] = {
       id: incoming.id,
-      name: meta.name,
-      ...(meta.description ? { description: meta.description } : {}),
-      ...(meta.icon ? { icon: meta.icon } : {}),
-      ...(meta.author ? { author: meta.author } : {}),
+      ...meta,
       ...topArtifact,
       compat,
     };
@@ -319,7 +345,7 @@ function repoRoot(): string {
   return resolve(import.meta.dirname, "..");
 }
 
-function listAllExtensionIDs(root: string): string[] {
+export function listAllExtensionIDs(root: string): string[] {
   const extRoot = join(root, "extensions");
   if (!existsSync(extRoot)) return [];
   return readdirSync(extRoot)
@@ -327,7 +353,7 @@ function listAllExtensionIDs(root: string): string[] {
     .sort();
 }
 
-function readManifest(root: string, id: string): PluginManifest {
+export function readManifest(root: string, id: string): PluginManifest {
   const file = join(root, "extensions", id, "plugin.json");
   if (!existsSync(file)) {
     throw new Error(`找不到扩展清单：${file}`);
@@ -335,12 +361,12 @@ function readManifest(root: string, id: string): PluginManifest {
   return JSON.parse(readFileSync(file, "utf8")) as PluginManifest;
 }
 
-function readHostAPIVersion(root: string): number {
+export function readHostAPIVersion(root: string): number {
   const pluginsGo = join(root, "internal", "providers", "plugins.go");
   return parseHostAPIVersion(readFileSync(pluginsGo, "utf8"));
 }
 
-function git(root: string, args: string[]): string | null {
+export function git(root: string, args: string[]): string | null {
   try {
     return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
   } catch {
@@ -348,7 +374,7 @@ function git(root: string, args: string[]): string | null {
   }
 }
 
-export function findPreviousReleaseTag(root: string, id: string, currentTag?: string): string | null {
+export function findPreviousTagMatching(root: string, match: (tag: string) => boolean, currentTag?: string): string | null {
   const headSha = git(root, ["rev-parse", "HEAD"]);
   const mergedRaw = git(root, ["tag", "--merged", "HEAD"]);
   if (!mergedRaw) return null;
@@ -356,7 +382,7 @@ export function findPreviousReleaseTag(root: string, id: string, currentTag?: st
   const candidates = mergedRaw
     .split(/\r?\n/)
     .map((s) => s.trim())
-    .filter((t) => t && t !== currentTag && (t.startsWith(`ext-${id}-v`) || /^v[0-9]/.test(t)));
+    .filter((t) => t && t !== currentTag && match(t));
 
   let bestTag: string | null = null;
   let bestDistance = Number.POSITIVE_INFINITY;
@@ -375,6 +401,23 @@ export function findPreviousReleaseTag(root: string, id: string, currentTag?: st
   return bestTag;
 }
 
+export function findPreviousReleaseTag(root: string, id: string, currentTag?: string): string | null {
+  return findPreviousTagMatching(root, (t) => t.startsWith(`ext-${id}-v`) || /^v[0-9]/.test(t), currentTag);
+}
+
+export function readAnnotatedTagMessage(root: string, tag?: string): string {
+  if (!tag) return "";
+  const tagType = git(root, ["cat-file", "-t", `refs/tags/${tag}`]);
+  if (tagType !== "tag") return "";
+  const rawContents = git(root, ["tag", "-l", "--format=%(contents)", tag]);
+  return (
+    rawContents
+      ?.replace(/\r\n/g, "\n")
+      .replace(/\n?-----BEGIN (?:PGP|SSH) SIGNATURE-----[\s\S]*$/m, "")
+      .trim() ?? ""
+  );
+}
+
 export function resolveExtensionChangelog(opts: {
   root: string;
   id: string;
@@ -386,18 +429,9 @@ export function resolveExtensionChangelog(opts: {
     return { changelog: manual, explicit: true, prevTag: null };
   }
 
-  if (opts.tag) {
-    const tagType = git(opts.root, ["cat-file", "-t", `refs/tags/${opts.tag}`]);
-    if (tagType === "tag") {
-      const rawContents = git(opts.root, ["tag", "-l", "--format=%(contents)", opts.tag]);
-      const contents = rawContents
-        ?.replace(/\r\n/g, "\n")
-        .replace(/\n?-----BEGIN (?:PGP|SSH) SIGNATURE-----[\s\S]*$/m, "")
-        .trim();
-      if (contents) {
-        return { changelog: contents, explicit: true, prevTag: null };
-      }
-    }
+  const contents = readAnnotatedTagMessage(opts.root, opts.tag);
+  if (contents) {
+    return { changelog: contents, explicit: true, prevTag: null };
   }
 
   const prevTag = findPreviousReleaseTag(opts.root, opts.id, opts.tag);
@@ -423,7 +457,7 @@ export function resolveExtensionChangelog(opts: {
 
 const BOOLEAN_FLAGS = new Set(["release-notes", "changelog-explicit", "force"]);
 
-function parseFlags(args: string[]): { positional: string[]; flags: Record<string, string | boolean> } {
+export function parseFlags(args: string[]): { positional: string[]; flags: Record<string, string | boolean> } {
   const positional: string[] = [];
   const flags: Record<string, string | boolean> = {};
   for (let i = 0; i < args.length; i++) {
@@ -453,7 +487,7 @@ function parseFlags(args: string[]): { positional: string[]; flags: Record<strin
   return { positional, flags };
 }
 
-function flagStr(flags: Record<string, string | boolean>, key: string): string | undefined {
+export function flagStr(flags: Record<string, string | boolean>, key: string): string | undefined {
   const v = flags[key];
   return typeof v === "string" ? v : undefined;
 }
@@ -623,6 +657,9 @@ function main() {
           description: manifest.description,
           icon: manifest.icon,
           author: manifest.author,
+          tools: extractManifestTools(manifest, info.name),
+          permissions: manifest.permissions,
+          backend: Boolean(manifest.backend),
           version: info.version,
           api: info.api,
           url: buildReleaseDownloadURL(repo, tag, asset),

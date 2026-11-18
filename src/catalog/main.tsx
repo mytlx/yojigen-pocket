@@ -151,7 +151,7 @@ function App() {
           </label>
         </div>
         <div class="st-content" key={category}>
-          {category === MANAGE && <ExtensionsPanel flash={flash} />}
+          {category === MANAGE && <ExtensionsPanel flash={flash} query={query} />}
           {category !== MANAGE && conflictCount > 0 && (
             <div class="ct-conflict-bar">
               <TriangleAlert size={15} />

@@ -1,3 +1,4 @@
+import type { Node as PMNode } from "@milkdown/kit/prose/model";
 import { Plugin, PluginKey } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { $prose } from "@milkdown/kit/utils";
@@ -19,7 +20,21 @@ function jump(view: EditorView, index: number) {
   });
   if (target < 0) return;
   const dom = view.nodeDOM(target);
-  if (dom instanceof HTMLElement) dom.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (!(dom instanceof HTMLElement)) return;
+  const container = dom.closest(".fx-notes-rich");
+  if (container instanceof HTMLElement) {
+    const align = () => {
+      const top = Math.max(0, Math.min(container.scrollHeight - container.clientHeight, container.scrollTop + dom.getBoundingClientRect().top - container.getBoundingClientRect().top - 10));
+      if (Math.abs(top - container.scrollTop) >= 1) {
+        container.scrollTo({ top, behavior: "instant" as ScrollBehavior });
+        return true;
+      }
+      return false;
+    };
+    if (align()) requestAnimationFrame(() => void align());
+    return;
+  }
+  dom.scrollIntoView({ block: "start" });
 }
 
 function render(view: EditorView, heads: Head[]): HTMLElement {
@@ -47,28 +62,38 @@ function render(view: EditorView, heads: Head[]): HTMLElement {
   return nav;
 }
 
+function buildTocDecos(doc: PMNode): DecorationSet | null {
+  const marks: { pos: number; size: number }[] = [];
+  const heads: Head[] = [];
+  doc.forEach((node, pos) => {
+    if (node.type.name === "heading") heads.push({ level: node.attrs.level as number, text: node.textContent });
+    else if (node.type.name === "paragraph" && /^\[toc\]$/i.test(node.textContent.trim())) marks.push({ pos, size: node.nodeSize });
+  });
+  if (marks.length === 0) return null;
+  // 标题没变就复用上一次画好的目录。
+  const key = `toc:${JSON.stringify(heads)}`;
+  return DecorationSet.create(
+    doc,
+    marks.flatMap((m) => [
+      Decoration.node(m.pos, m.pos + m.size, { class: "md-toc-marker" }),
+      Decoration.widget(m.pos + m.size, (view) => render(view, heads), { side: -1, key, ignoreSelection: true }),
+    ]),
+  );
+}
+
+const tocKey = new PluginKey<DecorationSet | null>("pocket-toc");
+
 export const tocPlugin = $prose(
   () =>
-    new Plugin({
-      key: new PluginKey("pocket-toc"),
+    new Plugin<DecorationSet | null>({
+      key: tocKey,
+      state: {
+        init: (_, state) => buildTocDecos(state.doc),
+        apply: (tr, prev, _, newState) => (tr.docChanged ? buildTocDecos(newState.doc) : prev),
+      },
       props: {
         decorations(state) {
-          const marks: { pos: number; size: number }[] = [];
-          const heads: Head[] = [];
-          state.doc.forEach((node, pos) => {
-            if (node.type.name === "heading") heads.push({ level: node.attrs.level as number, text: node.textContent });
-            else if (node.type.name === "paragraph" && /^\[toc\]$/i.test(node.textContent.trim())) marks.push({ pos, size: node.nodeSize });
-          });
-          if (marks.length === 0) return null;
-          // 标题没变就复用上一次画好的目录。
-          const key = `toc:${JSON.stringify(heads)}`;
-          return DecorationSet.create(
-            state.doc,
-            marks.flatMap((m) => [
-              Decoration.node(m.pos, m.pos + m.size, { class: "md-toc-marker" }),
-              Decoration.widget(m.pos + m.size, (view) => render(view, heads), { side: -1, key, ignoreSelection: true }),
-            ]),
-          );
+          return tocKey.getState(state) ?? null;
         },
       },
     }),

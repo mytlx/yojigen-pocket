@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, Check, Code, Copy, Heading1, Heading2, Heading3, He
 import { blockSourcePlugin } from "./blocksource";
 import { blankLinesPlugin, configureBlankLines, remarkBlankLines, restoreBlankLinesOnMarkdown } from "./blanklines";
 import { configurePocketHtml, pocketHtmlPlugins } from "./htmlrender";
-import { liveInlinePlugin } from "./liveinline";
+import { listSelectionGuardPlugin, liveInlinePlugin } from "./liveinline";
 import { previewDocument } from "./html-preview";
 import { noteLineKeys, type NoteShortcuts } from "./shortcuts";
 import { languages } from "../code/languages";
@@ -59,15 +59,17 @@ export function RichEditor(props: RichProps) {
     let destroy: (() => void) | undefined;
     void (async () => {
       try {
-        const [{ Crepe }, { editorViewCtx }, { remarkPreserveEmptyLinePlugin }, { remarkGFMPlugin }, { LanguageDescription, LanguageSupport, Language }, cm, marks, toc] = await Promise.all([
+        const [{ Crepe }, { editorViewCtx }, { codeBlockView }, { remarkPreserveEmptyLinePlugin }, { remarkGFMPlugin }, { LanguageDescription, LanguageSupport, Language }, cm, marks, toc, { fastCodeBlockView }] = await Promise.all([
           import("@milkdown/crepe"),
           import("@milkdown/kit/core"),
+          import("@milkdown/kit/component/code-block"),
           import("@milkdown/kit/preset/commonmark"),
           import("@milkdown/kit/preset/gfm"),
           import("@codemirror/language"),
           import("../code/editor"),
           import("./marks"),
           import("./toc"),
+          import("./fastcodeblock"),
           import("@milkdown/crepe/theme/common/style.css"),
           import("@milkdown/crepe/theme/frame.css"),
         ]);
@@ -133,11 +135,14 @@ export function RichEditor(props: RichProps) {
                   if (block.node.type.name === "heading") return "left";
                   let descendants = 0;
                   block.node.descendants((node) => {
+                    if (descendants > 2) return false;
                     descendants += node.childCount;
+                    return descendants <= 2;
                   });
+                  if (descendants > 2) return "left-start";
                   const style = window.getComputedStyle(block.el);
                   const height = block.el.getBoundingClientRect().height - (Number.parseInt(style.paddingTop, 10) || 0) - (Number.parseInt(style.paddingBottom, 10) || 0);
-                  return descendants > 2 || blockDom.getBoundingClientRect().height < height ? "left-start" : "left";
+                  return blockDom.getBoundingClientRect().height < height ? "left-start" : "left";
                 },
               },
             },
@@ -156,6 +161,7 @@ export function RichEditor(props: RichProps) {
           .use(remarkBlankLines)
           .use(blankLinesPlugin)
           .use(toc.tocPlugin)
+          .use(listSelectionGuardPlugin)
           .use(liveInlinePlugin(() => ({ enabled: !latest.current.revealSource })))
           .use(blockSourcePlugin(() => ({ enabled: latest.current.revealSource, shortcuts: latest.current.shortcuts })));
         // 保存时 [TOC] 会被转义成 \[TOC]（方括号在 Markdown 里有含义），别的编辑器就不认了：改回去。
@@ -168,6 +174,9 @@ export function RichEditor(props: RichProps) {
         );
         // 不在空段落处写入 <br /> 占位，保持标准 Markdown 换行行为（类 Typora）。
         await crepe.editor.remove(remarkPreserveEmptyLinePlugin);
+        // 替换滚动期间按视口批量实例化数百个 CodeMirror 的默认节点视图，改用点击/聚焦时按需激活。
+        await crepe.editor.remove(codeBlockView);
+        crepe.editor.use(fastCodeBlockView);
         await crepe.create();
         if (!alive) {
           void crepe.destroy();

@@ -403,6 +403,7 @@ export const pocketHtmlNodeView = $view(htmlSchema.node, (ctx) => {
     dom.contentEditable = "false";
 
     const renderLive = () => {
+      if (editing) view.dom.classList.remove("pocket-hide-vcursor-html");
       editing = false;
       dom.replaceChildren();
       const val = String(cur.attrs.value ?? "");
@@ -482,7 +483,11 @@ export const pocketHtmlNodeView = $view(htmlSchema.node, (ctx) => {
           view.focus();
         }
       });
-      input.addEventListener("blur", () => commit(false));
+      input.addEventListener("focus", () => view.dom.classList.add("pocket-hide-vcursor-html"));
+      input.addEventListener("blur", () => {
+        view.dom.classList.remove("pocket-hide-vcursor-html");
+        commit(false);
+      });
       dom.appendChild(input);
       requestAnimationFrame(() => {
         if (!input.isConnected) return;
@@ -525,6 +530,9 @@ export const pocketHtmlNodeView = $view(htmlSchema.node, (ctx) => {
       },
       stopEvent: () => editing,
       ignoreMutation: () => true,
+      destroy() {
+        if (editing) view.dom.classList.remove("pocket-hide-vcursor-html");
+      },
     };
   };
 });

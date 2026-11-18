@@ -191,6 +191,7 @@ describe("extension-registry CLI", () => {
       expect(reg.schema).toBe(1);
       expect(reg.extensions).toHaveLength(1);
       expect(reg.extensions[0].id).toBe("pet");
+      expect(reg.extensions[0].tools).toEqual(["桌面宠物"]);
       expect(reg.extensions[0].changelog).toBe("- feat(pet): test entry");
       expect(reg.extensions[0].url).toBe("https://github.com/mytlx/yojigen-pocket/releases/download/ext-pet-v1.0.0/pet-1.0.0.zip");
     } finally {

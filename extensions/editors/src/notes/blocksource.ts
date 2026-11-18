@@ -176,6 +176,7 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
       },
       view: () => ({
         update(view) {
+          view.dom.classList.toggle("pocket-hide-vcursor-block", !!key.getState(view.state));
           const area = view.dom.querySelector<HTMLTextAreaElement>(".pocket-block-source");
           const areaHasFocus = area !== null && document.activeElement === area;
           if (!options().enabled) {

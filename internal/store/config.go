@@ -69,6 +69,12 @@ type Keys struct {
 	Detach string `json:"detach"` // 把功能页分离成独立窗口
 }
 
+// PluginsConfig 是扩展商店与在线更新源设置。
+type PluginsConfig struct {
+	RegistryURL string `json:"registryUrl"` // 留空时使用内置官方扩展索引地址
+	MirrorURL   string `json:"mirrorUrl"`   // 可选 GitHub 下载加速镜像前缀，支持 {url} 占位符
+}
+
 // LLMConfig 是一个大模型接口的设置。密钥不写在这里，存在系统的凭据管理器里。
 type LLMConfig struct {
 	BaseURL string `json:"baseUrl,omitempty"`
@@ -171,6 +177,7 @@ type Config struct {
 	Interpreters    map[string]string   `json:"interpreters"` // 扩展名 → 解释器
 	URIAllowlist    []string            `json:"uriAllowlist"` // 允许通过 URI 直接执行的命令 ID
 	Keys            Keys                `json:"keys"`
+	Plugins         PluginsConfig       `json:"plugins"`
 	DisabledPlugins []string            `json:"disabledPlugins"` // 停用的扩展：不加载、不占快捷键、窗口和后端进程都关掉
 	DetachOnHotkey  map[string]bool     `json:"detachOnHotkey"`  // 这些命令按直达热键时直接以独立窗口打开
 	HotkeyInput     map[string]string   `json:"hotkeyInput"`     // 这些命令按直达热键时带入的内容：selection（默认）| clipboard | both | none

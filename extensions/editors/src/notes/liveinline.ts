@@ -1,7 +1,7 @@
 import { lift, setBlockType } from "@milkdown/kit/prose/commands";
-import type { Mark, Node as PMNode, ResolvedPos } from "@milkdown/kit/prose/model";
+import type { Fragment, Mark, Node as PMNode, ResolvedPos, Slice } from "@milkdown/kit/prose/model";
 import { liftListItem, wrapInList } from "@milkdown/kit/prose/schema-list";
-import { NodeSelection, Plugin, PluginKey, TextSelection } from "@milkdown/kit/prose/state";
+import { NodeSelection, Plugin, PluginKey, TextSelection, type Transaction } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { $prose } from "@milkdown/kit/utils";
 
@@ -94,7 +94,101 @@ function ancestorOf($pos: ResolvedPos, name: string): { depth: number; pos: numb
   return null;
 }
 
-/** 创建一个可跟随文本宽度自动伸缩的轻量级语法编辑控件。 */
+function mountTokenInput(
+  wrap: HTMLElement,
+  view: EditorView,
+  text: string,
+  opts: {
+    label: string;
+    onCommit: (next: string, returnFocus: boolean) => void;
+    onLiveInput?: (next: string) => void;
+    onExitForward?: () => void;
+    onDone: (finalText: string) => void;
+  },
+) {
+  wrap.classList.remove("is-passive");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.size = 1;
+  input.tabIndex = -1;
+  input.className = "pocket-syntax-input";
+  input.value = text;
+  input.spellcheck = false;
+  input.setAttribute("aria-label", opts.label);
+
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    view.dom.classList.remove("pocket-hide-vcursor");
+    opts.onDone(input.value);
+  };
+
+  input.addEventListener("focus", () => {
+    view.dom.classList.add("pocket-hide-vcursor");
+  });
+  input.addEventListener("input", () => {
+    wrap.dataset.text = input.value || " ";
+    opts.onLiveInput?.(input.value);
+    if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(view, wrap);
+  });
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.isComposing) return;
+    if (e.key === "Enter" || e.key === "Escape") {
+      e.preventDefault();
+      const val = input.value;
+      close();
+      opts.onCommit(val, true);
+    } else if (e.key === "ArrowRight" && input.selectionStart === input.value.length && input.selectionEnd === input.value.length) {
+      if (opts.onExitForward) {
+        e.preventDefault();
+        close();
+        opts.onExitForward();
+      }
+    }
+  });
+  input.addEventListener("blur", () => {
+    if (closed) return;
+    const val = input.value;
+    close();
+    opts.onCommit(val, false);
+    requestAnimationFrame(() => {
+      if (!view.isDestroyed && !view.dom.contains(document.activeElement)) {
+        view.dispatch(view.state.tr.setMeta(liveKey, false));
+      }
+    });
+  });
+
+  wrap.replaceChildren(input);
+  if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(view, wrap);
+  requestAnimationFrame(() => {
+    if (!input.isConnected) return;
+    input.focus();
+    input.select();
+  });
+}
+
+function syncPlaceholderHostOffset(view: EditorView, wrap: HTMLElement | null): void {
+  // 必须把 CSS 变量写到 ProseMirror DOM 之外（.milkdown），避免触发 DOMObserver(attributes:true) 导致死循环卡死。
+  const outer = view.dom.closest(".milkdown") ?? view.dom.parentElement;
+  if (!(outer instanceof HTMLElement) || outer === view.dom || view.dom.contains(outer)) return;
+  const parent = wrap?.parentElement;
+  if (!wrap || !(parent instanceof HTMLElement) || !parent.classList.contains("crepe-placeholder")) {
+    if (outer.style.getPropertyValue("--pocket-ph-x")) outer.style.removeProperty("--pocket-ph-x");
+    return;
+  }
+  const hostRect = parent.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+  const mr = Number.parseFloat(window.getComputedStyle(wrap).marginRight) || 0;
+  const x = Math.max(0, wrapRect.right - hostRect.left - parent.clientLeft + mr);
+  const next = `${Math.round(x * 100) / 100}px`;
+  if (outer.style.getPropertyValue("--pocket-ph-x") !== next) {
+    outer.style.setProperty("--pocket-ph-x", next);
+  }
+}
+
+/** 创建按需可编辑的语法标记：正常打字与 IME 期间为纯静态 <span>（不向编辑区注入 <input>），点击后再就地转为输入框。 */
 function makeTokenWidget(
   view: EditorView,
   text: string,
@@ -107,47 +201,64 @@ function makeTokenWidget(
   },
 ): HTMLElement {
   const wrap = document.createElement("span");
-  wrap.className = `pocket-syntax-wrap${opts.className ? ` ${opts.className}` : ""}`;
+  wrap.className = `pocket-syntax-wrap is-passive${opts.className ? ` ${opts.className}` : ""}`;
   wrap.dataset.text = text || " ";
 
-  const input = document.createElement("input");
-  input.type = "text";
-  input.size = 1;
-  input.className = "pocket-syntax-input";
-  input.value = text;
-  input.spellcheck = false;
-  input.setAttribute("aria-label", opts.label);
+  const labelEl = document.createElement("span");
+  labelEl.className = "pocket-syntax-text";
+  labelEl.textContent = text;
+  wrap.appendChild(labelEl);
 
-  const syncSize = () => {
-    wrap.dataset.text = input.value || " ";
-  };
-  input.addEventListener("input", () => {
-    syncSize();
-    opts.onLiveInput?.(input.value);
-  });
-  input.addEventListener("keydown", (e) => {
+  let editing = false;
+  wrap.addEventListener("mousedown", (e) => {
+    if (editing || !view.editable) return;
+    editing = true;
+    e.preventDefault();
     e.stopPropagation();
-    if (e.isComposing) return;
-    if (e.key === "Enter" || e.key === "Escape") {
-      e.preventDefault();
-      opts.onCommit(input.value, true);
-    } else if (e.key === "ArrowRight" && input.selectionStart === input.value.length && input.selectionEnd === input.value.length) {
-      if (opts.onExitForward) {
-        e.preventDefault();
-        opts.onExitForward();
-      }
-    }
-  });
-  input.addEventListener("blur", () => {
-    opts.onCommit(input.value, false);
-    requestAnimationFrame(() => {
-      if (!view.dom.contains(document.activeElement)) {
-        view.dispatch(view.state.tr.setMeta(liveKey, false));
-      }
+    mountTokenInput(wrap, view, text, {
+      ...opts,
+      onDone: (val) => {
+        editing = false;
+        wrap.classList.add("is-passive");
+        labelEl.textContent = val;
+        wrap.dataset.text = val || " ";
+        wrap.replaceChildren(labelEl);
+        if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(view, wrap);
+      },
     });
   });
-  wrap.appendChild(input);
   return wrap;
+}
+
+function commitListPrefixEdit(v: EditorView, liPos: number, tbPos: number, isOrdered: boolean, val: string, refocus: boolean) {
+  const curLi = v.state.doc.nodeAt(liPos);
+  if (!curLi || curLi.type.name !== "list_item") return;
+  const trimmed = val.trim();
+  if (!trimmed) {
+    v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
+    liftListItem(v.state.schema.nodes.list_item!)(v.state, v.dispatch);
+  } else if (/^-\s*\[\s*\]$/.test(trimmed)) {
+    v.dispatch(v.state.tr.setNodeMarkup(liPos, undefined, { ...curLi.attrs, checked: false }));
+  } else if (/^-\s*\[[xX]\]$/.test(trimmed)) {
+    v.dispatch(v.state.tr.setNodeMarkup(liPos, undefined, { ...curLi.attrs, checked: true }));
+  } else if (/^[-*+]$/.test(trimmed)) {
+    if (isOrdered) {
+      v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
+      liftListItem(v.state.schema.nodes.list_item!)(v.state, v.dispatch);
+      wrapInList(v.state.schema.nodes.bullet_list!)(v.state, v.dispatch);
+    } else if (curLi.attrs.checked != null) {
+      v.dispatch(v.state.tr.setNodeMarkup(liPos, undefined, { ...curLi.attrs, checked: null }));
+    }
+  } else if (/^\d+\.?$/.test(trimmed) && !isOrdered) {
+    v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
+    liftListItem(v.state.schema.nodes.list_item!)(v.state, v.dispatch);
+    wrapInList(v.state.schema.nodes.ordered_list!)(v.state, v.dispatch);
+  }
+  if (refocus) {
+    const nextPos = Math.min(tbPos + 1, v.state.doc.content.size);
+    v.dispatch(v.state.tr.setSelection(TextSelection.near(v.state.doc.resolve(nextPos))).setMeta("pocket-selection", true));
+    v.focus();
+  }
 }
 
 function mapTokenToMark(token: string): { name: string; attrs?: Record<string, unknown> } | null {
@@ -250,7 +361,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
 
       // 仅当编辑器拥有焦点（含子孙内联输入框正被编辑）时激活实时标记揭示。
       const activeEl = typeof document !== "undefined" ? document.activeElement : null;
-      const inWidget = !!(activeEl && view?.dom.contains(activeEl) && (activeEl.closest(".pocket-syntax-wrap") || activeEl.closest(".pocket-html-editing")));
+      const inWidget = !!(activeEl && view?.dom.contains(activeEl) && (activeEl.closest(".pocket-syntax-wrap") || activeEl.closest(".pocket-html-editing") || activeEl.closest(".label-wrapper.is-editing")));
       const hasFocus = view ? view.hasFocus() || inWidget : false;
       if (!hasFocus && !inWidget) return null;
 
@@ -288,7 +399,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
                 s.textContent = "[";
                 s.addEventListener("mousedown", (e) => {
                   e.preventDefault();
-                  v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, span.from)));
+                  v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, span.from)).setMeta("pocket-selection", true));
                   v.focus();
                 });
                 return s;
@@ -365,7 +476,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
                 label: "行内语法前缀",
                 onCommit: (val, refocus) => applyTokenEdit(v, val, refocus),
                 onExitForward: () => {
-                  v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, span.from)));
+                  v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, span.from)).setMeta("pocket-selection", true));
                   v.focus();
                 },
               }),
@@ -417,16 +528,16 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
                         v.dispatch(v.state.tr.setNodeMarkup(tbPos, undefined, { ...cur.attrs, level: nextLevel }));
                       }
                     } else if (!val.trim()) {
-                      v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)));
+                      v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
                       setBlockType(v.state.schema.nodes.paragraph!)(v.state, v.dispatch);
                     }
                     if (refocus) {
-                      v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)));
+                      v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
                       v.focus();
                     }
                   },
                   onExitForward: () => {
-                    v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)));
+                    v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
                     v.focus();
                   },
                 }),
@@ -448,51 +559,16 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
                   ? `${String(liNode.attrs.label || "1.").replace(/\.?$/, ".")} `
                   : "- ";
 
-          decos.push(Decoration.node(liPos, liPos + liNode.nodeSize, { class: "pocket-active-prefix-li" }));
+          // 把列表前缀渲染在 <p> 外部的 .label-wrapper 槽位中，避免破坏多行缩进或在段落首部插入 widget 干扰中文输入法。
           decos.push(
-            Decoration.widget(
-              tbPos + 1,
-              (v) =>
-                makeTokenWidget(v, prefix, {
-                  className: "is-block-prefix is-list",
-                  label: "列表前缀",
-                  onCommit: (val, refocus) => {
-                    const curLi = v.state.doc.nodeAt(liPos);
-                    if (!curLi) return;
-                    const trimmed = val.trim();
-                    if (!trimmed) {
-                      v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)));
-                      liftListItem(v.state.schema.nodes.list_item!)(v.state, v.dispatch);
-                    } else if (/^-\s*\[\s*\]$/.test(trimmed)) {
-                      v.dispatch(v.state.tr.setNodeMarkup(liPos, undefined, { ...curLi.attrs, checked: false }));
-                    } else if (/^-\s*\[[xX]\]$/.test(trimmed)) {
-                      v.dispatch(v.state.tr.setNodeMarkup(liPos, undefined, { ...curLi.attrs, checked: true }));
-                    } else if (/^[-*+]$/.test(trimmed)) {
-                      if (isOrdered) {
-                        v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)));
-                        liftListItem(v.state.schema.nodes.list_item!)(v.state, v.dispatch);
-                        wrapInList(v.state.schema.nodes.bullet_list!)(v.state, v.dispatch);
-                      } else if (curLi.attrs.checked != null) {
-                        v.dispatch(v.state.tr.setNodeMarkup(liPos, undefined, { ...curLi.attrs, checked: null }));
-                      }
-                    } else if (/^\d+\.?$/.test(trimmed) && !isOrdered) {
-                      v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)));
-                      liftListItem(v.state.schema.nodes.list_item!)(v.state, v.dispatch);
-                      wrapInList(v.state.schema.nodes.ordered_list!)(v.state, v.dispatch);
-                    }
-                    if (refocus) {
-                      const nextPos = Math.min(tbPos + 1, v.state.doc.content.size);
-                      v.dispatch(v.state.tr.setSelection(TextSelection.near(v.state.doc.resolve(nextPos))));
-                      v.focus();
-                    }
-                  },
-                  onExitForward: () => {
-                    v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)));
-                    v.focus();
-                  },
-                }),
-              { key: `live-prefix:li:${tbPos}`, side: -200, ignoreSelection: true, stopEvent: () => true },
-            ),
+            Decoration.node(liPos, liPos + liNode.nodeSize, {
+              class: "pocket-active-prefix-li",
+              style: `--pocket-prefix: ${JSON.stringify(prefix)}`,
+              "data-pocket-prefix": prefix,
+              "data-pocket-li": String(liPos),
+              "data-pocket-tb": String(tbPos),
+              "data-pocket-ordered": isOrdered ? "1" : "0",
+            }),
           );
         } else if (quoteAncestor && quoteAncestor.depth === textblockDepth - 1 && tb.type.name === "paragraph") {
           decos.push(Decoration.node(tbPos, tbPos + tb.nodeSize, { class: "pocket-active-prefix-quote" }));
@@ -505,17 +581,17 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
                   label: "引用前缀",
                   onCommit: (val, refocus) => {
                     if (!val.trim()) {
-                      v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)));
+                      v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
                       lift(v.state, v.dispatch);
                     }
                     if (refocus) {
                       const nextPos = Math.min(tbPos + 1, v.state.doc.content.size);
-                      v.dispatch(v.state.tr.setSelection(TextSelection.near(v.state.doc.resolve(nextPos))));
+                      v.dispatch(v.state.tr.setSelection(TextSelection.near(v.state.doc.resolve(nextPos))).setMeta("pocket-selection", true));
                       v.focus();
                     }
                   },
                   onExitForward: () => {
-                    v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)));
+                    v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
                     v.focus();
                   },
                 }),
@@ -529,6 +605,10 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
     };
 
     let boundView: EditorView | null = null;
+    let cachedDecos: DecorationSet | null = null;
+    let cachedState: EditorView["state"] | null = null;
+    let dirtyDuringCompose = false;
+    let composeRefreshTimer = 0;
 
     const currentParaPos = (state: EditorView["state"]): number | null => {
       const $from = state.selection.$from;
@@ -553,15 +633,75 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
 
     return new Plugin({
       key: liveKey,
+      state: {
+        init: () => DecorationSet.empty,
+        apply(tr, prev, _oldState, newState) {
+          // 中文输入法组合输入期间保留并映射既有装饰，避免重构前缀/行内 widget 干扰组合选区。
+          if (boundView?.composing) {
+            dirtyDuringCompose = true;
+            const mapped = (cachedDecos ?? prev).map(tr.mapping, newState.doc);
+            cachedDecos = mapped;
+            cachedState = newState;
+            return mapped;
+          }
+          return prev;
+        },
+      },
       view(editorView) {
         boundView = editorView;
         const onDismiss = (e: Event) => {
           const detail = (e as CustomEvent<{ pos?: number }>).detail;
           dismissedHtmlPos = typeof detail?.pos === "number" ? detail.pos : null;
         };
+        const onGutterPointerDown = (e: PointerEvent) => {
+          if (!options().enabled || !editorView.editable || e.button !== 0) return;
+          const labelWrap = (e.target as Element | null)?.closest(".milkdown-list-item-block.pocket-active-prefix-li > .list-item > .label-wrapper") as HTMLElement | null;
+          if (!labelWrap || labelWrap.classList.contains("is-editing")) return;
+          const liBlock = labelWrap.closest(".milkdown-list-item-block.pocket-active-prefix-li") as HTMLElement | null;
+          if (!liBlock) return;
+          e.preventDefault();
+          e.stopPropagation();
+
+          const liPos = Number(liBlock.dataset.pocketLi);
+          const tbPos = Number(liBlock.dataset.pocketTb);
+          const prefix = liBlock.dataset.pocketPrefix ?? "- ";
+          const isOrdered = liBlock.dataset.pocketOrdered === "1";
+          if (!Number.isFinite(liPos) || !Number.isFinite(tbPos)) return;
+
+          labelWrap.classList.add("is-editing");
+          const wrap = document.createElement("span");
+          wrap.className = "pocket-syntax-wrap is-block-prefix is-gutter-prefix";
+          wrap.dataset.text = prefix || " ";
+          labelWrap.appendChild(wrap);
+          mountTokenInput(wrap, editorView, prefix, {
+            label: "列表前缀",
+            onCommit: (val, refocus) => commitListPrefixEdit(editorView, liPos, tbPos, isOrdered, val, refocus),
+            onExitForward: () => {
+              const nextPos = Math.min(tbPos + 1, editorView.state.doc.content.size);
+              editorView.dispatch(editorView.state.tr.setSelection(TextSelection.near(editorView.state.doc.resolve(nextPos))).setMeta("pocket-selection", true));
+              editorView.focus();
+            },
+            onDone: () => {
+              wrap.remove();
+              labelWrap.classList.remove("is-editing");
+            },
+          });
+        };
+        const syncPlaceholderOffset = (view: EditorView) => {
+          if (view.isDestroyed) return;
+          const sel = view.state.selection;
+          const wrap =
+            sel.empty && sel.$from.parent.content.size === 0
+              ? view.dom.querySelector<HTMLElement>(".crepe-placeholder > .pocket-syntax-wrap.is-block-prefix")
+              : null;
+          syncPlaceholderHostOffset(view, wrap);
+        };
         editorView.dom.addEventListener("pocket-html-dismiss", onDismiss);
+        editorView.dom.addEventListener("pointerdown", onGutterPointerDown, true);
+        syncPlaceholderOffset(editorView);
         return {
           update(view, prevState) {
+            syncPlaceholderOffset(view);
             if (!view.state.doc.eq(prevState.doc)) {
               const p = currentParaPos(view.state);
               if (p !== null) editedParaPos = p;
@@ -573,7 +713,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
               if (options().enabled && upgradeEditedPara(view, targetPos)) return;
             }
 
-            if (!options().enabled || pointerDown || !view.hasFocus()) return;
+            if (!options().enabled || pointerDown || !view.hasFocus() || view.composing) return;
             if (view.dom.querySelector(".pocket-html-editing")) return;
 
             const htmlPos = singleHtmlNodePos(view.state);
@@ -595,14 +735,27 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
             }
           },
           destroy() {
+            if (composeRefreshTimer) {
+              window.clearTimeout(composeRefreshTimer);
+              composeRefreshTimer = 0;
+            }
+            syncPlaceholderHostOffset(editorView, null);
             editorView.dom.removeEventListener("pocket-html-dismiss", onDismiss);
+            editorView.dom.removeEventListener("pointerdown", onGutterPointerDown, true);
             boundView = null;
+            cachedDecos = null;
+            cachedState = null;
           },
         };
       },
       props: {
         decorations(state) {
-          return buildDecorations(boundView, state);
+          if (boundView?.composing && cachedDecos) return cachedDecos;
+          if (cachedState === state && cachedDecos) return cachedDecos;
+          dirtyDuringCompose = false;
+          cachedState = state;
+          cachedDecos = buildDecorations(boundView, state);
+          return cachedDecos;
         },
         handleKeyDown(view, event) {
           if (!options().enabled || event.isComposing) return false;
@@ -629,6 +782,25 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
           return false;
         },
         handleDOMEvents: {
+          compositionstart() {
+            if (composeRefreshTimer) {
+              window.clearTimeout(composeRefreshTimer);
+              composeRefreshTimer = 0;
+            }
+            return false;
+          },
+          compositionend(view) {
+            if (composeRefreshTimer) window.clearTimeout(composeRefreshTimer);
+            // 延后到 ProseMirror endComposition(20ms) 之后再兜底刷新，避免抢先触发 selectionToDOM 覆盖刚提交的光标。
+            composeRefreshTimer = window.setTimeout(() => {
+              composeRefreshTimer = 0;
+              if (!view.isDestroyed && !view.composing && options().enabled && dirtyDuringCompose) {
+                dirtyDuringCompose = false;
+                view.dispatch(view.state.tr.setMeta(liveKey, true));
+              }
+            }, 32);
+            return false;
+          },
           mousedown() {
             pointerDown = true;
             window.addEventListener(
@@ -661,3 +833,231 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
     });
   });
 }
+
+const listGuardKey = new PluginKey("pocket-list-selection-guard");
+const NAV_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Escape"]);
+const CJK_PUNCT_RE = /^[\u2014\u2018-\u201F\u2026\u00B7\u3000-\u303F\uFF01-\uFF5E]{1,4}$/;
+
+function txChangedRange(tr: Transaction, targetFrom: number, targetTo: number): boolean {
+  for (let i = 0; i < tr.mapping.maps.length; i++) {
+    let hit = false;
+    const tail = tr.mapping.slice(i + 1);
+    tr.mapping.maps[i]!.forEach((_os, _oe, newStart, newEnd) => {
+      if (hit) return;
+      const from = tail.map(newStart, -1);
+      const to = tail.map(newEnd, 1);
+      if (from <= targetFrom && to >= targetTo) hit = true;
+    });
+    if (hit) return true;
+  }
+  return false;
+}
+
+/**
+ * 拦截 @milkdown/components 列表项在 onMount 下一帧异步执行 scheduleRestore 时的过期选区回退，
+ * 同时防止中文输入法在写入中文标点符号（如 ， 。 ？ ！ 等）时短暂带出的选区残留并触发浮动工具栏。
+ */
+export const listSelectionGuardPlugin = $prose(() => {
+  let boundView: EditorView | null = null;
+  let armedAt = typeof performance !== "undefined" ? performance.now() : 0;
+  let armedAnchor: number | null = null;
+  let dirtySinceArm = false;
+  let lastNavAt = 0;
+  let lastManualSelAt = 0;
+  let composeStartPos: number | null = null;
+  let composeCheckTimer1 = 0;
+  let composeCheckTimer2 = 0;
+
+  const clearComposeTimers = () => {
+    if (composeCheckTimer1) {
+      window.clearTimeout(composeCheckTimer1);
+      composeCheckTimer1 = 0;
+    }
+    if (composeCheckTimer2) {
+      window.clearTimeout(composeCheckTimer2);
+      composeCheckTimer2 = 0;
+    }
+  };
+
+  const collapseSpuriousCjkSymbolSelection = (view: EditorView) => {
+    if (view.isDestroyed || view.composing) return;
+    if (performance.now() - lastManualSelAt < 200) return;
+    const sel = view.state.selection;
+    if (!(sel instanceof TextSelection) || sel.empty || !sel.$from.sameParent(sel.$to)) return;
+    if (composeStartPos !== null && sel.from < composeStartPos) return;
+    const len = sel.to - sel.from;
+    if (len < 1 || len > 4) return;
+    const text = view.state.doc.textBetween(sel.from, sel.to);
+    if (!CJK_PUNCT_RE.test(text)) return;
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, sel.to)).setMeta("pocket-selection", true));
+  };
+
+  return new Plugin({
+    key: listGuardKey,
+    view(editorView) {
+      boundView = editorView;
+      armedAt = performance.now();
+      armedAnchor = editorView.state.selection.from;
+      dirtySinceArm = false;
+      const onNav = (e: KeyboardEvent) => {
+        if (NAV_KEYS.has(e.key)) {
+          lastNavAt = performance.now();
+          if (e.shiftKey) lastManualSelAt = lastNavAt;
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+          lastManualSelAt = performance.now();
+        }
+      };
+      const onPointer = () => {
+        const now = performance.now();
+        lastNavAt = now;
+        lastManualSelAt = now;
+      };
+      editorView.dom.addEventListener("keydown", onNav, true);
+      editorView.dom.addEventListener("pointerdown", onPointer, true);
+      return {
+        destroy() {
+          clearComposeTimers();
+          composeStartPos = null;
+          editorView.dom.removeEventListener("keydown", onNav, true);
+          editorView.dom.removeEventListener("pointerdown", onPointer, true);
+          boundView = null;
+        },
+      };
+    },
+    props: {
+      handleDOMEvents: {
+        compositionstart(view) {
+          clearComposeTimers();
+          composeStartPos = view.state.selection.from;
+          return false;
+        },
+        compositionend(view) {
+          clearComposeTimers();
+          composeCheckTimer1 = window.setTimeout(() => {
+            composeCheckTimer1 = 0;
+            collapseSpuriousCjkSymbolSelection(view);
+          }, 0);
+          composeCheckTimer2 = window.setTimeout(() => {
+            composeCheckTimer2 = 0;
+            collapseSpuriousCjkSymbolSelection(view);
+            composeStartPos = null;
+          }, 28);
+          return false;
+        },
+      },
+    },
+    filterTransaction(tr, state) {
+      if (
+        !tr.docChanged &&
+        tr.selectionSet &&
+        tr.selection.empty &&
+        !tr.getMeta("pointer") &&
+        !tr.getMeta("uiEvent") &&
+        !tr.getMeta("composition") &&
+        !tr.getMeta("pocket-selection") &&
+        !tr.scrolledIntoView
+      ) {
+        const now = performance.now();
+        const navFresh = now - lastNavAt < 80;
+        if (!navFresh && !tr.selection.eq(state.selection)) {
+          if (boundView?.composing && tr.selection.from < state.selection.to) return false;
+          if (tr.selection.from < state.selection.from) {
+            const curFrom = state.selection.$from;
+            const nextFrom = tr.selection.$from;
+            if (nextFrom.parentOffset === 0 && curFrom.parentOffset > 0) return false;
+            if (dirtySinceArm && now - armedAt < 1500 && armedAnchor !== null && Math.abs(tr.selection.from - armedAnchor) <= 2) {
+              return false;
+            }
+          }
+        }
+      }
+      return true;
+    },
+    appendTransaction(transactions, _oldState, newState) {
+      if (boundView?.composing) return null;
+      if (performance.now() - lastManualSelAt < 200) return null;
+      if (transactions.some((tr) => tr.getMeta("history$") || tr.getMeta("pointer"))) return null;
+      const sel = newState.selection;
+      if (!(sel instanceof TextSelection) || sel.empty || !sel.$from.sameParent(sel.$to)) return null;
+      const len = sel.to - sel.from;
+      if (len < 1 || len > 4) return null;
+      const text = newState.doc.textBetween(sel.from, sel.to);
+      if (!CJK_PUNCT_RE.test(text)) return null;
+      if (!transactions.some((tr) => tr.docChanged && txChangedRange(tr, sel.from, sel.to))) return null;
+      return newState.tr.setSelection(TextSelection.create(newState.doc, sel.to)).setMeta("pocket-selection", true);
+    },
+    state: {
+      init: () => null,
+      apply(tr, _prev, oldState, newState) {
+        if (!tr.docChanged) {
+          if (tr.selectionSet && !tr.selection.eq(oldState.selection)) dirtySinceArm = true;
+          return null;
+        }
+        lastNavAt = 0;
+        const oldItems = oldState.doc.childCount;
+        const newItems = newState.doc.childCount;
+        const $from = newState.selection.$from;
+        const inList = (() => {
+          for (let d = $from.depth; d >= 1; d--) {
+            if ($from.node(d).type.name === "list_item") return true;
+          }
+          return false;
+        })();
+        let stepTouchesListItem = false;
+        if (tr.docChanged && newItems === oldItems) {
+          const hasListItemNode = (frag: Fragment): boolean => {
+            for (let i = 0; i < frag.childCount; i++) {
+              const child = frag.child(i);
+              if (child.type.name === "list_item" || hasListItemNode(child.content)) return true;
+            }
+            return false;
+          };
+          for (let i = 0; i < tr.steps.length && !stepTouchesListItem; i++) {
+            const stepSlice = (tr.steps[i] as { slice?: Slice }).slice;
+            if (stepSlice && hasListItemNode(stepSlice.content)) {
+              stepTouchesListItem = true;
+              break;
+            }
+            const beforeDoc = tr.docs[i];
+            const tailMap = tr.mapping.slice(i + 1);
+            tr.mapping.maps[i]?.forEach((oldStart, oldEnd, newStart, newEnd) => {
+              if (stepTouchesListItem) return;
+              if (beforeDoc) {
+                const oFrom = Math.max(0, Math.min(oldStart, beforeDoc.content.size));
+                const oTo = Math.max(oFrom, Math.min(oldEnd, beforeDoc.content.size));
+                beforeDoc.nodesBetween(oFrom, oTo, (node, pos) => {
+                  if (node.type.name === "list_item" && (pos >= oFrom || pos + node.nodeSize <= oTo)) {
+                    stepTouchesListItem = true;
+                    return false;
+                  }
+                });
+              }
+              if (stepTouchesListItem) return;
+              const from = Math.max(0, Math.min(tailMap.map(newStart, -1), tr.doc.content.size));
+              const to = Math.max(from, Math.min(tailMap.map(newEnd, 1), tr.doc.content.size));
+              tr.doc.nodesBetween(from, to, (node, pos) => {
+                if (node.type.name === "list_item" && (pos >= from || pos + node.nodeSize <= to)) {
+                  stepTouchesListItem = true;
+                  return false;
+                }
+              });
+            });
+          }
+        }
+        const structuralSplit =
+          inList &&
+          $from.parentOffset === 0 &&
+          $from.parent.content.size === 0 &&
+          (newItems !== oldItems || stepTouchesListItem);
+        if (structuralSplit) {
+          armedAt = performance.now();
+          armedAnchor = newState.selection.from;
+          dirtySinceArm = false;
+        } else {
+          dirtySinceArm = true;
+        }
+        return null;
+      },
+    },
+  });
+});
