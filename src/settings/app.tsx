@@ -163,7 +163,7 @@ export function App() {
         <div class="st-main-titlebar" style={{ "--app-region": "drag" } as never}>
           <h1>{active.title}</h1>
         </div>
-        <div class="st-content" key={active.id}>
+        <div class={active.id === "logs" ? "st-content st-log-content" : "st-content"} key={active.id}>
           {view.loadError && <div class="st-banner">配置文件有误，正在使用上一份有效配置：{view.loadError}</div>}
           <Body view={view} info={info} config={view.config} update={update} arg={arg} />
         </div>

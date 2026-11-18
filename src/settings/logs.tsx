@@ -16,6 +16,9 @@ export function Logs({ config, update }: SectionProps) {
   const [loading, setLoading] = useState(true);
   const [readError, setReadError] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [revision, setRevision] = useState(0);
   const [result, setResult] = useState("");
   const viewport = useRef<HTMLDivElement>(null);
 
@@ -51,13 +54,23 @@ export function Logs({ config, update }: SectionProps) {
     }
     void refresh();
     return () => { disposed = true; clearTimeout(timer); };
-  }, []);
+  }, [revision]);
 
   const visible = rows[filter];
   useLayoutEffect(() => {
     const el = viewport.current;
     if (el && follow) el.scrollTop = el.scrollHeight;
   }, [visible, follow]);
+
+  async function clear() {
+    setClearing(true);
+    try {
+      await Settings.clearLogs();
+      setRows(empty); setRevision(v => v + 1); setFollow(true);
+      setResult("历史日志已清除"); setConfirmClear(false);
+    } catch (e) { setResult("清除失败 · " + String(e)); }
+    finally { setClearing(false); }
+  }
 
   async function save() {
     setExporting(true); setResult("");
@@ -76,8 +89,16 @@ export function Logs({ config, update }: SectionProps) {
     <section class="log-console" aria-label="实时日志">
       <header class="log-tools">
         <Segmented value={filter} options={[{ value: "all", label: "全部日志" }, { value: "errors", label: "错误日志" }]} onChange={v => { setFilter(v); setResult(""); }} />
-        <Button disabled={exporting} onClick={() => void save()} title="导出当前筛选的所有已保存记录"><Download size={14} /> {exporting ? "导出中…" : "导出日志"}</Button>
+        <div class="log-actions">
+        <Button disabled={exporting || clearing} onClick={() => {setConfirmClear(true); setResult("");}}>清除日志</Button>
+        <Button disabled={exporting || clearing || confirmClear} onClick={() => void save()} title="导出当前筛选的所有已保存记录"><Download size={14} /> {exporting ? "导出中…" : "导出日志"}</Button>
+        </div>
       </header>
+      {confirmClear && <div class="log-confirm" role="group" aria-label="确认清除日志">
+        <span>清除全部日志及归档？此操作无法撤销。</span>
+        <Button disabled={clearing} onClick={() => setConfirmClear(false)}>取消</Button>
+        <Button danger disabled={clearing} onClick={() => void clear()}>确认清除</Button>
+      </div>}
       {readError && <div class="st-banner" role="alert">{readError}</div>}
       <div ref={viewport} class="log-list" tabIndex={0} aria-label="日志内容" onScroll={e => {
         const el = e.currentTarget;

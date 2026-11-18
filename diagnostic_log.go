@@ -10,8 +10,9 @@ import (
 )
 
 type diagnosticLog struct {
-	mu   sync.Mutex
-	file *os.File
+	mu     sync.Mutex
+	file   *os.File
+	clears uint64
 }
 
 func (a *App) configureLog() {

@@ -52,3 +52,37 @@ func TestLogPagesAndFilteredExport(t *testing.T) {
 		t.Fatal(err, fresh)
 	}
 }
+
+func TestClearLogsKeepsRecordingAndResetsCursor(t *testing.T) {
+	dir := t.TempDir()
+	s := Settings{a: &App{paths: store.Paths{Logs: dir}}}
+	path := filepath.Join(dir, "app.log")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err = f.WriteString("old\n"); err != nil {
+		t.Fatal(err)
+	}
+	page, err := s.LogPage(0, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path+".1", []byte("archive"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ClearLogs(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(path + ".1"); !os.IsNotExist(err) {
+		t.Fatal("archive remains", err)
+	}
+	if _, err = f.WriteString("replacement\n"); err != nil {
+		t.Fatal(err)
+	}
+	next, err := s.LogPage(page.Offset, page.Generation, false)
+	if err != nil || !next.Reset || len(next.Entries) != 1 || next.Entries[0].Message != "replacement" {
+		t.Fatal(next, err)
+	}
+}

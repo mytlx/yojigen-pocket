@@ -40,11 +40,14 @@ func parseLogLine(line string, previousError bool) LogEntry {
 }
 
 func (s *Settings) LogPage(offset int64, generation string, previousError bool) (LogPage, error) {
-	page := LogPage{Entries: []LogEntry{}}
+	d := &s.a.diagnostic
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	page := LogPage{Entries: []LogEntry{}, Generation: fmt.Sprint(d.clears)}
 	path := filepath.Join(s.a.paths.Logs, "app.log")
 	// The archived file changes only on rotation.
 	if st, err := os.Stat(path + ".1"); err == nil {
-		page.Generation = fmt.Sprint(st.ModTime().UnixNano(), "/", st.Size())
+		page.Generation += fmt.Sprint("/", st.ModTime().UnixNano(), "/", st.Size())
 	}
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -148,4 +151,21 @@ func copyLog(src io.Reader, dst io.Writer, errorsOnly bool) error {
 			return err
 		}
 	}
+}
+
+// ClearLogs preserves the open append handle so recording can continue immediately.
+func (s *Settings) ClearLogs() error {
+	d := &s.a.diagnostic
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	path := filepath.Join(s.a.paths.Logs, "app.log")
+	if err := os.Remove(path + ".1"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	d.clears++
+	err := os.Truncate(path, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }

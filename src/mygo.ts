@@ -883,6 +883,10 @@ export const Settings = {
   clearClipboard(): Promise<void> {
     return call("Settings.ClearClipboard");
   },
+  /** ClearLogs preserves the open append handle so recording can continue immediately. */
+  clearLogs(): Promise<void> {
+    return call("Settings.ClearLogs");
+  },
   /** ClearUsage 清空使用记录。 */
   clearUsage(): Promise<void> {
     return call("Settings.ClearUsage");
