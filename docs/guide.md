@@ -88,7 +88,7 @@
 
 **道具库**（搜索「道具库」、托盘菜单、设置侧栏底部）分类列出所有功能、内置模块、扩展、脚本、系统指令、网页搜索和文本片段，可以直接打开、分离、绑快捷键、停用。
 
-标了“扩展包”的功能不在安装包里：到 Releases 下载对应的 zip，在**道具库 → 扩展管理**里安装（或把 zip 拖进去）。
+标了“扩展包”的功能不在安装包里：可以在**道具库 → 扩展管理**的官方扩展商店直接在线安装与更新（支持配置加速镜像），也可以到 Releases 下载对应的 `.zip` 后多选或直接批量拖进窗口安装。
 同一页可以停用和卸载，停用后它的窗口和后台程序都会关掉。详见[扩展文档](extensions.md)。
 
 ### 桌面宠物
@@ -342,7 +342,7 @@ bunx mygo build -platform darwin/universal,windows/amd64,windows/arm64
 bun run build:ext
 ```
 
-推送 `v*` 标签时，`.github/workflows/build.yml` 会在 CI 上测试并打包，安装包和扩展包一起发到 Release，并同步更新在线扩展索引 `extensions.json`。如需单独发布某个扩展，推送 `ext-<id>-v<版本>` 标签或在 GitHub Actions 运行 `Release Extension`（由 `.github/workflows/release-extension.yml` 触发并自动提取 `changelog`）。
+推送 `v*` 标签时，`.github/workflows/build.yml` 会在 CI 上测试并打包，按提交记录自动分类生成 Release Notes，并将安装包和扩展包一起发到 Release，同时更新在线扩展索引 `extensions.json`。如需单独发布某个扩展，推送 `ext-<id>-v<版本>` 标签或在 GitHub Actions 运行 `Release Extension`（由 `.github/workflows/release-extension.yml` 触发并自动提取 `changelog`）。
 
 端到端测试会启动一个真实的应用（只在 macOS 上跑过），用临时目录和测试热键，不影响你的配置，但主窗口会出现在屏幕上，运行期间剪贴板也会被覆盖：
 

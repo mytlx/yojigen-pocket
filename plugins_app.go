@@ -634,20 +634,44 @@ func (h *pluginHost) window(plugin, name string, args callArgs, win *mygo.Window
 // --- 安装、卸载、启停 ---
 
 // Extensions 是道具库里管理扩展的服务。
-type Extensions struct{ a *App }
+type Extensions struct {
+	a         *App
+	installMu sync.Mutex
+	dlMu      sync.Mutex
+	dlActive  map[string]bool
+	storeMu   sync.Mutex
+	lastReg   *providers.ExtensionRegistry
+}
+
+// InstallFailure 记录批量安装或更新中失败的一项。
+type InstallFailure struct {
+	Source string `json:"source"`
+	Name   string `json:"name"`
+	Error  string `json:"error"`
+}
+
+// BatchInstallResult 描述一次批量安装 / 更新的结果。
+type BatchInstallResult struct {
+	Installed []providers.PluginInfo `json:"installed"`
+	Failed    []InstallFailure       `json:"failed,omitempty"`
+}
 
 // List 返回全部扩展。
 func (e *Extensions) List() []providers.PluginInfo {
 	list := e.a.plugins.List()
 	for i := range list {
-		list[i].Icon = e.a.engine.NormalizeIcon(list[i].Icon)
+		if e.a.engine != nil {
+			list[i].Icon = e.a.engine.NormalizeIcon(list[i].Icon)
+		}
 	}
 	return list
 }
 
 func (e *Extensions) reload() {
 	e.a.plugins.Reload()
-	e.a.applyHotkeys(e.a.config.Get())
+	if e.a.config != nil && mygo.App.IsReady() {
+		e.a.applyHotkeys(e.a.config.Get())
+	}
 	ResultsChanged.Broadcast(struct{}{})
 }
 
@@ -660,6 +684,21 @@ func (e *Extensions) InstallDialog(ctx context.Context) (*providers.PluginInfo, 
 	return e.Install(files[0])
 }
 
+// InstallDialogMany 让用户选择一个或多个扩展包（.zip）并批量安装。取消时返回 null。
+func (e *Extensions) InstallDialogMany(ctx context.Context) (*BatchInstallResult, error) {
+	files, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Parent:   mygo.CallerWindow(ctx),
+		Title:    "选择扩展包（支持多选）",
+		Multiple: true,
+		Filters:  []mygo.FileFilter{{Name: "扩展包", Extensions: []string{"zip"}}},
+	})
+	if err != nil || len(files) == 0 {
+		return nil, err
+	}
+	res := e.InstallMany(files)
+	return &res, nil
+}
+
 const (
 	maxPackageFiles = 8000
 	maxPackageBytes = 400 << 20
@@ -667,25 +706,102 @@ const (
 
 // Install 安装一个扩展包：zip 文件，或者已经解开的文件夹。同名的扩展会被替换（升级），它的数据保留。
 func (e *Extensions) Install(source string) (*providers.PluginInfo, error) {
+	e.installMu.Lock()
+	defer e.installMu.Unlock()
+
+	id, err := e.installOneLocked(source)
+	if err != nil {
+		return nil, err
+	}
+	e.reload()
+	if e.a.pluginHost != nil {
+		e.a.pluginHost.restoreFloats()
+	}
+	for _, p := range e.List() {
+		if p.ID == id {
+			return &p, nil
+		}
+	}
+	return nil, errors.New("安装后没有找到这个扩展")
+}
+
+// InstallMany 顺序批量安装多个扩展包（zip 或文件夹），全部处理完后统一重载一次。
+func (e *Extensions) InstallMany(sources []string) BatchInstallResult {
+	var unique []string
+	seen := map[string]bool{}
+	for _, src := range sources {
+		s := strings.TrimSpace(src)
+		if s == "" {
+			continue
+		}
+		clean := filepath.Clean(s)
+		if seen[clean] {
+			continue
+		}
+		seen[clean] = true
+		unique = append(unique, clean)
+	}
+
+	e.installMu.Lock()
+	defer e.installMu.Unlock()
+
+	var result BatchInstallResult
+	var installedIDs []string
+	idSeen := map[string]bool{}
+	for _, src := range unique {
+		id, err := e.installOneLocked(src)
+		if err != nil {
+			result.Failed = append(result.Failed, InstallFailure{
+				Source: src,
+				Name:   filepath.Base(src),
+				Error:  err.Error(),
+			})
+			continue
+		}
+		if !idSeen[id] {
+			idSeen[id] = true
+			installedIDs = append(installedIDs, id)
+		}
+	}
+
+	if len(installedIDs) > 0 {
+		e.reload()
+		if e.a.pluginHost != nil {
+			e.a.pluginHost.restoreFloats()
+		}
+		byID := map[string]providers.PluginInfo{}
+		for _, p := range e.List() {
+			byID[p.ID] = p
+		}
+		for _, id := range installedIDs {
+			if p, ok := byID[id]; ok {
+				result.Installed = append(result.Installed, p)
+			}
+		}
+	}
+	return result
+}
+
+func (e *Extensions) installOneLocked(source string) (string, error) {
 	a := e.a
 	if err := os.MkdirAll(a.paths.Plugins, 0o755); err != nil {
-		return nil, err
+		return "", err
 	}
 	tmp, err := os.MkdirTemp(a.paths.Plugins, ".install-")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer os.RemoveAll(tmp)
 	info, err := os.Stat(source)
 	if err != nil {
-		return nil, errors.New("找不到这个扩展包")
+		return "", errors.New("找不到这个扩展包")
 	}
 	if info.IsDir() {
 		if err := os.CopyFS(tmp, os.DirFS(source)); err != nil {
-			return nil, err
+			return "", err
 		}
 	} else if err := unzip(source, tmp); err != nil {
-		return nil, err
+		return "", err
 	}
 	// 压缩包里可能多套了一层文件夹。
 	root := tmp
@@ -697,27 +813,22 @@ func (e *Extensions) Install(source string) (*providers.PluginInfo, error) {
 	}
 	m, _, err := providers.ReadManifest(root, strings.ToLower(strings.TrimSuffix(filepath.Base(source), filepath.Ext(source))))
 	if err != nil {
-		return nil, fmt.Errorf("这不是一个能用的扩展包：%v", err)
+		return "", fmt.Errorf("这不是一个能用的扩展包：%v", err)
 	}
-	if err := a.pluginHost.stopPeer(m.ID); err != nil {
-		return nil, err
+	if a.pluginHost != nil {
+		if err := a.pluginHost.stopPeer(m.ID); err != nil {
+			return "", err
+		}
+		a.pluginHost.stop(m.ID, false)
 	}
 	target := filepath.Join(a.paths.Plugins, m.ID)
-	a.pluginHost.stop(m.ID, false)
 	if err := os.RemoveAll(target); err != nil {
-		return nil, err
+		return "", err
 	}
 	if err := os.Rename(root, target); err != nil {
-		return nil, err
+		return "", err
 	}
-	e.reload()
-	a.pluginHost.restoreFloats()
-	for _, p := range e.List() {
-		if p.ID == m.ID {
-			return &p, nil
-		}
-	}
-	return nil, errors.New("安装后没有找到这个扩展")
+	return m.ID, nil
 }
 
 // unzip 解开压缩包。文件名里带 .. 或绝对路径的直接拒绝。

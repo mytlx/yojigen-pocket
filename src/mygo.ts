@@ -87,6 +87,12 @@ export interface Batch {
   error?: string;
 }
 
+/** BatchInstallResult 描述一次批量安装 / 更新的结果。 */
+export interface BatchInstallResult {
+  installed: PluginInfo[];
+  failed?: InstallFailure[];
+}
+
 export interface Book {
   id: string;
   title: string;
@@ -240,6 +246,7 @@ export interface Config {
   interpreters: Record<string, string>;
   uriAllowlist: string[];
   keys: Keys;
+  plugins: PluginsConfig;
   disabledPlugins: string[];
   detachOnHotkey: Record<string, boolean>;
   hotkeyInput: Record<string, string>;
@@ -420,6 +427,13 @@ export interface FinderKind {
   id: string;
   title: string;
   icon: string;
+}
+
+/** InstallFailure 记录批量安装或更新中失败的一项。 */
+export interface InstallFailure {
+  source: string;
+  name: string;
+  error: string;
 }
 
 export interface Item {
@@ -616,6 +630,11 @@ export interface PluginInfo {
   backend: boolean;
 }
 
+export interface PluginsConfig {
+  registryUrl: string;
+  mirrorUrl: string;
+}
+
 export interface Preview {
   type: string;
   text?: string;
@@ -722,6 +741,46 @@ export interface SpeechStatus {
   /** 找到的外部命令；没有时为空 */
   command: string;
   keySet: boolean;
+}
+
+export interface StoreExtension {
+  id: string;
+  name: string;
+  description?: string;
+  icon?: string;
+  author?: string;
+  tools?: string[];
+  permissions?: Permissions;
+  backend?: boolean;
+  installed: boolean;
+  enabled: boolean;
+  installedVersion?: string;
+  problem?: string;
+  latestVersion: string;
+  latestApi: number;
+  installableVersion?: string;
+  installableApi?: number;
+  downloadUrl?: string;
+  tag?: string;
+  asset?: string;
+  sha256?: string;
+  size?: number;
+  publishedAt?: string;
+  changelog?: string;
+  status: string;
+  requiresAppUpdate?: boolean;
+}
+
+/** StoreResult 是返回给道具库扩展管理界面的商店状态。 */
+export interface StoreResult {
+  updatedAt?: string;
+  fromCache?: boolean;
+  error?: string;
+  hostApi: number;
+  registryUrl: string;
+  defaultUrl: string;
+  mirrorUrl: string;
+  items: StoreExtension[];
 }
 
 export interface TranslateConfig {
@@ -1168,17 +1227,31 @@ export const Extensions = {
   install: bind<[string], PluginInfo | null>("Extensions.Install", (source: string) => [source]),
   /** InstallDialog 让用户选一个扩展包（.zip）并安装。取消时返回 null。 */
   installDialog: bind<[], PluginInfo | null>("Extensions.InstallDialog", () => []),
+  /** InstallDialogMany 让用户选择一个或多个扩展包（.zip）并批量安装。取消时返回 null。 */
+  installDialogMany: bind<[], BatchInstallResult | null>("Extensions.InstallDialogMany", () => []),
+  /** InstallMany 顺序批量安装多个扩展包（zip 或文件夹），全部处理完后统一重载一次。 */
+  installMany: bind<[string[]], BatchInstallResult>("Extensions.InstallMany", (sources: string[]) => [sources]),
+  /** InstallRemote 从扩展商店下载指定扩展、校验 SHA-256 后安装或更新。 */
+  installRemote: bind<[string], PluginInfo | null>("Extensions.InstallRemote", (id: string) => [id]),
   /** List 返回全部扩展。 */
   list: bind<[], PluginInfo[]>("Extensions.List", () => []),
   /** Reveal 在文件管理器里打开扩展的文件夹；id 为空时打开放扩展的总目录。 */
   reveal: bind<[string], void>("Extensions.Reveal", (id: string) => [id]),
+  /** SaveStoreConfig 校验并保存扩展商店源地址和加速镜像配置。 */
+  saveStoreConfig: bind<[PluginsConfig], PluginsConfig>("Extensions.SaveStoreConfig", (cfg: PluginsConfig) => [cfg]),
   /** SetEnabled 启用或停用一个扩展。停用后它不出现在搜索里，快捷键注销，窗口和后端进程都关掉。 */
   setEnabled: bind<[string, boolean], void>("Extensions.SetEnabled", (id: string, enabled: boolean) => [id, enabled]),
+  /** Store 返回官方扩展商店列表及与本地版本的对比状态。refresh 为 false 时优先秒读缓存，缓存不存在时再联网拉取。 */
+  store: bind<[boolean], StoreResult>("Extensions.Store", (refresh: boolean) => [refresh]),
+  /** StoreConfig 返回扩展商店的源地址与镜像配置。 */
+  storeConfig: bind<[], PluginsConfig>("Extensions.StoreConfig", () => []),
   /**
    * Uninstall 卸载一个扩展：关掉它的窗口和进程，删掉它的文件夹。removeData 为真时连它存的设置和私有文件一起删；
    * 它在用户目录里声明的文件夹（比如笔记）不会动。
    */
   uninstall: bind<[string, boolean], void>("Extensions.Uninstall", (id: string, removeData: boolean) => [id, removeData]),
+  /** UpdateAll 下载并批量更新商店里全部可更新的已安装扩展。 */
+  updateAll: bind<[], BatchInstallResult | null>("Extensions.UpdateAll", () => []),
 } as const;
 
 // ---- Events ----
