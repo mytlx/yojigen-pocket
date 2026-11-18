@@ -171,7 +171,8 @@ plugins/hello/
 | `punchPrepare(pin, stunServer, refresh)` | 准备或刷新 UDP 打洞口令与 STUN 探测 |
 | `punchInspect(token)` | 检查对方打洞口令是否需要提取码解密 |
 | `punchConnect(token, pin)` | 使用对方口令发起并发 UDP/QUIC 打洞连接 |
-| `accept` / `reject` / `confirm(number)` | 同意请求、拒绝请求、确认三选一数字 |
+| `accept` / `reject` / `confirm(number)` | 同意请求、拒绝请求、确认三选一的两位数字 |
+| `clearHistory` / `removeRecord(recordID)` | 清除全部已结束的传输记录（返回条数）/ 删除一条记录；都不删除文件 |
 | `pick` / `folder` | 原生文件选择器 / 接收文件夹选择器 |
 | `disconnect` / `cancel` | 空闲时断开 / 取消任务并断开 |
 | `reveal(recordID)` | 在文件管理器中显示已完成的文件 |

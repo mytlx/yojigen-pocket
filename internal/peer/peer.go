@@ -218,7 +218,7 @@ func channelNumber(state *tls.ConnectionState) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%06d", binary.BigEndian.Uint64(b)%900000+100000), nil
+	return fmt.Sprintf("%02d", binary.BigEndian.Uint64(b)%90+10), nil
 }
 func (s *Service) Snapshot() Snapshot {
 	s.mu.Lock()
@@ -270,6 +270,47 @@ func (s *Service) SetFolder(dir string) error {
 	}
 	return nil
 }
+// ClearHistory 删除已结束的传输记录（完成、失败、中断），进行中的任务保留。返回删除的条数。
+func (s *Service) ClearHistory() (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.records
+	kept := make([]Record, 0, len(old))
+	for _, r := range old {
+		if r.Status == "queued" || r.Status == "transferring" || r.Status == "verifying" {
+			kept = append(kept, r)
+		}
+	}
+	s.records = kept
+	if err := s.saveLocked(); err != nil {
+		s.records = old
+		return 0, err
+	}
+	return len(old) - len(kept), nil
+}
+
+// RemoveRecord 删除一条已结束的传输记录（不删除已接收的文件）。
+func (s *Service) RemoveRecord(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, r := range s.records {
+		if r.ID != id {
+			continue
+		}
+		if r.Status == "queued" || r.Status == "transferring" || r.Status == "verifying" {
+			return errors.New("传输进行中，不能删除这条记录")
+		}
+		old := s.records
+		s.records = append(append([]Record{}, old[:i]...), old[i+1:]...)
+		if err := s.saveLocked(); err != nil {
+			s.records = old
+			return err
+		}
+		return nil
+	}
+	return errors.New("找不到这条记录")
+}
+
 func (s *Service) saveLocked() error {
 	raw, err := json.Marshal(struct {
 		Folder  string   `json:"folder"`
@@ -544,7 +585,7 @@ func (s *Service) Accept() error {
 	}
 	p.choices = []string{p.sas}
 	for len(p.choices) < 3 {
-		n := fmt.Sprintf("%06d", randomN(900000)+100000)
+		n := fmt.Sprintf("%02d", randomN(90)+10)
 		if n != p.choices[0] && (len(p.choices) == 1 || n != p.choices[1]) {
 			p.choices = append(p.choices, n)
 		}

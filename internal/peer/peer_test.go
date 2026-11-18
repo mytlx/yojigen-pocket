@@ -50,6 +50,9 @@ func pair(t *testing.T, a, b *Service) {
 	}
 	wait(t, func() bool { return a.Snapshot().Code != "" })
 	code := a.Snapshot().Code
+	if len(code) != 2 {
+		t.Fatalf("pairing code should be 2 digits: %q", code)
+	}
 	v := b.Snapshot()
 	if len(v.Choices) != 3 || v.Code != "" {
 		t.Fatalf("receiver exposed answer: %+v", v)
@@ -104,6 +107,20 @@ func TestPairAndTransfer(t *testing.T) {
 	wait(t, func() bool { return !b.Busy() && len(a.Snapshot().Records) == 3 && !a.Busy() })
 	if a.Snapshot().Records[0].Status != "completed" {
 		t.Fatal(a.Snapshot())
+	}
+	// 删除单条记录、清空记录：已接收的文件保留在磁盘上。
+	received := b.Snapshot().Records[1].Path
+	if err = b.RemoveRecord(b.Snapshot().Records[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := b.ClearHistory(); err != nil || n != 2 || len(b.Snapshot().Records) != 0 {
+		t.Fatalf("clear history: n=%d err=%v records=%d", n, err, len(b.Snapshot().Records))
+	}
+	if _, err = os.Stat(received); err != nil {
+		t.Fatal("clearing history removed the received file", err)
+	}
+	if err = b.RemoveRecord("missing"); err == nil {
+		t.Fatal("removing a missing record should fail")
 	}
 }
 func TestWrongNumberRejects(t *testing.T) {

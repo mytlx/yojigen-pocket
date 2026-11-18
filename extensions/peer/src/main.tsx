@@ -1,6 +1,9 @@
-import { render } from "preact";
+import { render, type ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { ArrowDownLeft, ArrowUpRight, Check, CheckCheck, ChevronRight, Copy, File, FolderOpen, History, KeyRound, Link2, LoaderCircle, LockKeyhole, Radio, RefreshCw, Send, ShieldCheck, Unplug, Upload, Wifi, X } from "lucide-preact";
+import {
+  ArrowDownLeft, ArrowUpRight, Check, CheckCheck, Copy, File, FileWarning, FolderOpen, History, KeyRound, Link2,
+  LoaderCircle, LockKeyhole, RefreshCw, Send, ShieldCheck, Trash2, Unplug, Upload, Wifi, X, Zap,
+} from "lucide-preact";
 import { pocket } from "../../sdk/pocket";
 import { active, avatars, bytes, progress, type Identity, type NATType, type PeerState, type TokenPreview, type Transfer } from "./types";
 import "../../../src/shared/tokens.css";
@@ -9,26 +12,73 @@ import "../../../src/shared/controls.css";
 import "./peer.css";
 
 type ConnectMode = "direct" | "punch";
+type Phase = "idle" | "pending" | "connected";
 
 const rpc = <T,>(method: string, ...args: unknown[]) => pocket.call(`peer.${method}`, ...args) as Promise<T>;
 const statusText: Record<PeerState["state"], string> = {
-  offline: "等待 IPv6 网络",
+  offline: "等待网络",
   idle: "可以接收连接",
   punching: "正在打洞穿透",
   connecting: "正在连接",
   waiting: "等待对方同意",
   request: "收到连接请求",
-  verify: "核对连接数字",
+  verify: "核对配对数字",
   connected: "已建立安全连接",
 };
 const natLabel: Record<NATType, string> = {
-  cone: "IPv4 锥形 NAT",
-  symmetric: "IPv4 对称型 NAT（受限）",
-  unknown: "IPv4 NAT 未知",
+  cone: "锥形 NAT",
+  symmetric: "对称型 NAT",
+  unknown: "NAT 未知",
 };
+const phaseOf = (s: PeerState["state"]): Phase =>
+  s === "connected" ? "connected" : s === "idle" || s === "offline" ? "idle" : "pending";
 
-function Avatar({ person, small = false }: { person: Identity; small?: boolean }) {
-  return <span class={`peer-avatar tone-${person.avatar}${small ? " small" : ""}`} aria-label={`${person.name} 的头像`}>{avatars[person.avatar] ?? "🦦"}</span>;
+function Avatar({ person, size = "md" }: { person?: Identity; size?: "sm" | "md" | "lg" }) {
+  if (!person) return <span class={`pk-avatar is-${size} is-unknown`} aria-label="等待对方">?</span>;
+  return <span class={`pk-avatar is-${size} tone-${person.avatar}`} aria-label={`${person.name} 的头像`}>{avatars[person.avatar] ?? "🦦"}</span>;
+}
+
+/** 两端头像和中间的通道：连接中是流动的虚线和雷达波纹，连上之后通道合拢、锁扣弹出，传输时有粒子流动。 */
+function Link({ self, peer, phase, flow }: { self: Identity; peer?: Identity; phase: Phase; flow: "" | "send" | "recv" | "both" }) {
+  return <div class={`pk-link is-${phase}${flow ? ` flow-${flow}` : ""}`} aria-hidden="true">
+    <div class="pk-link-end">
+      <span class="pk-link-halo" />
+      <Avatar person={self} size="lg" />
+      <span class="pk-link-name">{self.name}</span>
+    </div>
+    <div class="pk-link-track">
+      <span class="pk-link-rail" />
+      <span class="pk-link-fill left" />
+      <span class="pk-link-fill right" />
+      <span class="pk-link-packet p1" /><span class="pk-link-packet p2" /><span class="pk-link-packet p3" />
+      <span class="pk-link-packet r1" /><span class="pk-link-packet r2" /><span class="pk-link-packet r3" />
+      <span class="pk-link-node">
+        <span class="pk-link-burst" /><span class="pk-link-burst b2" />
+        {phase === "connected" ? <LockKeyhole size={17} /> : <LoaderCircle size={17} class="pk-spin" />}
+      </span>
+    </div>
+    <div class="pk-link-end">
+      <span class="pk-link-radar" /><span class="pk-link-radar r2" /><span class="pk-link-radar r3" />
+      <span class="pk-link-halo" />
+      <Avatar person={peer} size="lg" />
+      <span class="pk-link-name">{peer?.name ?? "等待对方"}</span>
+    </div>
+  </div>;
+}
+
+function Segmented<T extends string>({ value, options, onChange, label }: { value: T; options: [T, string][]; onChange: (v: T) => void; label: string }) {
+  const index = Math.max(0, options.findIndex(([v]) => v === value));
+  return <div class="pk-seg" role="tablist" aria-label={label} style={{ "--n": options.length, "--i": index } as Record<string, number>}>
+    <span class="pk-seg-thumb" />
+    {options.map(([v, text]) => <button type="button" role="tab" key={v} aria-selected={v === value} class={v === value ? "is-on" : ""} onClick={() => onChange(v)}>{text}</button>)}
+  </div>;
+}
+
+function Section({ title, icon, action, children }: { title: string; icon: ComponentChildren; action?: ComponentChildren; children: ComponentChildren }) {
+  return <section class="pk-side-section">
+    <header>{icon}<span>{title}</span>{action}</header>
+    {children}
+  </section>;
 }
 
 function App() {
@@ -46,6 +96,7 @@ function App() {
   const [tab, setTab] = useState<"current" | "history">("current");
   const [dragging, setDragging] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [copied, setCopied] = useState("");
   const [now, setNow] = useState(Date.now());
   const refresh = async () => setState(await rpc<PeerState>("state"));
@@ -123,6 +174,20 @@ function App() {
     }
   };
 
+  const clearHistory = async () => {
+    setConfirmClear(false);
+    setWorking("clearHistory");
+    try {
+      const n = await rpc<number>("clearHistory");
+      await refresh();
+      void pocket.ui.toast(n ? `已清除 ${n} 条传输记录` : "没有可清除的记录").catch(() => undefined);
+    } catch (e) {
+      setNotice((e as Error).message);
+    } finally {
+      setWorking("");
+    }
+  };
+
   const copy = async (text: string, label: string) => {
     try {
       await pocket.ui.copy(text, label);
@@ -133,146 +198,203 @@ function App() {
     }
   };
 
-  const busy = state?.busy ?? false;
-  const current = state?.records.filter(active) ?? [];
-  const history = state?.records.filter(r => !active(r)) ?? [];
-  const connected = state?.state === "connected";
-  const remaining = state?.expires ? Math.max(0, Math.ceil((state.expires - now) / 1000)) : 0;
-  const error = notice || (state?.error !== dismissedError ? state?.error : "");
-  const punch = state?.punch;
+  if (!state) {
+    return <main class="pk-app">
+      <div class="pk-loading"><span class="pk-loading-orb"><Send size={22} /></span><span>正在准备传输空间…</span>
+        {notice && <><small>{notice}</small><button class="pk-btn" onClick={() => void act("start")}>重试</button></>}
+      </div>
+    </main>;
+  }
+
+  const busy = state.busy;
+  const current = state.records.filter(active);
+  const history = state.records.filter(r => !active(r));
+  const phase = phaseOf(state.state);
+  const connected = phase === "connected";
+  const remaining = state.expires ? Math.max(0, Math.ceil((state.expires - now) / 1000)) : 0;
+  const error = notice || (state.error !== dismissedError ? state.error : "");
+  const punch = state.punch;
   const peerNeedsPin = !!peerPreview?.encrypted;
-  const idlePhase = state?.state === "idle" || state?.state === "offline";
-  const effectiveStatus = state
-    ? (mode === "punch" && state.state === "offline"
-      ? (punch?.ready ? "打洞通道就绪" : punch?.preparing ? "正在准备打洞" : "等待打洞准备")
-      : statusText[state.state])
-    : "正在准备";
+  const sending = current.some(r => r.direction === "send" && r.status === "transferring");
+  const receiving = current.some(r => r.direction === "receive" && r.status === "transferring");
+  const flow = sending && receiving ? "both" : sending ? "send" : receiving ? "recv" : "";
+  const status = mode === "punch" && state.state === "offline"
+    ? (punch?.ready ? "打洞通道就绪" : punch?.preparing ? "正在准备打洞" : "等待打洞准备")
+    : statusText[state.state];
   const oneSideSymmetric = !!peerPreview?.targets?.length &&
     !(punch?.hasIPv6 && peerPreview.hasIPv6) &&
     (peerPreview.natType === "symmetric" || punch?.natType === "symmetric");
+  const list = tab === "current" ? current : history;
 
-  return <main class={`peer-app${dragging ? " is-dragging" : ""}`}>
-    <header class="peer-heading">
-      <div class="peer-brand"><span class="peer-brand-icon"><Send size={21} /></span><div><h1>口袋直传</h1><p>文件直达，距离不设限</p></div></div>
-      <span class={`peer-status ${connected ? "connected" : ""}`}><i />{effectiveStatus}</span>
-    </header>
-    {error && <div class="peer-notice" role="alert"><span>{error}</span><button aria-label="关闭提示" onClick={() => { setNotice(""); setDismissedError(state?.error ?? ""); }}><X size={14} /></button></div>}
-    {!state ? <div class="peer-loading"><LoaderCircle class="spin" />正在准备你的传输空间…{notice && <button class="peer-button" onClick={() => void act("start")}>重试</button>}</div> : <>
-      <section class="peer-identity-card">
-        <div class="peer-me"><Avatar person={state.self} /><div><span class="peer-eyebrow">这台电脑</span><h2>{state.self.name}</h2><span class="peer-muted">每次打开，都是一个新身份</span></div></div>
-        {mode === "direct" ? (
-          <div class="peer-network">
-            <div class="peer-network-label"><Wifi size={14} /><span>我的 IPv6 地址</span><button title="重新检测 IPv6" disabled={!!working || busy} onClick={() => void act("start")}><RefreshCw size={13} /></button></div>
-            {state.addresses.length ? state.addresses.map(ip => <button class="peer-ip" key={ip} title="复制 IPv6 地址" onClick={() => void copy(ip, "已复制 IPv6 地址")}><code>{ip}</code>{copied === ip ? <Check size={14} /> : <Copy size={14} />}</button>) : <span class="peer-muted">尚未检测到公网 IPv6</span>}
-            <span class="peer-network-note">双方都需要公网 IPv6 · 直连端口 {state.port}</span>
+  return <main class={`pk-app is-${phase}${dragging ? " is-dragging" : ""}`}>
+    <aside class="pk-side">
+      <div class="pk-brand"><span class="pk-brand-icon"><Send size={17} /></span><div><h1>口袋直传</h1><p>点对点 · 不经中转</p></div></div>
+
+      <div class="pk-me">
+        <Avatar person={state.self} size="lg" />
+        <div><small>这台电脑</small><strong>{state.self.name}</strong><span>每次打开都是新身份</span></div>
+      </div>
+
+      {mode === "direct" ? (
+        <Section title="我的 IPv6 地址" icon={<Wifi size={13} />} action={<button class="pk-icon-btn" title="重新检测 IPv6" disabled={!!working || busy} onClick={() => void act("start")}><RefreshCw size={13} class={working === "start" ? "pk-spin" : ""} /></button>}>
+          {state.addresses.length
+            ? <div class="pk-ip-list">{state.addresses.map(ip => <button class="pk-ip" key={ip} title="复制 IPv6 地址" onClick={() => void copy(ip, "已复制 IPv6 地址")}><code>{ip}</code>{copied === ip ? <Check size={13} /> : <Copy size={13} />}</button>)}</div>
+            : <p class="pk-dim">尚未检测到公网 IPv6</p>}
+          <p class="pk-hint">直连端口 TCP {state.port}，双方都需要公网 IPv6</p>
+        </Section>
+      ) : (
+        <Section title="穿透路径" icon={<Wifi size={13} />} action={<button class="pk-icon-btn" title="重新检测穿透路径（会更新口令）" disabled={!!working || busy} onClick={() => void act("punchPrepare", useSelfPin ? selfPin.trim() : "", "", true)}><RefreshCw size={13} class={punch?.preparing ? "pk-spin" : ""} /></button>}>
+          <div class="pk-badges">
+            {punch?.preparing && <span class="pk-badge"><LoaderCircle class="pk-spin" size={10} />探测中</span>}
+            {punch?.hasIPv6 && <span class="pk-badge ok">IPv6 直出</span>}
+            {punch?.natType && <span class={`pk-badge ${punch.natType === "symmetric" ? "warn" : ""}`}>{natLabel[punch.natType]}</span>}
+            {punch?.v6Port ? <span class="pk-badge">UDP6 {punch.v6Port}</span> : null}
+            {punch?.v4Port ? <span class="pk-badge">UDP4 {punch.v4Port}</span> : null}
           </div>
-        ) : (
-          <div class="peer-network">
-            <div class="peer-network-label"><Wifi size={14} /><span>打洞通道检测</span><button title="重新检测穿透路径（会更新口令）" disabled={!!working || busy} onClick={() => void act("punchPrepare", useSelfPin ? selfPin.trim() : "", "", true)}><RefreshCw size={13} /></button></div>
-            <div class="peer-punch-badges">
-              {punch?.preparing && <span class="peer-badge"><LoaderCircle class="spin" size={11} />探测 STUN 中</span>}
-              {punch?.hasIPv6 && <span class="peer-badge ok">IPv6 已绑定直出</span>}
-              {punch?.natType && <span class={`peer-badge ${punch.natType === "symmetric" ? "warn" : ""}`}>{natLabel[punch.natType]}</span>}
-              {punch?.v6Port ? <span class="peer-badge">UDP6 {punch.v6Port}</span> : null}
-              {punch?.v4Port ? <span class="peer-badge">UDP4 {punch.v4Port}</span> : null}
-            </div>
-            {punch?.candidates?.length ? <div class="peer-cands">{punch.candidates.map(c => <span class="peer-cand-item" key={c}>{c}</span>)}</div> : <span class="peer-muted">{punch?.preparing ? "正在收集本地与公网地址…" : (punch?.error || "等待生成穿透路径…")}</span>}
-            {punch?.stunError && <span class="peer-network-note">{punch.stunError}</span>}
+          {punch?.candidates?.length
+            ? <div class="pk-cands">{punch.candidates.map(c => <code key={c}>{c}</code>)}</div>
+            : <p class="pk-dim">{punch?.preparing ? "正在收集本地与公网地址…" : (punch?.error || "等待生成穿透路径…")}</p>}
+          {punch?.stunError && <p class="pk-hint warn">{punch.stunError}</p>}
+        </Section>
+      )}
+
+      <Section title="接收文件夹" icon={<FolderOpen size={13} />} action={<button class="pk-link-btn" disabled={busy || !!working} onClick={() => void act("folder")}>更改</button>}>
+        <p class="pk-folder" title={state.folder}>{state.folder}</p>
+      </Section>
+
+      <div class="pk-side-foot"><ShieldCheck size={13} /><span>TLS 1.3 加密 · SHA-256 校验<br />文件只在两台电脑之间传输</span></div>
+    </aside>
+
+    <section class="pk-main">
+      <header class="pk-topbar">
+        <span class={`pk-status is-${phase}`}><i />{status}</span>
+        {connected && state.sessionMode && <span class="pk-chip">{state.sessionMode === "punch" ? "打洞通道" : "IPv6 直连"}</span>}
+      </header>
+
+      {error && <div class="pk-notice" role="alert"><FileWarning size={15} /><span>{error}</span><button aria-label="关闭提示" onClick={() => { setNotice(""); setDismissedError(state.error ?? ""); }}><X size={14} /></button></div>}
+
+      <div class={`pk-stage is-${phase}`} key={phase}>
+        {phase === "idle" ? <div class="pk-connect">
+          <div class="pk-connect-head">
+            <div><h2>连接另一台电脑</h2><p>{mode === "direct" ? "把你的 IPv6 地址发给对方，或输入对方的地址发起连接。" : "双方互换口令，并在 60 秒内各自开始连接。"}</p></div>
+            <Segmented label="连接模式" value={mode} options={[["direct", "IPv6 直连"], ["punch", "打洞穿透"]]} onChange={v => { setMode(v); setNotice(""); }} />
           </div>
-        )}
-      </section>
-      <section class={`peer-connect-card ${connected ? "is-connected" : ""}`}>
-        {idlePhase ? <div class="peer-connect-idle">
-          <div class="peer-orbit"><Radio size={30} /><i /><i /></div>
-          <div class="peer-connect-copy">
-            <div class="peer-mode-bar">
-              <div class="peer-mode-switch" role="tablist" aria-label="连接模式">
-                <button type="button" role="tab" aria-selected={mode === "direct"} class={mode === "direct" ? "is-on" : ""} onClick={() => { setMode("direct"); setNotice(""); }}>IPv6 直连</button>
-                <button type="button" role="tab" aria-selected={mode === "punch"} class={mode === "punch" ? "is-on" : ""} onClick={() => { setMode("punch"); setNotice(""); }}>打洞穿透</button>
+
+          {mode === "direct" ? <>
+            <form class="pk-row" onSubmit={e => { e.preventDefault(); void act("connect", address); }}>
+              <label class="pk-input"><Link2 size={15} /><input aria-label="对方 IPv6 地址" placeholder="对方的 IPv6 地址，例如 2408:8207::1" value={address} onInput={e => setAddress(e.currentTarget.value)} spellcheck={false} /></label>
+              <button class="pk-btn primary" disabled={!!working || !address.trim() || !state.directReady}>发起连接<ArrowUpRight size={15} /></button>
+            </form>
+            {!state.directReady
+              ? <p class="pk-hint warn">未检测到可用的公网 IPv6。路由器限制入站时，可以切换到“打洞穿透”。</p>
+              : <p class="pk-hint">对方同意后，双方核对一个两位数字即可建立连接。</p>}
+          </> : <>
+            <div class="pk-step">
+              <div class="pk-step-head"><span class="pk-step-no">1</span><span>把我的口令发给对方{punch?.encrypted ? "（已加密）" : ""}</span>
+                <label class="pk-check"><input type="checkbox" checked={useSelfPin} onChange={e => { const on = e.currentTarget.checked; setUseSelfPin(on); if (!on) setSelfPin(""); }} />提取码加密</label>
               </div>
+              {useSelfPin && <label class="pk-input"><KeyRound size={14} /><input aria-label="设置提取码" placeholder="4–16 位提取码，另行告诉对方" value={selfPin} maxLength={16} onInput={e => setSelfPin(e.currentTarget.value)} spellcheck={false} /></label>}
+              {punch?.ready && punch.token
+                ? <button type="button" class={`pk-token${copied === punch.token ? " is-copied" : ""}`} title="复制我的打洞口令" onClick={() => void copy(punch.token!, "已复制我的打洞口令")}><code>{punch.token}</code><span>{copied === punch.token ? <><Check size={13} />已复制</> : <><Copy size={13} />复制</>}</span></button>
+                : <div class="pk-token is-empty"><LoaderCircle size={13} class={punch?.preparing ? "pk-spin" : ""} />{punch?.preparing ? "正在探测穿透路径并生成口令…" : (punch?.error || "等待生成口令")}</div>}
             </div>
-            {mode === "direct" ? <>
-              <h2>把文件送到另一台电脑</h2>
-              <p>将你的地址发给对方，或输入对方地址发起连接。</p>
-              <form onSubmit={e => { e.preventDefault(); void act("connect", address); }}><label class="peer-address-input"><Link2 size={16} /><input aria-label="对方 IPv6 地址" placeholder="输入对方的 IPv6 地址" value={address} onInput={e => setAddress(e.currentTarget.value)} spellcheck={false} /></label><button class="peer-button primary" disabled={!!working || !address.trim() || !state.directReady}><span>发起连接</span><ArrowUpRight size={16} /></button></form>
-              <span class="peer-muted">连接前需要对方同意，并核对数字。</span>
-            </> : <>
-              <h2>双方互换口令，直接穿透连接</h2>
-              <p>等待口令生成后互发给对方，并在 60 秒内各自填入对方口令开始连接。</p>
-              <div class="peer-punch-self">
-                <div class="peer-punch-self-head">
-                  <span class="peer-eyebrow">1. 我的打洞口令{punch?.encrypted ? "（已用提取码加密）" : ""}</span>
-                  <label class="peer-pin-toggle"><input type="checkbox" checked={useSelfPin} onChange={e => { const on = e.currentTarget.checked; setUseSelfPin(on); if (!on) setSelfPin(""); }} /><span>提取码加密</span></label>
-                </div>
-                {useSelfPin && <label class="peer-address-input peer-pin-input"><KeyRound size={15} /><input aria-label="设置提取码" placeholder="输入 4–16 位提取码（发给对方用于解密口令）" value={selfPin} maxLength={16} onInput={e => setSelfPin(e.currentTarget.value)} spellcheck={false} /></label>}
-                {punch?.ready && punch?.token ? <button type="button" class="peer-token-box" title="复制我的打洞口令" onClick={() => void copy(punch.token!, "已复制我的打洞口令")}><code>{punch.token}</code><span>{copied === punch.token ? <Check size={14} /> : <Copy size={14} />}</span></button> : <div class="peer-token-empty">{punch?.preparing ? "正在探测穿透路径并生成完整口令…" : (punch?.error || "等待生成口令")}</div>}
+            <form class="pk-step" onSubmit={e => { e.preventDefault(); void act("punchConnect", peerToken, peerPin); }}>
+              <div class="pk-step-head"><span class="pk-step-no">2</span><span>填入对方的口令</span></div>
+              <div class="pk-row">
+                <label class="pk-input"><Link2 size={15} /><input aria-label="对方打洞口令" placeholder="粘贴对方的口令（PK2…）" value={peerToken} onInput={e => setPeerToken(e.currentTarget.value)} spellcheck={false} /></label>
+                <button class="pk-btn primary" disabled={!!working || !punch?.ready || !peerToken.trim() || (peerNeedsPin && !peerPin.trim())}>开始连接<Zap size={14} /></button>
               </div>
-              <form class="peer-punch-form" onSubmit={e => { e.preventDefault(); void act("punchConnect", peerToken, peerPin); }}>
-                <div class="peer-punch-inputs">
-                  <label class="peer-address-input"><Link2 size={16} /><input aria-label="对方打洞口令" placeholder="2. 粘贴对方的打洞口令（PK2...）" value={peerToken} onInput={e => setPeerToken(e.currentTarget.value)} spellcheck={false} /></label>
-                  {peerNeedsPin && <label class="peer-address-input peer-pin-input"><KeyRound size={15} /><input aria-label="对方提取码" placeholder="输入对方设置的提取码" value={peerPin} maxLength={16} onInput={e => setPeerPin(e.currentTarget.value)} spellcheck={false} /></label>}
-                  {peerPreview?.targets?.length ? <div class="peer-preview"><span>对方候选：{peerPreview.targets.join(" · ")}</span>{peerPreview.natType && <span> · {natLabel[peerPreview.natType]}</span>}</div> : null}
-                  {oneSideSymmetric && <div class="peer-preview warn">提示：存在对称型 NAT 且无共同 IPv6，IPv4 打洞可能受阻</div>}
-                </div>
-                <button class="peer-button primary" disabled={!!working || !punch?.ready || !peerToken.trim() || (peerNeedsPin && !peerPin.trim())}><span>开始打洞连接</span><ArrowUpRight size={16} /></button>
-              </form>
-              <span class="peer-muted">刷新检测会换新口令，需同步发给对方；通后仍需核对 6 位数字。</span>
-            </>}
+              {peerNeedsPin && <label class="pk-input"><KeyRound size={14} /><input aria-label="对方提取码" placeholder="输入对方设置的提取码" value={peerPin} maxLength={16} onInput={e => setPeerPin(e.currentTarget.value)} spellcheck={false} /></label>}
+              {peerPreview?.targets?.length ? <p class="pk-hint mono">对方候选：{peerPreview.targets.join(" · ")}{peerPreview.natType ? ` · ${natLabel[peerPreview.natType]}` : ""}</p> : null}
+              {oneSideSymmetric && <p class="pk-hint warn">存在对称型 NAT 且没有共同的 IPv6，IPv4 打洞可能失败。</p>}
+            </form>
+            <p class="pk-hint">刷新穿透路径会换新口令，需要重新发给对方。</p>
+          </>}
+        </div> : <>
+          <Link self={state.self} peer={state.peer} phase={phase} flow={connected && busy ? flow : ""} />
+
+          {state.state === "request" ? <div class="pk-panel" role="dialog" aria-label="连接请求">
+            <h2>{state.peer?.name} 想和你建立连接</h2>
+            <p class="pk-mono-line">{state.address}</p>
+            <p>同意后，请核对对方屏幕上的两位数字。</p>
+            <div class="pk-actions"><button class="pk-btn" disabled={!!working} onClick={() => void act("reject")}>拒绝</button><button class="pk-btn primary" disabled={!!working} onClick={() => void act("accept")}><Check size={15} />同意连接</button></div>
+          </div> : state.state === "verify" ? <div class="pk-panel" role="dialog" aria-label="数字验证">
+            <h2>{state.code ? "把这个数字告诉对方" : "对方屏幕上是哪个数字？"}</h2>
+            <p>{state.code ? `通过电话或当面告诉 ${state.peer?.name}，等对方选择。` : `向 ${state.peer?.name} 确认，选错会立即断开。`}</p>
+            {state.code
+              ? <div class="pk-code" aria-label="连接确认数字">{state.code.split("").map((d, i) => <span key={i} style={{ "--d": i } as Record<string, number>}>{d}</span>)}</div>
+              : <div class="pk-choices">{state.choices?.map((n, i) => <button class="pk-choice" key={n} style={{ "--d": i } as Record<string, number>} disabled={!!working} onClick={() => void act("confirm", n)}>{n}</button>)}</div>}
+            <div class="pk-timer"><span class="pk-timer-bar"><i style={{ width: `${Math.min(100, remaining / 120 * 100)}%` }} /></span><span>{remaining} 秒后失效</span><button class="pk-link-btn" onClick={() => void act("disconnect")}>取消</button></div>
+          </div> : connected ? <div class="pk-panel pk-connected" data-testid="connected">
+            <h2>已与 {state.peer?.name} 安全连接</h2>
+            <p>把文件拖进窗口，或点“选择文件”。对方也可以同时给你发文件。</p>
+            <div class="pk-actions">
+              <button class="pk-btn primary" disabled={!!working || current.some(r => r.direction === "send")} onClick={() => void act("pick")}><Upload size={15} />选择文件</button>
+              <button class="pk-btn" disabled={busy || !!working} onClick={() => void act("disconnect")}><Unplug size={14} />断开</button>
+            </div>
+            {busy && <p class="pk-hint center"><LockKeyhole size={11} />传输中已拦截退出，请保持双方软件运行</p>}
+          </div> : state.state === "punching" ? <div class="pk-panel">
+            <h2>正在打洞穿透…</h2>
+            <p class="pk-mono-line">{punch?.peerTargets?.join(" · ") || state.address}</p>
+            <div class="pk-diag">
+              <span><b>{punch?.sentProbes ?? 0}</b>已发探测</span>
+              <span><b>{punch?.recvPings ?? 0}</b>收到探测</span>
+              <span><b>{punch?.recvPongs ?? 0}</b>回包</span>
+            </div>
+            {punch?.lastRemote && <p class="pk-hint mono">最近来源 {punch.lastRemote}</p>}
+            {punch?.dialError && <p class="pk-hint warn">QUIC 握手重试中：{punch.dialError}</p>}
+            <div class="pk-timer"><span>请确认双方都已开始连接 · {remaining} 秒后超时</span><button class="pk-link-btn" onClick={() => void act("disconnect")}>取消</button></div>
+          </div> : <div class="pk-panel">
+            <h2>{statusText[state.state]}<span class="pk-dots"><i /><i /><i /></span></h2>
+            <p class="pk-mono-line">{state.peer?.name ?? state.address}</p>
+            <p>对方同意后会进入数字确认。</p>
+            <div class="pk-timer"><button class="pk-link-btn" onClick={() => void act("disconnect")}>取消请求</button></div>
+          </div>}
+        </>}
+      </div>
+
+      <section class="pk-transfers">
+        <header>
+          <div class="pk-tabs">
+            <button class={tab === "current" ? "is-on" : ""} onClick={() => { setTab("current"); setConfirmClear(false); }}><Send size={13} />传输中<span>{current.length}</span></button>
+            <button class={tab === "history" ? "is-on" : ""} onClick={() => setTab("history")}><History size={13} />传输记录<span>{history.length}</span></button>
           </div>
-        </div> : state.state === "request" ? <div class="peer-pairing" role="dialog" aria-label="连接请求">
-          <Avatar person={state.peer!} /><h2>{state.peer?.name} 请求与您建立连接</h2><p><code>{state.address}</code></p><p>同意后，请核对对方屏幕上的数字。连接成功后可互相发送文件。</p>
-          <div class="peer-actions"><button class="peer-button" disabled={!!working} onClick={() => void act("reject")}>暂不连接</button><button class="peer-button primary" disabled={!!working} onClick={() => void act("accept")}>同意连接<ChevronRight size={16} /></button></div>
-        </div> : state.state === "verify" ? <div class="peer-pairing" role="dialog" aria-label="数字验证">
-          <span class="peer-pair-lock"><ShieldCheck size={24} /></span><h2>{state.code ? "让对方选择这个数字" : "对方屏幕上显示的是哪个数字？"}</h2><p>{state.code ? `请通过电话或当面告诉 ${state.peer?.name}，等待对方确认。` : `请与 ${state.peer?.name} 核对，只有选择正确的数字才会建立连接。`}</p>
-          {state.code ? <div class="peer-number single" aria-label="连接确认数字">{state.code}</div> : <div class="peer-number-options">{state.choices?.map(n => <button class="peer-number" key={n} disabled={!!working} onClick={() => void act("confirm", n)}>{n}</button>)}</div>}
-          <div class="peer-pair-foot"><span>{remaining} 秒后失效</span><button class="peer-text-button" onClick={() => void act("disconnect")}>取消连接</button></div>
-        </div> : connected ? <div class="peer-connected-content">
-          <div class={`peer-route ${busy ? "moving" : ""}`}><Avatar person={state.self} small /><div class="peer-route-line"><span /><span /><span /></div><span class="peer-route-lock"><LockKeyhole size={16} /></span><div class="peer-route-line"><span /><span /><span /></div><Avatar person={state.peer!} small /></div>
-          <h2>已与 {state.peer?.name} 连接</h2><p>拖拽文件到这个窗口，或选择文件发送{state.sessionMode === "punch" ? ` · 打洞通道 (${state.address})` : ""}</p>
-          <div class="peer-actions"><button class="peer-button primary" disabled={!!working || current.some(r => r.direction === "send")} onClick={() => void act("pick")}><Upload size={16} />选择文件</button><button class="peer-button" disabled={busy || !!working} onClick={() => void act("disconnect")}><Unplug size={15} />断开</button></div>
-          {busy && <div class="peer-protected"><LockKeyhole size={12} />传输中已保护退出 · 请保持双方软件运行</div>}
-        </div> : state.state === "punching" ? <div class="peer-pairing">
-          <LoaderCircle class="spin peer-wait" size={30} /><h2>正在打洞穿透…</h2><p><code>{punch?.peerTargets?.join(" · ") || state.address}</code></p>
-          <div class="peer-punch-diag">
-            <span>已发探测 {punch?.sentProbes ?? 0} 轮</span>
-            <span>·</span>
-            <span>收到对方探测 {punch?.recvPings ?? 0}</span>
-            <span>·</span>
-            <span>回包 {punch?.recvPongs ?? 0}</span>
-            {punch?.lastRemote && <><span>·</span><span>最近来源 {punch.lastRemote}</span></>}
-          </div>
-          {punch?.dialError && <span class="peer-preview warn">QUIC 握手重试中：{punch.dialError}</span>}
-          <span class="peer-muted">请确认双方使用本轮最新口令并已开始连接（{remaining} 秒后超时）</span>
-          <button class="peer-text-button" onClick={() => void act("disconnect")}>取消打洞</button>
-        </div> : <div class="peer-pairing"><LoaderCircle class="spin peer-wait" size={30} /><h2>{statusText[state.state]}</h2><p>{state.peer?.name ?? state.address}</p><span class="peer-muted">对方同意后，会进入数字确认</span><button class="peer-text-button" onClick={() => void act("disconnect")}>取消请求</button></div>}
-      </section>
-      <div class="peer-folder"><span><FolderOpen size={15} /><span>接收到 <strong title={state.folder}>{state.folder}</strong></span></span><button class="peer-text-button" disabled={busy || !!working} onClick={() => void act("folder")}>更改目录</button></div>
-      <section class="peer-transfers">
-        <header><div class="peer-tabs"><button class={tab === "current" ? "selected" : ""} onClick={() => setTab("current")}><Send size={14} />传输任务 <span>{current.length}</span></button><button class={tab === "history" ? "selected" : ""} onClick={() => setTab("history")}><History size={14} />传输记录 <span>{history.length}</span></button></div>
-          {busy && <button class="peer-text-button danger" onClick={() => setConfirmCancel(!confirmCancel)}>取消传输</button>}</header>
-        {confirmCancel && <div class="peer-cancel-confirm">取消会断开连接，未完成的文件需要重新发送。<button class="peer-button" onClick={() => setConfirmCancel(false)}>继续传输</button><button class="peer-button danger" onClick={() => void act("cancel")}>确认取消</button></div>}
-        <div class="peer-record-list">{(tab === "current" ? current : history).map(r => <TransferRow key={r.id} record={r} reveal={() => void act("reveal", r.id)} />)}
-          {(tab === "current" ? current : history).length === 0 && <div class="peer-empty"><File size={25} /><div>{tab === "current" ? "暂时没有正在传输的文件" : "还没有传输记录"}<small>{tab === "current" ? history.length ? "文件传输结果可在“传输记录”中查看" : "建立连接后，把文件拖到这里就能开始" : "完成、取消和中断的传输都会留在这里"}</small></div></div>}
+          {tab === "current" && busy && <button class="pk-link-btn danger" onClick={() => setConfirmCancel(!confirmCancel)}>取消传输</button>}
+          {tab === "history" && history.length > 0 && <button class="pk-link-btn danger" disabled={!!working} onClick={() => setConfirmClear(!confirmClear)}><Trash2 size={12} />清除记录</button>}
+        </header>
+        {confirmCancel && <div class="pk-confirm">取消会断开连接，未完成的文件需要重新发送。<span /><button class="pk-btn sm" onClick={() => setConfirmCancel(false)}>继续传输</button><button class="pk-btn sm danger" onClick={() => void act("cancel")}>确认取消</button></div>}
+        {confirmClear && tab === "history" && <div class="pk-confirm">清除全部 {history.length} 条记录？已接收的文件不会被删除。<span /><button class="pk-btn sm" onClick={() => setConfirmClear(false)}>保留</button><button class="pk-btn sm danger" onClick={() => void clearHistory()}>清除</button></div>}
+        <div class="pk-records">
+          {list.map(r => <TransferRow key={r.id} record={r} reveal={() => void act("reveal", r.id)} remove={() => void act("removeRecord", r.id)} />)}
+          {list.length === 0 && <div class="pk-empty"><File size={22} /><div>{tab === "current" ? "没有正在传输的文件" : "还没有传输记录"}<small>{tab === "current" ? (connected ? "把文件拖到窗口里就能开始" : "建立连接后即可互相发送文件") : "完成、失败和中断的传输都会留在这里"}</small></div></div>}
         </div>
       </section>
-      <footer class="peer-footer"><ShieldCheck size={13} />端到端直连 · TLS 加密 · SHA-256 校验<span>文件不经过中转服务器</span></footer>
-      {mode === "direct" && !state.directReady && <p class="peer-network-help">未检测到公网 IPv6，或路由器限制入站时，可切换到上方的“打洞穿透”模式。直连模式需双方防火墙允许 TCP {state.port} 入站。</p>}
-    </>}
-    {dragging && <div class="peer-drop-overlay"><Upload size={36} /><h2>{connected ? "松手，开始发送" : "请先建立连接"}</h2><p>{connected ? "文件将直接传到对方的接收文件夹" : "完成数字确认后即可拖拽传输"}</p></div>}
+    </section>
+
+    {dragging && <div class={`pk-drop${connected ? "" : " is-blocked"}`}><span class="pk-drop-icon"><Upload size={30} /></span><h2>{connected ? "松手，开始发送" : "请先建立连接"}</h2><p>{connected ? `文件将直接送到 ${state.peer?.name} 的接收文件夹` : "完成数字确认后即可拖拽发送"}</p></div>}
   </main>;
 }
 
-function TransferRow({ record: r, reveal }: { record: Transfer; reveal: () => void }) {
+function TransferRow({ record: r, reveal, remove }: { record: Transfer; reveal: () => void; remove: () => void }) {
   const pct = progress(r), running = active(r), success = r.status === "completed";
-  const labels = { queued: "排队中", transferring: r.direction === "send" ? "发送中" : "接收中", verifying: "正在校验", completed: "校验完成", failed: "传输失败", interrupted: "已中断" };
-  return <article class={`peer-record ${success ? "success" : ""}`}>
-    <span class="peer-file-icon">{success ? <CheckCheck size={22} /> : <File size={22} />}</span>
-    <div class="peer-record-main"><div class="peer-record-title"><strong title={r.name}>{r.name}</strong><span>{running ? `${pct.toFixed(0)}%` : labels[r.status]}</span></div>
-      {running && <div class={`peer-progress ${r.status === "verifying" ? "verifying" : ""}`} role="progressbar" aria-label={`${r.name} 传输进度`} aria-valuenow={Math.floor(pct)} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${pct}%` }} /></div>}
-      <div class="peer-record-meta">{r.direction === "send" ? <ArrowUpRight size={12} /> : <ArrowDownLeft size={12} />}<span>{r.direction === "send" ? "发送给" : "接收自"} {r.peer}</span><span>·</span><span>{running ? `${bytes(r.done)} / ` : ""}{bytes(r.size)}</span><span class="peer-record-tail">{running ? r.status === "transferring" ? `${bytes(r.speed)}/s` : labels[r.status] : new Date(r.finished ?? r.started).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</span></div>
-      {r.error && <div class="peer-record-error">{r.error}</div>}
+  const labels = { queued: "排队中", transferring: r.direction === "send" ? "发送中" : "接收中", verifying: "校验中", completed: "已完成", failed: "失败", interrupted: "已中断" };
+  const when = new Date(r.finished ?? r.started).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  return <article class={`pk-record is-${r.status}`}>
+    <span class={`pk-file-icon ${r.direction}`}>{success ? <CheckCheck size={18} /> : r.direction === "send" ? <ArrowUpRight size={18} /> : <ArrowDownLeft size={18} />}</span>
+    <div class="pk-record-main">
+      <div class="pk-record-title"><strong title={r.name}>{r.name}</strong><span class={`pk-tag is-${r.status}`}>{running && r.status === "transferring" ? `${pct.toFixed(0)}%` : labels[r.status]}</span></div>
+      {running && <div class={`pk-progress${r.status === "verifying" ? " is-verifying" : ""}`} role="progressbar" aria-label={`${r.name} 传输进度`} aria-valuenow={Math.floor(pct)} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${pct}%` }} /></div>}
+      <div class="pk-record-meta">
+        <span>{r.direction === "send" ? "发给" : "来自"} {r.peer}</span><span>·</span>
+        <span>{running ? `${bytes(r.done)} / ` : ""}{bytes(r.size)}</span>
+        <span class="pk-record-tail">{running ? (r.status === "transferring" ? `${bytes(r.speed)}/s` : labels[r.status]) : when}</span>
+      </div>
+      {r.error && <div class="pk-record-error">{r.error}</div>}
     </div>
-    {success && <button class="peer-reveal" title="在文件夹中显示" onClick={reveal}><FolderOpen size={16} /></button>}
+    {!running && <div class="pk-record-actions">
+      {success && r.path && <button class="pk-icon-btn" title="在文件夹中显示" onClick={reveal}><FolderOpen size={15} /></button>}
+      <button class="pk-icon-btn" title="删除这条记录（不删除文件）" onClick={remove}><Trash2 size={14} /></button>
+    </div>}
   </article>;
 }
 

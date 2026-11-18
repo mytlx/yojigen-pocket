@@ -140,6 +140,10 @@ func (h *pluginHost) peerCall(m providers.Manifest, id, name string, args callAr
 			return nil, err
 		}
 		return nil, p.SetFolder(dirs[0])
+	case "clearHistory":
+		return p.ClearHistory()
+	case "removeRecord":
+		return nil, p.RemoveRecord(args.str(0))
 	case "reveal":
 		for _, r := range p.Snapshot().Records {
 			if r.ID == args.str(0) && r.Status == "completed" && r.Path != "" {
