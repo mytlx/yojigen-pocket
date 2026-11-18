@@ -97,7 +97,7 @@ func (h *host) Notify(title, body string) {
 	go func() {
 		n := mygo.NewNotification(mygo.NotificationOptions{Title: title, Body: body})
 		if err := n.Show(); err != nil {
-			log.Printf("通知失败（%s：%s）：%v", title, body, err)
+			log.Printf("[ERROR] 通知失败（%s：%s）：%v", title, body, err)
 		}
 	}()
 }
@@ -158,10 +158,10 @@ var imageExts = []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico
 
 func (a *App) registerProtocols() {
 	if err := mygo.Protocol.HandleFunc("pocketicon", a.serveIcon); err != nil {
-		log.Printf("注册协议失败：%v", err)
+		log.Printf("[ERROR] 注册协议失败：%v", err)
 	}
 	if err := mygo.Protocol.HandleFunc("pocketplugin", a.servePlugin); err != nil {
-		log.Printf("注册协议失败：%v", err)
+		log.Printf("[ERROR] 注册协议失败：%v", err)
 	}
 }
 

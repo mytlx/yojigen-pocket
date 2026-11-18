@@ -8,7 +8,6 @@ export function General({ view, info, config, update }: SectionProps) {
   const [loginError, setLoginError] = useState("");
   useEffect(() => setOpenAtLogin(view.openAtLogin), [view.openAtLogin]);
   const [trusted, setTrusted] = useState(true);
-  const [logs, setLogs] = useState<string | null>(null);
   const [reset, setReset] = useState(false);
   useEffect(() => {
     void Settings.permissions().then((p) => setTrusted(!!p.accessibility));
@@ -110,13 +109,6 @@ export function General({ view, info, config, update }: SectionProps) {
         </Row>
       </Section>
 
-      <Section title="诊断日志">
-        <Row label="记录软件日志" description="启用后在本机保存运行事件和错误">
-          <Toggle label="记录软件日志" checked={config.diagnosticLogging} onChange={v => update(c => (c.diagnosticLogging = v))} />
-        </Row>
-        <Row label="最近日志"><Button onClick={() => void Settings.readLog().then(setLogs).catch(e => setLogs(String(e)))}>{logs === null ? "查看日志" : "刷新日志"}</Button></Row>
-        {logs !== null && <pre style={{whiteSpace:"pre-wrap",overflowWrap:"anywhere",maxHeight:300,overflow:"auto"}}>{logs || "暂无记录"}</pre>}
-      </Section>
       <Section title="编辑器">
         <Row label="打开脚本用的编辑器" description="命令行写法，例如 code 或 subl；留空用系统默认">
           <Text value={config.editor ?? ""} width={200} placeholder="系统默认" mono onChange={(v) => update((c) => (c.editor = v))} />

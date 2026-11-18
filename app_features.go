@@ -658,7 +658,7 @@ func speakSystem(text, lang string, rate int) error {
 func speak(text, lang string) error {
 	go func() {
 		if err := speakSystem(translate.Truncate(text, 2000), lang, 0); err != nil {
-			log.Print(err)
+			log.Printf("[ERROR] %v", err)
 		}
 	}()
 	return nil

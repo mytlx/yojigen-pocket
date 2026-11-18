@@ -40,7 +40,7 @@ type mediaServer struct {
 func (a *App) startMedia() {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		log.Printf("启动本机回环服务失败：%v", err)
+		log.Printf("[ERROR] 启动本机回环服务失败：%v", err)
 		return
 	}
 	raw := make([]byte, 16)

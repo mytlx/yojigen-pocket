@@ -34,7 +34,7 @@ func (a *App) configureLog() {
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
-		log.Printf("打开日志失败：%v", err)
+		log.Printf("[ERROR] 打开日志失败：%v", err)
 		return
 	}
 	d.file = f

@@ -462,6 +462,20 @@ export interface Language {
   name: string;
 }
 
+export interface LogEntry {
+  time: string;
+  message: string;
+  error: boolean;
+}
+
+export interface LogPage {
+  reset: boolean;
+  entries: LogEntry[];
+  offset: number;
+  generation: string;
+  more: boolean;
+}
+
 /** Macro 是一个键盘宏。 */
 export interface Macro {
   id: string;
@@ -897,6 +911,10 @@ export const Settings = {
   editUserFile(name: string): Promise<void> {
     return call("Settings.EditUserFile", name);
   },
+  /** Export includes the retained archive as well as the current log. */
+  exportLog(errorsOnly: boolean): Promise<boolean> {
+    return call("Settings.ExportLog", errorsOnly);
+  },
   /** Get 返回当前配置。 */
   get(): Promise<ConfigView> {
     return call("Settings.Get");
@@ -904,6 +922,9 @@ export const Settings = {
   /** Info 返回页面启动时需要的信息。 */
   info(): Promise<AppInfo> {
     return call("Settings.Info");
+  },
+  logPage(offset: number, generation: string, previousError: boolean): Promise<LogPage> {
+    return call("Settings.LogPage", offset, generation, previousError);
   },
   /** Modules 返回全部功能模块。 */
   modules(): Promise<ModuleInfo[]> {

@@ -112,11 +112,11 @@ func (a *App) ready() {
 	a.version = mygo.App.Version()
 	a.paths = store.ResolvePaths(mygo.IsDev())
 	if err := a.paths.Ensure(); err != nil {
-		log.Printf("创建用户目录失败：%v", err)
+		log.Printf("[ERROR] 创建用户目录失败：%v", err)
 	}
 	if _, err := os.Stat(a.paths.Config); os.IsNotExist(err) {
 		if err := seed.Install(a.paths.Home); err != nil {
-			log.Printf("写入示例文件失败：%v", err)
+			log.Printf("[ERROR] 写入示例文件失败：%v", err)
 		}
 	}
 	a.config = store.NewConfigStore(a.paths.Config)
@@ -188,7 +188,7 @@ func (a *App) buildEngine(ctx context.Context) {
 	}
 	go func() {
 		if err := a.apps.Refresh(); err != nil {
-			log.Printf("读取应用列表失败：%v", err)
+			log.Printf("[ERROR] 读取应用列表失败：%v", err)
 		}
 	}()
 
@@ -623,7 +623,7 @@ func (a *App) createTray() {
 		Menu:           a.trayMenu(nil),
 	})
 	if err != nil {
-		log.Printf("创建托盘图标失败：%v", err)
+		log.Printf("[ERROR] 创建托盘图标失败：%v", err)
 		return
 	}
 	// Windows 托盘左键触发 OnClick、右键弹出 Menu；macOS/Linux 有 Menu 时左键直接展开菜单（Linux 注册 OnClick 还会拖慢菜单响应）。
@@ -889,7 +889,7 @@ func (a *App) watchHome(ctx context.Context) {
 		},
 	})
 	if err != nil {
-		log.Printf("监听用户目录失败：%v", err)
+		log.Printf("[ERROR] 监听用户目录失败：%v", err)
 		return
 	}
 	go func() {

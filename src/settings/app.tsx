@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { Blocks, Globe, Info as InfoIcon, Keyboard, Languages, LayoutGrid, Palette, SlidersHorizontal, TextQuote, Volume2 } from "lucide-preact";
+import { ScrollText, Blocks, Globe, Info as InfoIcon, Keyboard, Languages, LayoutGrid, Palette, SlidersHorizontal, TextQuote, Volume2 } from "lucide-preact";
 import { Settings, events, type AppInfo, type Config, type ConfigView } from "../mygo";
 import { applyAppearance, applyUserStyles } from "../shared/theme";
 import { Launcher } from "../mygo";
@@ -9,6 +9,7 @@ import { Modules } from "./modules";
 import { Commands } from "./commands";
 import { WebSearch } from "./web";
 import { Snippets } from "./snippets";
+import { Logs } from "./logs";
 import { About } from "./about";
 import { TranslateSettings } from "./translate";
 import { SpeechSettings } from "./speech";
@@ -30,6 +31,7 @@ const sections = [
   { id: "speech", title: "发音", icon: Volume2, render: SpeechSettings },
   { id: "web", title: "网页搜索", icon: Globe, render: WebSearch },
   { id: "snippets", title: "文本片段", icon: TextQuote, render: Snippets },
+  { id: "logs", title: "日志", icon: ScrollText, render: Logs },
   { id: "about", title: "关于", icon: InfoIcon, render: About },
 ] as const;
 
