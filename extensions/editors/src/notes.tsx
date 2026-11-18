@@ -713,18 +713,81 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const openLinkRef = useRef(openLink);
   openLinkRef.current = openLink;
   const sourceExtensions = useMemo(() => [linkOpener((href) => openLinkRef.current(href)), noteLineKeys(() => prefsRef.current.shortcuts)], []);
-  const headings = useMemo(() => outlineOf(split.body), [split.body]);
+  const outlineActive = outlineOpen || outlineAnim.mounted;
+  const [derivedBody, setDerivedBody] = useState(() => split.body);
+  const [derivedContent, setDerivedContent] = useState(() => content);
+  const derivedKeyRef = useRef(`${path}#${nonce}`);
+  useEffect(() => {
+    const nextKey = `${path}#${nonce}`;
+    if (derivedKeyRef.current !== nextKey) {
+      derivedKeyRef.current = nextKey;
+      setDerivedBody(split.body);
+      setDerivedContent(content);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setDerivedBody(split.body);
+      setDerivedContent(content);
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [content, split.body, path, nonce]);
+  const splitBodyRef = useRef(split.body);
+  splitBodyRef.current = split.body;
+  useEffect(() => {
+    if (outlineOpen) setDerivedBody(splitBodyRef.current);
+  }, [outlineOpen]);
+
+  const headings = useMemo(() => (outlineActive ? outlineOf(derivedBody) : []), [outlineActive, derivedBody]);
+  const jumpRef = useRef<{ seq: number; raf1: number; raf2: number }>({ seq: 0, raf1: 0, raf2: 0 });
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(jumpRef.current.raf1);
+      cancelAnimationFrame(jumpRef.current.raf2);
+    },
+    [],
+  );
   const jumpHeading = (index: number) => {
     const heading = headings[index];
     if (!heading) return;
     if (mode === "source" && view.current) {
-      const at = content.length - split.body.length + heading.from;
+      const at = Math.min(content.length, content.length - split.body.length + heading.from);
       view.current.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: "start" }) });
       view.current.focus();
-    } else {
-      setHtmlPreview(false);
-      requestAnimationFrame(() => body.current?.querySelectorAll<HTMLElement>(".ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6")[index]?.scrollIntoView({ block: "start", behavior: "smooth" }));
+      return;
     }
+    setHtmlPreview(false);
+    const seq = ++jumpRef.current.seq;
+    cancelAnimationFrame(jumpRef.current.raf1);
+    cancelAnimationFrame(jumpRef.current.raf2);
+    const align = (settleLeft: number) => {
+      if (seq !== jumpRef.current.seq) return;
+      const root = body.current;
+      if (!root) return;
+      const items = Array.from(
+        root.querySelectorAll<HTMLElement>(".ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6"),
+      ).filter((el) => !el.closest(".pocket-html-live:not(.pocket-html-block)"));
+      const el = items[index];
+      if (!el) return;
+      const target =
+        el.style.display === "none" && el.previousElementSibling?.classList.contains("pocket-block-source")
+          ? (el.previousElementSibling as HTMLElement)
+          : el;
+      const scroller = root.querySelector<HTMLElement>(".fx-notes-rich");
+      if (!scroller) {
+        target.scrollIntoView({ block: "start", behavior: "auto" });
+        return;
+      }
+      const scrollerRect = scroller.getBoundingClientRect();
+      const delta = target.getBoundingClientRect().top - scrollerRect.top - 10;
+      const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      const nextTop = Math.max(0, Math.min(maxTop, scroller.scrollTop + delta));
+      if (Math.abs(nextTop - scroller.scrollTop) < 1) return;
+      scroller.scrollTo({ top: nextTop, behavior: "instant" });
+      if (settleLeft > 0) {
+        jumpRef.current.raf2 = requestAnimationFrame(() => align(settleLeft - 1));
+      }
+    };
+    jumpRef.current.raf1 = requestAnimationFrame(() => align(2));
   };
 
   useEffect(() => {
@@ -754,7 +817,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     };
   }, [renaming]);
 
-  const stats = useMemo(() => count(content), [content]);
+  const stats = useMemo(() => count(derivedContent), [derivedContent]);
   const outlineNodes = useMemo(() => outlineTree(headings), [headings]);
   const searchMatcher = useMemo(() => compileFileSearch(filter, searchRegex), [filter, searchRegex]);
   const matches = useMemo(

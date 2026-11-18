@@ -490,6 +490,14 @@
 .fx-notes-rich .milkdown .milkdown-block-handle {
   gap: 0;
   cursor: default;
+  transition: opacity 120ms ease-out;
+}
+.fx-notes-rich .milkdown .ProseMirror > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 48px;
+}
+.fx-notes-rich .milkdown .ProseMirror > .milkdown-code-block {
+  contain-intrinsic-size: auto 120px;
 }
 .fx-notes-rich .milkdown .milkdown-block-handle .operation-item {
   width: 22px;
@@ -954,7 +962,7 @@
 .pocket-note-shortcuts { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
 .pocket-note-shortcuts label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .pocket-note-shortcuts input { width: 175px; padding: 6px; background: var(--well); color: var(--text); border: 1px solid var(--line); border-radius: 5px; }
-.fx-notes-rich .ProseMirror:has(.pocket-block-source, .pocket-syntax-input:focus, .pocket-html-input:focus) .prosemirror-virtual-cursor {
+.fx-notes-rich .ProseMirror:is(.pocket-hide-vcursor, .pocket-hide-vcursor-block, .pocket-hide-vcursor-html) .prosemirror-virtual-cursor {
   display: none;
 }
 
