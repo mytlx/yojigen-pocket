@@ -20,12 +20,12 @@ import (
 )
 
 const (
-	punchMagicByte   byte = 0x28 // top two bits are 00 so quic.Transport routes to ReadNonQUICPacket
-	punchMsgPing     byte = 1
-	punchMsgPong     byte = 2
-	punchPacketSize       = 50
-	punchWindow           = 60 * time.Second
-	punchALPN             = "pocket-peer-quic-v1"
+	punchMagicByte  byte = 0x28 // top two bits are 00 so quic.Transport routes to ReadNonQUICPacket
+	punchMsgPing    byte = 1
+	punchMsgPong    byte = 2
+	punchPacketSize      = 50
+	punchWindow          = 60 * time.Second
+	punchALPN            = "pocket-peer-quic-v2"
 )
 
 type PunchSnapshot struct {
@@ -515,9 +515,11 @@ func (s *Service) PunchConnect(peerTokenRaw, pin string) error {
 	if err != nil {
 		return err
 	}
+	s.mu.Lock()
 	p.mode = "punch"
 	p.state = "punching"
 	p.expires = time.Now().Add(punchWindow)
+	s.mu.Unlock()
 
 	punchCtx, punchCancel := context.WithTimeout(p.ctx, punchWindow)
 	ap := &activePunch{
@@ -940,22 +942,21 @@ func (e *punchEngine) finishDialerHandshake(p *session, ap *activePunch, qConn *
 	}
 	tc := newQUICTransport(qConn, stream)
 	p.attach(tc)
-	sas, err := channelNumber(tc.TLSState())
-	if err != nil {
-		p.finish(err)
-		return
-	}
 	auth, err := computeHelloAuth(ap.pairKey, tc.TLSState())
 	if err != nil {
 		p.finish(err)
 		return
 	}
 	e.service.mu.Lock()
-	p.sas = sas
 	p.state = "connecting"
 	e.service.mu.Unlock()
 	p.deadline()
 	if err = p.write(message{Type: "hello", Identity: e.service.self, Auth: auth}); err != nil {
+		p.finish(err)
+		return
+	}
+	p.sas, err = p.pairingNumber(false)
+	if err != nil {
 		p.finish(err)
 		return
 	}
@@ -964,7 +965,7 @@ func (e *punchEngine) finishDialerHandshake(p *session, ap *activePunch, qConn *
 
 func (e *punchEngine) finishListenerHandshake(p *session, tc *quicTransport, hello message) {
 	p.attach(tc)
-	sas, err := channelNumber(tc.TLSState())
+	sas, err := p.pairingNumber(true)
 	if err != nil {
 		p.finish(err)
 		return

@@ -257,6 +257,9 @@ func punchPair(t *testing.T, a, b *Service, pinA, pinB string) (dialer, listener
 	}
 	wait(t, func() bool { return dialer.Snapshot().Code != "" })
 	code := dialer.Snapshot().Code
+	if err = dialer.Confirm(code); err != nil {
+		t.Fatal(err)
+	}
 	if err = listener.Confirm(code); err != nil {
 		t.Fatal(err)
 	}

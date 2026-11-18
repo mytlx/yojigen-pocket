@@ -1,7 +1,7 @@
 {
   "id": "peer",
   "name": "口袋直传",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "api": 2,
   "description": "通过 IPv6 将文件直接送到对方电脑，数字确认、加密传输与本地记录",
   "icon": "svg:send",

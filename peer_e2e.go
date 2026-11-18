@@ -64,6 +64,14 @@ func (e *E2E) PeerCode() string {
 	}
 	return peerFixture.remote.Snapshot().Code
 }
+func (e *E2E) PeerConfirm(code string) error {
+	peerFixture.Lock()
+	defer peerFixture.Unlock()
+	if peerFixture.remote == nil {
+		return errors.New("no fixture")
+	}
+	return peerFixture.remote.Confirm(code)
+}
 func (e *E2E) PeerTransfer() (bool, error) {
 	p, err := e.a.pluginHost.peerService("peer", false)
 	if err != nil {
