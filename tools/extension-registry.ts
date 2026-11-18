@@ -368,7 +368,12 @@ export function readHostAPIVersion(root: string): number {
 
 export function git(root: string, args: string[]): string | null {
   try {
-    return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return execFileSync("git", args, {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    }).trim();
   } catch {
     return null;
   }

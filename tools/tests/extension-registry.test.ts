@@ -195,18 +195,19 @@ describe("extension-registry CLI", () => {
       expect(reg.extensions[0].changelog).toBe("- feat(pet): test entry");
       expect(reg.extensions[0].url).toBe("https://github.com/mytlx/yojigen-pocket/releases/download/ext-pet-v1.0.0/pet-1.0.0.zip");
     } finally {
-      rmSync(tempDir, { recursive: true, force: true });
+      rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
-  });
+  }, 15_000);
 
   test("resolves scoped changelog from git history and annotated tags accurately", () => {
     const repoDir = mkdtempSync(join(tmpdir(), "pocket-git-log-"));
     const runGit = (args: string[]) =>
-      execFileSync("git", args, {
+      execFileSync("git", ["-c", "gc.auto=0", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", ...args], {
         cwd: repoDir,
         encoding: "utf8",
         env: {
           ...process.env,
+          GIT_OPTIONAL_LOCKS: "0",
           GIT_AUTHOR_NAME: "Test",
           GIT_AUTHOR_EMAIL: "test@example.com",
           GIT_COMMITTER_NAME: "Test",
@@ -225,17 +226,14 @@ describe("extension-registry CLI", () => {
 
       // 修改 editors 与无关的 pet：pet 的标签不应截断 editors 的历史范围。
       writeFileSync(join(repoDir, "extensions", "editors", "a.txt"), "v2");
-      runGit(["add", "."]);
-      runGit(["commit", "-m", "feat(editors): improve markdown outline"]);
+      runGit(["commit", "-am", "feat(editors): improve markdown outline"]);
 
       writeFileSync(join(repoDir, "extensions", "pet", "a.txt"), "v2");
-      runGit(["add", "."]);
-      runGit(["commit", "-m", "feat(pet): new hat"]);
+      runGit(["commit", "-am", "feat(pet): new hat"]);
       runGit(["tag", "ext-pet-v1.0.1"]);
 
       writeFileSync(join(repoDir, "extensions", "editors", "a.txt"), "v3");
-      runGit(["add", "."]);
-      runGit(["commit", "-m", "fix(editors): restore cursor position"]);
+      runGit(["commit", "-am", "fix(editors): restore cursor position"]);
 
       const resolved = resolveExtensionChangelog({ root: repoDir, id: "editors", tag: "ext-editors-v1.0.1" });
       expect(resolved.prevTag).toBe("v0.1.0");
@@ -248,7 +246,7 @@ describe("extension-registry CLI", () => {
       expect(annotated.explicit).toBe(true);
       expect(annotated.changelog).toBe("- curated release note");
     } finally {
-      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(repoDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
-  });
+  }, 20_000);
 });
