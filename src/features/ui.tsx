@@ -60,10 +60,17 @@ export function Seg<T extends string>({ value, options, onChange }: { value: T; 
   const box = useRef<HTMLDivElement>(null);
   const thumb = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    const btn = box.current?.querySelector<HTMLElement>("button.is-on");
-    if (!btn || !thumb.current) return;
-    thumb.current.style.width = `${btn.offsetWidth}px`;
-    thumb.current.style.transform = `translateX(${btn.offsetLeft}px)`;
+    const sync = () => {
+      const btn = box.current?.querySelector<HTMLElement>("button.is-on");
+      if (!btn || !thumb.current) return;
+      thumb.current.style.width = `${btn.offsetWidth}px`;
+      thumb.current.style.transform = `translateX(${btn.offsetLeft}px)`;
+    };
+    sync();
+    if (!box.current || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(sync);
+    ro.observe(box.current);
+    return () => ro.disconnect();
   }, [value, options.length]);
   return (
     <div class="ui-seg" role="radiogroup" ref={box}>

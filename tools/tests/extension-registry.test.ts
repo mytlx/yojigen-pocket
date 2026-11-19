@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  buildRegistryReleaseNotes,
   buildReleaseDownloadURL,
   compareSemver,
   formatCommitsChangelog,
@@ -15,6 +16,7 @@ import {
   type ExtensionRegistry,
   type IncomingExtensionRelease,
 } from "../extension-registry";
+import { formatDateTime, formatLocalTime } from "../../src/shared/time";
 
 function sampleItem(overrides: Partial<IncomingExtensionRelease> = {}): IncomingExtensionRelease {
   return {
@@ -154,7 +156,8 @@ describe("extension-registry CLI", () => {
     expect(check.status).toBe(0);
     const parsed = JSON.parse(check.stdout) as { hostApi: number; extensions: Array<{ id: string }> };
     expect(parsed.hostApi).toBeGreaterThanOrEqual(2);
-    expect(parsed.extensions.map((e) => e.id)).toEqual(["editors", "peer", "pet"]);
+    const checkedIds = parsed.extensions.map((e) => e.id);
+    expect(checkedIds).toEqual(["editors", "mario3", "peer", "pet"]);
 
     const tempDir = mkdtempSync(join(tmpdir(), "pocket-reg-test-"));
     try {
@@ -194,10 +197,80 @@ describe("extension-registry CLI", () => {
       expect(reg.extensions[0].tools).toEqual(["桌面宠物"]);
       expect(reg.extensions[0].changelog).toBe("- feat(pet): test entry");
       expect(reg.extensions[0].url).toBe("https://github.com/mytlx/yojigen-pocket/releases/download/ext-pet-v1.0.0/pet-1.0.0.zip");
+
+      const notesPath = join(tempDir, "extensions-notes.md");
+      const notes = spawnSync(
+        "bun",
+        [
+          "tools/extension-registry.ts",
+          "notes",
+          "--registry",
+          regPath,
+          "--repo",
+          "mytlx/yojigen-pocket",
+          "--out",
+          notesPath,
+        ],
+        { cwd: root, encoding: "utf8" },
+      );
+      expect(notes.status).toBe(0);
+      const notesText = readFileSync(notesPath, "utf8");
+      expect(notesText).toContain("索引最近同步时间");
+      expect(notesText).toContain("| 桌面宠物 | `pet` | `1.0.0` | API v1 | [ext-pet-v1.0.0](https://github.com/mytlx/yojigen-pocket/releases/tag/ext-pet-v1.0.0) |");
     } finally {
       rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 15_000);
+
+  test("buildRegistryReleaseNotes and formatLocalTime preserve seconds precision across timezones", () => {
+    // 2026-11-18T19:37:17.491Z 在 UTC+8 应精确到秒：2026-11-19 03:37:17
+    expect(formatLocalTime("2026-11-18T19:37:17.491Z", 480)).toBe("2026-11-19 03:37:17");
+    expect(formatLocalTime("2026-11-18T19:37:17.491Z", 0)).toBe("2026-11-18 19:37:17");
+    expect(formatLocalTime("not-a-date")).toBe("not-a-date");
+    expect(formatLocalTime("")).toBe("");
+    expect(formatDateTime(new Date(Number.NaN))).toBe("");
+
+    // 本地时区格式化也必须包含 YYYY-MM-DD HH:mm:ss（精确到秒）
+    const d = new Date("2026-11-18T19:37:17.491Z");
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const expectedLocal = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    expect(formatLocalTime("2026-11-18T19:37:17.491Z")).toBe(expectedLocal);
+
+    const reg: ExtensionRegistry = {
+      schema: 1,
+      updatedAt: "2026-11-18T19:37:17.491Z",
+      extensions: [
+        {
+          ...sampleItem({
+            id: "editors",
+            name: "写作|代码",
+            version: "1.0.1",
+            tag: "v0.2.1",
+            url: buildReleaseDownloadURL("mytlx/yojigen-pocket", "v0.2.1", "editors-1.0.1.zip"),
+            publishedAt: "2026-11-18T19:37:17.491Z",
+          }),
+          compat: {},
+        },
+        {
+          ...sampleItem({
+            id: "peer",
+            name: "口袋直传",
+            version: "1.1.0",
+            api: 2,
+            tag: "v0.2.0",
+            url: buildReleaseDownloadURL("mytlx/yojigen-pocket", "v0.2.0", "peer-1.1.0.zip"),
+            publishedAt: "2026-11-18T16:28:20.847Z",
+          }),
+          compat: {},
+        },
+      ],
+    };
+
+    const md = buildRegistryReleaseNotes(reg);
+    expect(md).toContain("`2026-11-19 03:37:17 (UTC+8)` / `2026-11-18 19:37:17 UTC`");
+    expect(md).toContain("| 写作\\|代码 | `editors` | `1.0.1` | API v1 | [v0.2.1](https://github.com/mytlx/yojigen-pocket/releases/tag/v0.2.1) | `2026-11-19 03:37:17` |");
+    expect(md).toContain("| 口袋直传 | `peer` | `1.1.0` | API v2 | [v0.2.0](https://github.com/mytlx/yojigen-pocket/releases/tag/v0.2.0) | `2026-11-19 00:28:20` |");
+  });
 
   test("resolves scoped changelog from git history and annotated tags accurately", () => {
     const repoDir = mkdtempSync(join(tmpdir(), "pocket-git-log-"));

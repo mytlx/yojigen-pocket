@@ -334,6 +334,18 @@ func (l *Library) ToggleBoss() { l.a.toggleReader() }
 // DevTools 是开发工具功能页用到的后端能力。
 type DevTools struct{ a *App }
 
+// SaveText 让用户选择开发工具结果的保存位置。
+func (d *DevTools) SaveText(ctx context.Context, name, content string) (bool, error) {
+	d.a.blurPaused.Store(true)
+	defer d.a.blurPaused.Store(false)
+	path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: mygo.CallerWindow(ctx), DefaultPath: filepath.Base(name)})
+	if err != nil || path == "" {
+		return false, err
+	}
+	err = store.WriteFileAtomic(path, []byte(content))
+	return err == nil, err
+}
+
 // Hash 计算文字的各种哈希。
 func (d *DevTools) Hash(text string) map[string]string {
 	out, _ := hashAll(strings.NewReader(text))

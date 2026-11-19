@@ -1,7 +1,7 @@
 {
   "id": "editors",
   "name": "写作与代码",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "api": 1,
   "description": "Markdown 笔记、代码草稿、文本对比。三个工具共用一套编辑器",
   "icon": "svg:notebook",
@@ -9,7 +9,7 @@
     {
       "id": "notes",
       "title": "Markdown 笔记",
-      "description": "随手记：文件夹和文件管理，阅读或源码编辑",
+      "description": "随手记：文件夹和文件管理，阅读、实时预览或源码编辑",
       "icon": "svg:notebook",
       "category": "效率工具",
       "keywords": ["md", "note", "notes", "markdown", "bj", "biji", "笔记", "记事"],
@@ -42,5 +42,5 @@
       "matches": [{ "type": "text", "min": 1, "label": "放到对比的左边" }]
     }
   ],
-  "permissions": { "dirs": ["notes", "scratches"], "runner": true, "files": true }
+  "permissions": { "dirs": ["notes", "scratches"], "runner": true, "files": true, "fetch": ["*", "localhost", "127.0.0.1"] }
 }

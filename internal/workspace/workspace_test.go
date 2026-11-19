@@ -81,6 +81,19 @@ func TestStore(t *testing.T) {
 	if _, err := s.Read(renamed); err == nil {
 		t.Fatal("删掉的文件不该还读得到")
 	}
+
+	// 二进制图片写入：自动建目录、重名加序号、越界拒绝
+	imgPath, err := s.CreateBinary("img", "shot.png", []byte{0x89, 0x50, 0x4e, 0x47})
+	if err != nil || imgPath != "img/shot.png" {
+		t.Fatalf("CreateBinary 1: %q %v", imgPath, err)
+	}
+	imgPath2, err := s.CreateBinary("img", "shot.png", []byte{0x89, 0x50, 0x4e, 0x47})
+	if err != nil || imgPath2 != "img/shot 2.png" {
+		t.Fatalf("CreateBinary 2: %q %v", imgPath2, err)
+	}
+	if _, err := s.CreateBinary("../escape", "shot.png", []byte{1}); err == nil {
+		t.Fatal("越界目录写入应该被拒绝")
+	}
 }
 
 func TestNaturalSort(t *testing.T) {

@@ -11,6 +11,7 @@ import {
   type StoreResult,
 } from "../mygo";
 import { Icon } from "../shared/icons";
+import { formatLocalTime } from "../shared/time";
 import { Toggle } from "../features/ui";
 
 /** 把清单里声明的权限说成人话。 */
@@ -356,6 +357,12 @@ export function ExtensionsPanel({ flash, query = "" }: { flash: (text: string, e
                 <div class="ct-ext-meta">
                   {(p.tools ?? []).length > 0 && <span>包含：{p.tools.join("、")}</span>}
                   {perms.length > 0 && <span>可以：{perms.join("；")}</span>}
+                  {remote?.publishedAt && (
+                    <span title={remote.publishedAt}>
+                      {hasUpdate ? "最新版本发布于：" : "商店最新发布："}
+                      {formatLocalTime(remote.publishedAt)}
+                    </span>
+                  )}
                   {p.backend && <span class="ct-ext-warn">带有本地程序：它能做的事和你安装的任何程序一样，不受上面权限的限制。只安装信得过的来源。</span>}
                   {p.problem && <span class="ct-ext-warn">{p.problem}</span>}
                 </div>
@@ -419,9 +426,16 @@ export function ExtensionsPanel({ flash, query = "" }: { flash: (text: string, e
             <h2>官方扩展商店</h2>
             <p>
               在线获取内置生态扩展，下载时自动校验 SHA-256。
-              {store?.updatedAt ? ` 最近索引更新时间：${store.updatedAt.slice(0, 10)}` : ""}
+              {store?.updatedAt && (
+                <span title={store.updatedAt}>
+                  {` 最近索引更新时间：${formatLocalTime(store.updatedAt)}`}
+                </span>
+              )}
             </p>
           </div>
+          <button class="ui-btn is-small q-press" disabled={loadingStore || remoteBusy} onClick={() => void loadStore(true)}>
+            <RefreshCw size={13} class={loadingStore ? "ct-spin" : ""} /> {loadingStore ? "刷新中…" : "刷新索引"}
+          </button>
         </div>
 
         {store?.error && (
@@ -473,6 +487,9 @@ export function ExtensionsPanel({ flash, query = "" }: { flash: (text: string, e
                 <div class="ct-ext-meta">
                   {(item.tools ?? []).length > 0 && <span>包含：{item.tools!.join("、")}</span>}
                   {perms.length > 0 && <span>需要权限：{perms.join("；")}</span>}
+                  {item.publishedAt && (
+                    <span title={item.publishedAt}>发布时间：{formatLocalTime(item.publishedAt)}</span>
+                  )}
                   {item.backend && <span class="ct-ext-warn">带有本地程序：它能做的事和你安装的任何程序一样，不受上面权限的限制。</span>}
                 </div>
                 {item.changelog && logOpen && (

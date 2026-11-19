@@ -35,13 +35,19 @@ const today = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-/** 只留文件夹和 .md 文件，并做自然数字排序。 */
-function onlyMarkdown(nodes: Node[]): Node[] {
-  return sortTreeNodes(
-    nodes
-      .filter((n) => n.isDir || n.name.toLowerCase().endsWith(".md"))
-      .map((n) => (n.isDir ? { ...n, children: onlyMarkdown(n.children ?? []) } : n)),
-  );
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif|svg|ico|bmp|heic|tiff?)$/i;
+
+export function isMarkdownFile(name: string): boolean {
+  return /\.md$/i.test(name);
+}
+
+export function isImageFile(name: string): boolean {
+  return IMAGE_EXT_RE.test(name);
+}
+
+/** 保留目录下所有文件与文件夹（含图片等附件），递归做自然数字排序。 */
+function sortAllNodes(nodes: Node[]): Node[] {
+  return sortTreeNodes(nodes.map((n) => (n.isDir ? { ...n, children: sortAllNodes(n.children ?? []) } : n)));
 }
 
 /** 别的页面（同一个扩展的另一个窗口）改了文件。 */
@@ -56,11 +62,18 @@ export interface FsChange {
 /** 用系统浏览器（或对应的应用）打开一个地址。 */
 export const openExternal = (url: string) => pocket.openExternal(url);
 
+/** 静默剪贴板读写（供编辑器右键菜单使用，不弹宿主 Toast）。 */
+export const editorClipboard = {
+  write: (text: string) => pocket.copyText(text),
+  read: () => pocket.readClipboard(),
+  readImage: () => (pocket.readClipboardImage ? pocket.readClipboardImage() : Promise.resolve("")),
+};
+
 const NOTES = "notes";
 
 /** 笔记：用户目录 notes 里的 .md 文件。 */
 export const Notes = {
-  tree: () => pocket.fs.tree(NOTES).then(onlyMarkdown),
+  tree: () => pocket.fs.tree(NOTES).then(sortAllNodes),
   read: (path: string) => pocket.fs.read(NOTES, path),
   write: (path: string, content: string) => pocket.fs.write(NOTES, path, content),
   /** 新笔记的名字带当天的日期，重名时宿主会自动加序号。 */
@@ -76,6 +89,19 @@ export const Notes = {
   open: (path: string) => pocket.fs.open(NOTES, path),
   openWith: (path: string) => pocket.fs.openWith(NOTES, path),
   saveAs: (name: string, content: string) => pocket.fs.saveAs(name, content),
+  writeImage: (dir: string, name: string, base64: string) =>
+    pocket.fs.writeBinary ? pocket.fs.writeBinary(NOTES, dir, name, base64) : Promise.reject(new Error("当前宿主版本暂不支持写入本地图片，请更新主程序")),
+  imageAssetUrl: (path: string) => (pocket.fs.assetUrl ? pocket.fs.assetUrl(NOTES, path) : Promise.resolve("")),
+  pickImage: () => pocket.fs.pick(["png", "jpg", "jpeg", "gif", "webp", "avif", "svg", "bmp"]),
+  uploadImage: (
+    url: string,
+    opts: {
+      method?: string;
+      headers?: Record<string, string>;
+      multipart?: { field: string; filename: string; mime?: string; base64: string; fields?: Record<string, string> };
+      bodyBase64?: string;
+    },
+  ) => pocket.fetch(url, opts),
   getMode: () => pocket.storage.get<string>("notes.mode").catch(() => null),
   setMode: (mode: string) => void pocket.storage.set("notes.mode", mode).catch(() => undefined),
   getPrefs: <T>() => pocket.storage.get<T>("notes.prefs").catch(() => null),

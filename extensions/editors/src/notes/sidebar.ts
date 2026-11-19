@@ -16,7 +16,34 @@ export const MAX_OUTLINE_W = 360;
 export const MIN_EDITOR_W = 260;
 export const RESIZER_W = 10;
 
+export interface PanelBounds {
+  defaultWidth: number;
+  minWidth: number;
+  maxWidth: number;
+}
+
+export const DEFAULT_SIDEBAR_BOUNDS: PanelBounds = {
+  defaultWidth: DEFAULT_SIDEBAR_W,
+  minWidth: MIN_SIDEBAR_W,
+  maxWidth: MAX_SIDEBAR_W,
+};
+
+export const DEFAULT_OUTLINE_BOUNDS: PanelBounds = {
+  defaultWidth: DEFAULT_OUTLINE_W,
+  minWidth: MIN_OUTLINE_W,
+  maxWidth: MAX_OUTLINE_W,
+};
+
 export const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, Math.round(n)));
+
+/** 校验并归一化侧栏宽度边界（确保 80 <= min <= default <= max <= 900）。 */
+export function normalizePanelBounds(input: Partial<PanelBounds> | undefined, fallback: PanelBounds): PanelBounds {
+  const num = (v: unknown, fb: number) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.round(v) : fb);
+  const rawMin = clamp(num(input?.minWidth, fallback.minWidth), 80, 700);
+  const rawMax = clamp(num(input?.maxWidth, fallback.maxWidth), rawMin, 900);
+  const rawDef = clamp(num(input?.defaultWidth, fallback.defaultWidth), rawMin, rawMax);
+  return { defaultWidth: rawDef, minWidth: rawMin, maxWidth: rawMax };
+}
 
 /** 根据容器总宽计算文件栏与大纲栏本次渲染的可用宽度，窄窗口时临时压窄但不改写持久化偏好。 */
 export function computePanelWidths(params: {
@@ -25,9 +52,13 @@ export function computePanelWidths(params: {
   outlineOpen: boolean;
   sidebarWidth: number;
   outlineWidth: number;
+  sidebarBounds?: PanelBounds;
+  outlineBounds?: PanelBounds;
 }): { sidebar: number; outline: number } {
-  let side = clamp(params.sidebarWidth || DEFAULT_SIDEBAR_W, MIN_SIDEBAR_W, MAX_SIDEBAR_W);
-  let outline = clamp(params.outlineWidth || DEFAULT_OUTLINE_W, MIN_OUTLINE_W, MAX_OUTLINE_W);
+  const sb = params.sidebarBounds ? normalizePanelBounds(params.sidebarBounds, DEFAULT_SIDEBAR_BOUNDS) : DEFAULT_SIDEBAR_BOUNDS;
+  const ob = params.outlineBounds ? normalizePanelBounds(params.outlineBounds, DEFAULT_OUTLINE_BOUNDS) : DEFAULT_OUTLINE_BOUNDS;
+  let side = clamp(params.sidebarWidth || sb.defaultWidth, sb.minWidth, sb.maxWidth);
+  let outline = clamp(params.outlineWidth || ob.defaultWidth, ob.minWidth, ob.maxWidth);
   if (params.containerWidth <= 0) return { sidebar: side, outline };
 
   const resizers = (params.sidebarOpen ? RESIZER_W : 0) + (params.outlineOpen ? RESIZER_W : 0);
@@ -35,15 +66,15 @@ export function computePanelWidths(params: {
   if (params.sidebarOpen && params.outlineOpen) {
     if (side + outline > budget) {
       const ratio = budget > 0 ? budget / (side + outline) : 0;
-      const nextSide = Math.max(Math.min(MIN_SIDEBAR_W, Math.floor(params.containerWidth * 0.32)), Math.floor(side * ratio));
-      const nextOutline = Math.max(Math.min(MIN_OUTLINE_W, Math.floor(params.containerWidth * 0.28)), budget - nextSide);
+      const nextSide = Math.max(Math.min(sb.minWidth, Math.floor(params.containerWidth * 0.32)), Math.floor(side * ratio));
+      const nextOutline = Math.max(Math.min(ob.minWidth, Math.floor(params.containerWidth * 0.28)), budget - nextSide);
       side = Math.min(side, nextSide);
       outline = Math.min(outline, nextOutline);
     }
   } else if (params.sidebarOpen) {
-    side = Math.min(side, Math.max(Math.min(MIN_SIDEBAR_W, Math.floor(params.containerWidth * 0.4)), budget));
+    side = Math.min(side, Math.max(Math.min(sb.minWidth, Math.floor(params.containerWidth * 0.4)), budget));
   } else if (params.outlineOpen) {
-    outline = Math.min(outline, Math.max(Math.min(MIN_OUTLINE_W, Math.floor(params.containerWidth * 0.4)), budget));
+    outline = Math.min(outline, Math.max(Math.min(ob.minWidth, Math.floor(params.containerWidth * 0.4)), budget));
   }
   return { sidebar: side, outline };
 }
@@ -55,15 +86,17 @@ export function clampDragWidth(params: {
   containerWidth: number;
   otherWidth: number;
   otherOpen: boolean;
+  bounds?: PanelBounds;
 }): number {
-  const [minW, maxW] = params.which === "sidebar" ? [MIN_SIDEBAR_W, MAX_SIDEBAR_W] : [MIN_OUTLINE_W, MAX_OUTLINE_W];
-  let limit = maxW;
+  const fb = params.which === "sidebar" ? DEFAULT_SIDEBAR_BOUNDS : DEFAULT_OUTLINE_BOUNDS;
+  const b = params.bounds ? normalizePanelBounds(params.bounds, fb) : fb;
+  let limit = b.maxWidth;
   if (params.containerWidth > 0) {
     const resizers = RESIZER_W + (params.otherOpen ? RESIZER_W : 0);
     const other = params.otherOpen ? params.otherWidth : 0;
-    limit = Math.min(maxW, Math.max(minW, params.containerWidth - resizers - MIN_EDITOR_W - other));
+    limit = Math.min(b.maxWidth, Math.max(b.minWidth, params.containerWidth - resizers - MIN_EDITOR_W - other));
   }
-  return clamp(params.rawWidth, minW, limit);
+  return clamp(params.rawWidth, b.minWidth, limit);
 }
 
 /** 计算当前文件栏里从上到下可见的条目路径，供 Shift 范围选择使用。 */

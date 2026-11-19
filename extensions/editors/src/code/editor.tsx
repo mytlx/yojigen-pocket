@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "preact/hooks";
 import { basicSetup } from "codemirror";
-import { Compartment, EditorState, type Extension } from "@codemirror/state";
+import { Annotation, Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap, placeholder as placeholderExt } from "@codemirror/view";
 import { HighlightStyle, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { indentWithTab } from "@codemirror/commands";
@@ -10,7 +10,7 @@ import "./code.css";
 
 /** 编辑器的外观：颜色都走 CSS 变量，深浅色跟着应用的主题变。 */
 export const pocketTheme = EditorView.theme({
-  "&": { height: "100%", fontSize: "calc(12.5px * var(--zoom-code, 1))", color: "var(--text)", backgroundColor: "transparent" },
+  "&": { height: "100%", fontSize: "calc(var(--note-source-fs, 12.5px) * var(--zoom-code, 1))", color: "var(--text)", backgroundColor: "transparent" },
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.6", overflow: "auto" },
   ".cm-content": { caretColor: "var(--text)", padding: "8px 0" },
@@ -109,11 +109,24 @@ export function linkOpener(open: (href: string) => void): Extension {
   });
 }
 
-/** 按语言 ID 加载高亮，装进一个可以随时替换的隔间里。 */
-export function loadLanguage(view: EditorView, compartment: Compartment, lang: string) {
+/** 按语言 ID 加载高亮，装进一个可以随时替换的隔间里（带销毁与 IME 防护）。 */
+export function loadLanguage(view: EditorView, compartment: Compartment, lang: string, isAlive?: () => boolean) {
   void findLang(lang)
     .load()
-    .then((ext) => view.dispatch({ effects: compartment.reconfigure(ext) }))
+    .then((ext) => {
+      if (isAlive && !isAlive()) return;
+      if (!view.dom.isConnected) return;
+      const apply = () => {
+        if (isAlive && !isAlive()) return;
+        if (!view.dom.isConnected) return;
+        if (view.composing) {
+          window.setTimeout(apply, 40);
+          return;
+        }
+        view.dispatch({ effects: compartment.reconfigure(ext) });
+      };
+      apply();
+    })
     .catch(() => undefined);
 }
 
@@ -129,6 +142,8 @@ export interface CodeEditorProps {
   keys?: { key: string; run: () => boolean }[];
   /** 拿到编辑器实例（做格式化、插入文字、读光标位置）。 */
   onReady?: (view: EditorView) => void;
+  /** 卸载回调，避免父组件保留已销毁实例。 */
+  onDestroy?: () => void;
   /** 光标或选区变化。 */
   onCursor?: (info: { line: number; col: number; selected: number }) => void;
   autoFocus?: boolean;
@@ -137,6 +152,22 @@ export interface CodeEditorProps {
   extensions?: Extension[];
 }
 
+/** 检测是否包含超长单行（如旧笔记里的巨型 Base64 图片），避免自动折行时卡死主线程。 */
+function hasHugeSingleLine(text: string): boolean {
+  if (text.length < 40000) return false;
+  let start = 0;
+  while (start < text.length) {
+    const nl = text.indexOf("\n", start);
+    const end = nl < 0 ? text.length : nl;
+    if (end - start > 32000) return true;
+    if (nl < 0) break;
+    start = nl + 1;
+  }
+  return false;
+}
+
+const externalSync = Annotation.define<boolean>();
+
 /** 代码编辑器：行号、折叠、括号匹配、查找替换（⌘F / Ctrl+F）、多光标、自动缩进，按语言高亮。 */
 export function CodeEditor(props: CodeEditorProps) {
   const host = useRef<HTMLDivElement>(null);
@@ -144,11 +175,26 @@ export function CodeEditor(props: CodeEditorProps) {
   const comps = useRef({ lang: new Compartment(), wrap: new Compartment(), ro: new Compartment(), tab: new Compartment() });
   const latest = useRef(props);
   latest.current = props;
+  const emittedQueue = useRef<string[]>([]);
+  const loadedLang = useRef<string | null>(null);
+  const aliveRef = useRef(false);
+  const prevWrap = useRef<boolean | null>(null);
+  const prevRo = useRef<boolean | null>(null);
+  const prevTab = useRef<number | null>(null);
 
   useEffect(() => {
     if (!host.current) return;
+    aliveRef.current = true;
+    emittedQueue.current = [];
+    loadedLang.current = props.lang ?? "text";
     const c = comps.current;
     const tab = props.tabSize ?? 2;
+    let cursorRaf = 0;
+    const effectiveWrap = !!props.wrap && !hasHugeSingleLine(props.value);
+    prevWrap.current = !!props.wrap;
+    prevRo.current = !!props.readOnly;
+    prevTab.current = tab;
+
     const extensions: Extension[] = [
       keymap.of((props.keys ?? []).map((k) => ({ key: k.key, run: () => latest.current.keys?.find((x) => x.key === k.key)?.run() ?? false }))),
       basicSetup,
@@ -156,15 +202,30 @@ export function CodeEditor(props: CodeEditorProps) {
       pocketTheme,
       pocketHighlight,
       c.lang.of([]),
-      c.wrap.of(props.wrap ? EditorView.lineWrapping : []),
+      c.wrap.of(effectiveWrap ? EditorView.lineWrapping : []),
       c.ro.of(EditorState.readOnly.of(!!props.readOnly)),
       c.tab.of([EditorState.tabSize.of(tab), indentUnit.of(" ".repeat(tab))]),
       EditorView.updateListener.of((u) => {
-        if (u.docChanged) latest.current.onChange?.(u.state.doc.toString());
+        if (u.docChanged) {
+          const isExternal = u.transactions.length > 0 && u.transactions.every((tr) => tr.annotation(externalSync));
+          if (!isExternal) {
+            const next = u.state.doc.toString();
+            const q = emittedQueue.current;
+            q.push(next);
+            if (q.length > 256) q.splice(0, q.length - 256);
+            latest.current.onChange?.(next);
+          }
+        }
         if ((u.docChanged || u.selectionSet) && latest.current.onCursor) {
-          const sel = u.state.selection.main;
-          const line = u.state.doc.lineAt(sel.head);
-          latest.current.onCursor({ line: line.number, col: sel.head - line.from + 1, selected: sel.to - sel.from });
+          if (cursorRaf) cancelAnimationFrame(cursorRaf);
+          cursorRaf = requestAnimationFrame(() => {
+            cursorRaf = 0;
+            const curView = view.current;
+            if (!aliveRef.current || !curView) return;
+            const sel = curView.state.selection.main;
+            const line = curView.state.doc.lineAt(sel.head);
+            latest.current.onCursor?.({ line: line.number, col: sel.head - line.from + 1, selected: sel.to - sel.from });
+          });
         }
       }),
     ];
@@ -174,34 +235,72 @@ export function CodeEditor(props: CodeEditorProps) {
     view.current = v;
     // 把编辑器实例挂在它的 DOM 上：自动化测试靠它往里填内容（iframe 里没有焦点时浏览器的 insertText 不生效）。
     (v.dom as unknown as { __cm: EditorView }).__cm = v;
-    loadLanguage(v, c.lang, props.lang ?? "text");
+    loadLanguage(v, c.lang, loadedLang.current, () => aliveRef.current && view.current === v);
     props.onReady?.(v);
     if (props.autoFocus) v.focus();
     return () => {
+      aliveRef.current = false;
+      emittedQueue.current = [];
+      if (cursorRaf) cancelAnimationFrame(cursorRaf);
       v.destroy();
       view.current = null;
+      latest.current.onDestroy?.();
     };
   }, []);
 
-  // 外面换了内容（打开另一个文件、格式化）时同步进来；自己打字产生的变化不会绕回来。
+  // 外面换了内容（打开另一个文件、外部磁盘修改、格式化）时才同步进来；
+  // 1) 通过 FIFO 队列过滤快速连打产生的滞后 props.value 回声，绝不把旧内容反向覆盖正在输入的文档；
+  // 2) 通过 externalSync 注解切断 dispatch -> onChange -> setState -> useEffect 反馈环，彻底消除源码模式卡死。
   useEffect(() => {
     const v = view.current;
-    if (v && props.value !== v.state.doc.toString()) {
-      v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: props.value } });
+    if (!v) return;
+    const q = emittedQueue.current;
+    const idx = q.lastIndexOf(props.value);
+    if (idx >= 0) {
+      q.splice(0, idx + 1);
+      return;
     }
+    if (v.composing) return;
+    const current = v.state.doc.toString();
+    if (props.value === current) {
+      q.length = 0;
+      return;
+    }
+    q.length = 0;
+    v.dispatch({
+      changes: { from: 0, to: v.state.doc.length, insert: props.value },
+      annotations: externalSync.of(true),
+    });
   }, [props.value]);
   useEffect(() => {
-    if (view.current) loadLanguage(view.current, comps.current.lang, props.lang ?? "text");
+    const nextLang = props.lang ?? "text";
+    if (view.current && loadedLang.current !== nextLang) {
+      loadedLang.current = nextLang;
+      const cur = view.current;
+      loadLanguage(cur, comps.current.lang, nextLang, () => aliveRef.current && view.current === cur);
+    }
   }, [props.lang]);
   useEffect(() => {
-    view.current?.dispatch({ effects: comps.current.wrap.reconfigure(props.wrap ? EditorView.lineWrapping : []) });
+    const v = view.current;
+    const wantWrap = !!props.wrap;
+    if (!v || prevWrap.current === wantWrap) return;
+    prevWrap.current = wantWrap;
+    const effectiveWrap = wantWrap && !hasHugeSingleLine(v.state.doc.toString());
+    v.dispatch({ effects: comps.current.wrap.reconfigure(effectiveWrap ? EditorView.lineWrapping : []) });
   }, [props.wrap]);
   useEffect(() => {
-    view.current?.dispatch({ effects: comps.current.ro.reconfigure(EditorState.readOnly.of(!!props.readOnly)) });
+    const v = view.current;
+    const wantRo = !!props.readOnly;
+    if (!v || prevRo.current === wantRo) return;
+    prevRo.current = wantRo;
+    v.dispatch({ effects: comps.current.ro.reconfigure(EditorState.readOnly.of(wantRo)) });
   }, [props.readOnly]);
   useEffect(() => {
+    const v = view.current;
     const tab = props.tabSize ?? 2;
-    view.current?.dispatch({ effects: comps.current.tab.reconfigure([EditorState.tabSize.of(tab), indentUnit.of(" ".repeat(tab))]) });
+    if (!v || prevTab.current === tab) return;
+    prevTab.current = tab;
+    v.dispatch({ effects: comps.current.tab.reconfigure([EditorState.tabSize.of(tab), indentUnit.of(" ".repeat(tab))]) });
   }, [props.tabSize]);
 
   return <div class={`code-editor ${props.class ?? ""}`} ref={host} />;

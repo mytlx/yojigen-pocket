@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"encoding/base64"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -151,5 +154,89 @@ func TestPluginRuntimeIsStaticAndChecksInstalled(t *testing.T) {
 	}
 	if got, err := a.pluginStorageGet("editors", "notes.mode"); err != nil || got != "source" {
 		t.Fatalf("pluginStorageGet(notes.mode) = %v, %v", got, err)
+	}
+}
+
+func TestPluginImageBinaryAndMultipartFetch(t *testing.T) {
+	a, _ := newTestPluginApp(t)
+	h := &pluginHost{a: a}
+	m := providers.Manifest{
+		ID: "editors",
+		Permissions: providers.Permissions{
+			Dirs:  []string{"notes"},
+			Fetch: []string{"127.0.0.1"},
+		},
+	}
+
+	pngBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}
+	b64 := base64.StdEncoding.EncodeToString(pngBytes)
+
+	res, err := h.fs(context.Background(), m, "editors", "writeBinary", callArgs{"notes", "img", "demo.png", "data:image/png;base64," + b64}, nil)
+	if err != nil {
+		t.Fatalf("writeBinary failed: %v", err)
+	}
+	rel, _ := res.(string)
+	if rel != "img/demo.png" {
+		t.Fatalf("writeBinary rel = %q, want img/demo.png", rel)
+	}
+
+	// 非图片扩展名应被拒绝
+	if _, err := h.fs(context.Background(), m, "editors", "writeBinary", callArgs{"notes", "img", "evil.exe", b64}, nil); err == nil {
+		t.Fatal("non-image extension should be rejected")
+	}
+
+	// assetUrl 应返回合法的图片协议地址
+	urlRes, err := h.fs(context.Background(), m, "editors", "assetUrl", callArgs{"notes", rel}, nil)
+	if err != nil {
+		t.Fatalf("assetUrl failed: %v", err)
+	}
+	assetURL, _ := urlRes.(string)
+	if !strings.Contains(assetURL, "/image?path=") || !strings.Contains(assetURL, "demo.png") {
+		t.Fatalf("unexpected assetUrl = %q", assetURL)
+	}
+
+	// multipart 通用图床上传应正确构造表单文件与附加字段
+	var gotFilename, gotField, gotToken string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotToken = r.Header.Get("X-Token")
+		if err := r.ParseMultipartForm(4 << 20); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		gotField = r.FormValue("album")
+		f, hdr, err := r.FormFile("image")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer f.Close()
+		gotFilename = hdr.Filename
+		gotBody, _ = io.ReadAll(f)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"url":"https://cdn.example.com/demo.png"}}`))
+	}))
+	defer srv.Close()
+
+	upRes, err := h.fetch(context.Background(), m, srv.URL, map[string]any{
+		"method":  "POST",
+		"headers": map[string]any{"X-Token": "secret123"},
+		"multipart": map[string]any{
+			"field":    "image",
+			"filename": "demo.png",
+			"mime":     "image/png",
+			"base64":   b64,
+			"fields":   map[string]any{"album": "notes"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("multipart fetch failed: %v", err)
+	}
+	resMap, _ := upRes.(map[string]any)
+	if ok, _ := resMap["ok"].(bool); !ok {
+		t.Fatalf("multipart fetch not ok: %+v", resMap)
+	}
+	if gotToken != "secret123" || gotField != "notes" || gotFilename != "demo.png" || string(gotBody) != string(pngBytes) {
+		t.Fatalf("multipart mismatch: token=%q field=%q file=%q bodyLen=%d", gotToken, gotField, gotFilename, len(gotBody))
 	}
 }

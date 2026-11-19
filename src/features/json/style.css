@@ -1,0 +1,663 @@
+.jx.fx-page {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px;
+}
+.jx-tabs,
+.jx-tools,
+.jx-tab,
+.jx-actions,
+.jx-modes,
+.jx-panel header,
+.jx-row,
+.jx-find,
+.jx-pager {
+  display: flex;
+  align-items: center;
+}
+.jx-tabs {
+  gap: 4px;
+  overflow-x: auto;
+  flex: none;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 4px;
+}
+.jx button,
+.jx input,
+.jx select {
+  font: inherit;
+  color: inherit;
+}
+.jx-tab,
+.jx-modes {
+  gap: 2px;
+  flex: none;
+  border-radius: 8px;
+  padding: 2px;
+}
+.jx-tab {
+  color: var(--text-2);
+  padding-left: 7px;
+}
+.jx-tab.current {
+  color: var(--accent);
+  background: var(--sel);
+}
+.jx-tab button,
+.jx-modes button,
+.jx-panel header button,
+.jx-row button,
+.jx-pager button {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+}
+.jx-tab button:hover,
+.jx-row:hover,
+.jx-pager button:hover {
+  background: var(--hover);
+}
+.jx-tab button {
+  max-width: 15em;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.jx-tab input {
+  width: 8em;
+}
+.jx-work {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+}
+.jx-work[hidden] {
+  display: none;
+}
+.jx-tools {
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.jx-actions {
+  gap: 4px;
+}
+.jx-modes {
+  background: var(--well);
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.jx-modes button {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.jx-modes button[aria-pressed="true"] {
+  background: var(--card-solid);
+  color: var(--accent);
+  box-shadow: 0 1px 4px #0002;
+}
+.jx-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 0.85fr);
+}
+.jx-grid.output {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.jx-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--card);
+}
+.jx-panel header {
+  flex: none;
+  padding: 5px 9px;
+  gap: 6px;
+  height: 32px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 600;
+}
+.jx-panel header svg,
+.jx-row svg {
+  width: 14px;
+  height: 14px;
+}
+.jx-panel header svg {
+  color: var(--accent);
+}
+.jx-panel header button,
+.jx-panel header small {
+  margin-left: auto;
+}
+.jx-editor,
+.jx-scroll,
+.jx-detail,
+.jx-result {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+.jx-editor .cm-editor {
+  height: 100%;
+  font-size: 12px;
+}
+.jx-editor .cm-scroller,
+.jx-result,
+.jx-row,
+.jx-detail code,
+.jx-detail pre {
+  font-family: var(--font-mono);
+}
+.jx-editor .cm-gutters {
+  background: color-mix(in srgb, var(--jx-wash) 65%, var(--card-solid));
+  color: var(--text-3);
+  border-color: var(--line);
+}
+.jx-editor .cm-cursor {
+  border-color: var(--text);
+}
+.jx-find {
+  margin: 6px;
+  gap: 4px;
+  font-size: 12px;
+}
+.jx-find {
+  background: var(--well);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+.jx-find input {
+  background: transparent;
+  border: 0;
+  min-width: 0;
+  width: 100%;
+}
+.jx-row {
+  min-height: 25px;
+  overflow: hidden;
+}
+.jx-row.current {
+  background: var(--sel);
+}
+.jx-indent {
+  width: 22px;
+  flex: none;
+}
+.jx-key {
+  flex: 1;
+  gap: 8px;
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px !important;
+}
+.jx-key em {
+  font-style: normal;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.jx-detail,
+.jx-result {
+  padding: 10px;
+}
+.jx-detail label,
+.jx-detail code,
+.jx-detail strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.jx-detail label {
+  font-size: 11px;
+  color: var(--text-2);
+  margin-bottom: 3px;
+}
+.jx-detail code,
+.jx-detail strong {
+  margin-bottom: 12px;
+}
+.jx-detail pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0 0 10px;
+}
+.jx-result {
+  white-space: pre;
+  margin: 0;
+  font-size: 12px;
+}
+.jx-err {
+  background: var(--well);
+  color: var(--danger) !important;
+  border: 0;
+  padding: 6px;
+  text-align: left;
+  cursor: pointer;
+}
+.jx-err svg {
+  vertical-align: middle;
+  margin-right: 4px;
+}
+.jx-empty,
+.jx-panel small {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.jx-empty {
+  padding: 6px 10px;
+}
+.jx-pager {
+  justify-content: center;
+  gap: 4px;
+  font-size: 11px;
+}
+.jx-pager button:disabled {
+  opacity: 0.4;
+}
+@media (max-width: 580px) {
+  .jx-tools {
+    gap: 3px;
+  }
+  .jx-modes button {
+    padding: 3px 5px;
+  }
+}
+
+.jx-diagnostic {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 3px;
+  background: var(--well);
+}
+.jx-diagnostic .jx-err {
+  flex: 1;
+  background: transparent;
+}
+.jx {
+  --jx-ink: #215b75;
+  --jx-accent: #14756e;
+  --jx-wash: #e3f2ed;
+  --jx-key: #275d94;
+  --jx-string: #22715c;
+  --jx-number: #974a23;
+  --jx-literal: #8354a0;
+  --jx-border: color-mix(in srgb, var(--jx-accent) 16%, var(--line));
+}
+:root[data-theme="dark"] .jx {
+  --jx-ink: #92c5df;
+  --jx-accent: #81cebc;
+  --jx-wash: #253e3b;
+  --jx-key: #9ec8ff;
+  --jx-string: #91dab7;
+  --jx-number: #f7b786;
+  --jx-literal: #d8adf0;
+}
+.jx.fx-page {
+  padding: 10px 12px 12px;
+  gap: 0;
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--jx-wash) 48%, transparent),
+    transparent 65%
+  );
+}
+.jx-tabs {
+  border: 0;
+  gap: 3px;
+  padding: 0 0 0 4px;
+  align-items: flex-end;
+}
+.jx-tab {
+  padding: 4px 6px;
+  color: var(--text-2);
+  border: 1px solid transparent;
+  border-radius: 9px 9px 0 0;
+}
+.jx-tab.current {
+  color: var(--jx-ink);
+  background: var(--card-solid);
+  border-color: var(--jx-border);
+  border-bottom-color: var(--card-solid);
+}
+.jx-tabs > .ui-btn {
+  align-self: center;
+  margin-left: 4px;
+}
+.jx-tools {
+  background: var(--card-solid);
+  border: 1px solid var(--jx-border);
+  padding: 6px;
+  border-radius: 9px;
+  gap: 5px;
+}
+.jx-work {
+  gap: 9px;
+}
+.jx-modes {
+  background: var(--well);
+  padding: 3px;
+}
+.jx-modes button {
+  padding: 4px 9px;
+}
+.jx-modes button[aria-pressed="true"] {
+  background: var(--jx-ink);
+  color: var(--card-solid);
+  font-weight: 650;
+}
+.jx-actions {
+  gap: 6px;
+}
+.jx-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.jx-switch input {
+  accent-color: var(--jx-accent);
+}
+.jx-actions .is-primary {
+  background: var(--jx-ink);
+  color: var(--card-solid);
+}
+.jx-grid.tree {
+  column-gap: 0;
+  grid-template-columns:
+    minmax(0, var(--jx-source)) 7px minmax(0, var(--jx-tree))
+    7px minmax(0, var(--jx-details));
+}
+.jx-grid.tree.folded {
+  grid-template-columns: minmax(0, var(--jx-source)) 7px minmax(
+      0,
+      var(--jx-tree)
+    );
+}
+.jx-splitter {
+  display: grid;
+  place-items: center;
+  cursor: col-resize;
+  touch-action: none;
+}
+.jx-splitter::after {
+  content: "";
+  width: 3px;
+  height: 28px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+.jx-splitter:hover::after,
+.jx-splitter:focus-visible::after,
+.jx-splitter:active::after {
+  background: var(--jx-accent);
+}
+.jx-panel {
+  border-color: var(--jx-border);
+  background: var(--card-solid);
+}
+.jx-panel header {
+  height: 35px;
+  background: color-mix(in srgb, var(--jx-wash) 40%, var(--card-solid));
+  color: var(--jx-ink);
+  letter-spacing: 0.025em;
+}
+.jx-panel header svg {
+  color: var(--jx-accent);
+}
+.jx-panel header small {
+  font: 11px var(--font-mono);
+  letter-spacing: 0;
+}
+.jx-panel header small + button,
+.jx-panel header button + button {
+  margin-left: 0;
+}
+.jx-row {
+  border-bottom: 1px solid var(--line);
+  min-height: 29px;
+}
+.jx-row.current {
+  background: var(--jx-wash);
+  box-shadow: inset 2px 0 var(--jx-accent);
+}
+.jx-key {
+  color: var(--jx-key) !important;
+}
+.jx-row em {
+  margin-left: auto;
+  padding-right: 6px;
+  font-size: 11px;
+}
+.jx-path {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 9px;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--line);
+}
+.jx-path code {
+  font: 11px var(--font-mono);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.jx-path button,
+.jx-detail td button,
+.jx-searchbox button {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+}
+.jx-detail {
+  padding: 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.jx-detail table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  font: 12px/1.55 var(--font-mono);
+}
+.jx-detail th,
+.jx-detail td {
+  vertical-align: top;
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.jx-detail thead th {
+  position: sticky;
+  top: 0;
+  background: var(--card-solid);
+  font: 600 11px var(--font-ui);
+  color: var(--text-2);
+}
+.jx-detail th:first-child {
+  width: 34%;
+  border-right: 1px solid var(--line);
+}
+.jx-detail tbody th {
+  font-weight: 500;
+  color: var(--jx-key);
+}
+.jx-detail tr:nth-child(even) {
+  background: color-mix(in srgb, var(--jx-wash) 17%, transparent);
+}
+.jx-detail td button {
+  padding: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.jx-token-key {
+  color: var(--jx-key);
+  font-weight: 550;
+}
+.jx-token-string,
+.jx-v-string {
+  color: var(--jx-string);
+}
+.jx-token-number,
+.jx-v-number {
+  color: var(--jx-number);
+}
+.jx-token-literal,
+.jx-v-boolean,
+.jx-v-null {
+  color: var(--jx-literal);
+}
+.jx-token-punctuation {
+  color: var(--text-2);
+}
+.jx-result {
+  padding: 0;
+  white-space: normal;
+}
+.jx-result,
+.jx-result .cm-content,
+.jx-result .cm-content * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+.jx-result .cm-line,
+.jx-editor .cm-line {
+  padding-inline: 8px;
+}
+.jx-result .cm-scroller {
+  line-height: 1.65;
+}
+.jx-searchbox {
+  position: fixed;
+  width: min(420px, 90vw);
+  max-height: 85vh;
+  padding: 16px;
+  color: var(--text);
+  background: var(--card-solid);
+  border: 1px solid var(--jx-border);
+  border-radius: 15px;
+  box-shadow: var(--float-shadow);
+}
+.jx-searchbox::backdrop {
+  background: #1a2b384f;
+  backdrop-filter: blur(3px);
+}
+.jx-searchbox header,
+.jx-searchmodes,
+.jx-hits button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.jx-searchbox header {
+  color: var(--jx-ink);
+  margin-bottom: 12px;
+  font-size: 16px;
+}
+.jx-searchbox header button {
+  margin-left: auto;
+}
+.jx-searchmodes {
+  gap: 3px;
+  margin-bottom: 10px;
+}
+.jx-searchmodes button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+.jx-searchmodes button[aria-pressed="true"] {
+  background: var(--jx-wash);
+  color: var(--jx-accent);
+}
+.jx-searchmodes button:disabled {
+  opacity: 0.4;
+}
+.jx-searchinput {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--jx-accent);
+  background: var(--well);
+  outline: 0;
+}
+.jx-searchbox small {
+  display: block;
+  color: var(--text-2);
+  margin: 8px 0;
+}
+.jx-hits {
+  max-height: 32vh;
+  overflow: auto;
+}
+.jx-hits button {
+  width: 100%;
+  justify-content: space-between;
+  padding: 7px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font-family: var(--font-mono);
+}
+.jx-hits b,
+.jx-hits span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jx-hits span {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.jx-hits button:hover {
+  background: var(--jx-wash);
+}
+@media (max-width: 400px) {
+  .jx-grid.tree:not(.folded) {
+    grid-template-columns: minmax(0, var(--jx-tree)) 7px minmax(
+        0,
+        var(--jx-details)
+      );
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .jx-grid.tree:not(.folded) > :first-child {
+    grid-column: 1/-1;
+  }
+  .jx-grid.tree:not(.folded) > .jx-splitter:nth-child(2) {
+    display: none;
+  }
+}
+@media (max-width: 580px) {
+  .jx-tools {
+    padding: 4px;
+  }
+  .jx-modes button {
+    padding: 4px 6px;
+  }
+}

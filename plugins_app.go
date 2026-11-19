@@ -2,13 +2,16 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
 	"path"
@@ -126,6 +129,12 @@ func (h *pluginHost) call(ctx context.Context, id, tool, method string, raw []an
 		mygo.Clipboard.WriteText(args.str(0))
 	case "readClipboard":
 		return mygo.Clipboard.ReadText(), nil
+	case "readClipboardImage":
+		data := mygo.Clipboard.ReadImage()
+		if len(data) == 0 {
+			return "", nil
+		}
+		return base64.StdEncoding.EncodeToString(data), nil
 	case "pasteText":
 		mygo.Clipboard.WriteText(args.str(0))
 		a.hidePanel()
@@ -302,6 +311,33 @@ func (h *pluginHost) fs(ctx context.Context, m providers.Manifest, id, name stri
 	case "createFile":
 		p, err := s.CreateFile(args.str(1), args.str(2), args.str(3))
 		return p, changed("create", p, "", err)
+	case "writeBinary":
+		name := strings.TrimSpace(args.str(2))
+		if !slices.Contains(imageExts, strings.ToLower(filepath.Ext(name))) {
+			return nil, errors.New("只支持写入图片文件")
+		}
+		rawB64 := strings.TrimSpace(args.str(3))
+		if i := strings.Index(rawB64, ","); i >= 0 && strings.HasPrefix(strings.ToLower(rawB64[:i]), "data:") {
+			rawB64 = rawB64[i+1:]
+		}
+		data, err := base64.StdEncoding.DecodeString(rawB64)
+		if err != nil {
+			return nil, fmt.Errorf("图片数据解码失败：%w", err)
+		}
+		return s.CreateBinary(args.str(1), name, data)
+	case "assetUrl":
+		rel := strings.TrimSpace(args.str(1))
+		if rel == "" {
+			return "", errors.New("缺少文件路径")
+		}
+		if !slices.Contains(imageExts, strings.ToLower(filepath.Ext(rel))) {
+			return "", errors.New("只支持访问图片资源")
+		}
+		abs, err := s.Abs(rel)
+		if err != nil {
+			return "", err
+		}
+		return iconURL("image", abs), nil
 	case "createFolder":
 		p, err := s.CreateFolder(args.str(1), args.str(2))
 		return p, changed("create", p, "", err)
@@ -370,16 +406,83 @@ func (h *pluginHost) fetch(ctx context.Context, m providers.Manifest, target str
 	if method == "" {
 		method = http.MethodGet
 	}
-	body, _ := opts["body"].(string)
+	var reqBody io.Reader
+	var autoContentType string
+	if mp, ok := opts["multipart"].(map[string]any); ok && mp != nil {
+		field, _ := mp["field"].(string)
+		if strings.TrimSpace(field) == "" {
+			field = "file"
+		}
+		filename, _ := mp["filename"].(string)
+		if strings.TrimSpace(filename) == "" {
+			filename = "image.png"
+		}
+		mimeType, _ := mp["mime"].(string)
+		if strings.TrimSpace(mimeType) == "" {
+			mimeType = "application/octet-stream"
+		}
+		rawB64, _ := mp["base64"].(string)
+		if i := strings.Index(rawB64, ","); i >= 0 && strings.HasPrefix(strings.ToLower(rawB64[:i]), "data:") {
+			rawB64 = rawB64[i+1:]
+		}
+		fileBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(rawB64))
+		if err != nil {
+			return nil, fmt.Errorf("上传文件解码失败：%w", err)
+		}
+		if len(fileBytes) > 16<<20 {
+			return nil, errors.New("上传文件超过 16 MB 上限")
+		}
+		var buf bytes.Buffer
+		w := multipart.NewWriter(&buf)
+		if extra, ok := mp["fields"].(map[string]any); ok {
+			for k, v := range extra {
+				if s, ok := v.(string); ok {
+					_ = w.WriteField(k, s)
+				}
+			}
+		}
+		h := make(textproto.MIMEHeader)
+		safeField := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(field)
+		safeFile := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(filename)
+		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, safeField, safeFile))
+		h.Set("Content-Type", mimeType)
+		part, err := w.CreatePart(h)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := part.Write(fileBytes); err != nil {
+			return nil, err
+		}
+		if err := w.Close(); err != nil {
+			return nil, err
+		}
+		reqBody = &buf
+		autoContentType = w.FormDataContentType()
+	} else if b64, ok := opts["bodyBase64"].(string); ok && b64 != "" {
+		raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+		if err != nil {
+			return nil, fmt.Errorf("请求体解码失败：%w", err)
+		}
+		reqBody = bytes.NewReader(raw)
+	} else {
+		body, _ := opts["body"].(string)
+		reqBody = strings.NewReader(body)
+	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, strings.ToUpper(method), target, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, strings.ToUpper(method), target, reqBody)
 	if err != nil {
 		return nil, err
+	}
+	if autoContentType != "" {
+		req.Header.Set("Content-Type", autoContentType)
 	}
 	if hs, ok := opts["headers"].(map[string]any); ok {
 		for k, v := range hs {
 			if s, ok := v.(string); ok {
+				if autoContentType != "" && strings.EqualFold(k, "content-type") {
+					continue
+				}
 				req.Header.Set(k, s)
 			}
 		}

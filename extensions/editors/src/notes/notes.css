@@ -6,6 +6,7 @@
   gap: 2px;
 }
 .fx-notes-body {
+  position: relative;
   flex: 1;
   min-height: 0;
   /* 弹出的小面板（选中文字的工具栏、链接提示、菜单）用的底色：必须不透明，否则会和后面的文字叠在一起。 */
@@ -99,13 +100,15 @@
   --crepe-font-title: var(--font-ui);
   --crepe-font-default: var(--font-ui);
   --crepe-font-code: var(--font-mono);
-  --crepe-base-font-size: calc(14px * var(--zoom-rich, 1));
+  --crepe-base-font-size: calc(var(--note-editor-fs, 16px) * var(--zoom-rich, 1));
   --crepe-shadow-1: 0 6px 22px rgba(0, 0, 0, 0.16), 0 0 0 0.5px var(--note-float-line);
   --crepe-shadow-2: 0 10px 30px rgba(0, 0, 0, 0.2), 0 0 0 0.5px var(--note-float-line);
   min-height: 100%;
   background: transparent;
 }
 .fx-notes-rich .milkdown .ProseMirror {
+  max-width: var(--note-editor-max-w, 820px);
+  margin: 0 auto;
   padding: 14px 26px 60px 64px;
   outline: none;
   cursor: text;
@@ -216,11 +219,20 @@
 .fx-notes-rich .milkdown .ProseMirror sub {
   vertical-align: sub;
 }
-.fx-notes-rich .milkdown .ProseMirror mark {
-  padding: 0 2px;
+.fx-notes-rich .milkdown .ProseMirror mark,
+.md-mark {
+  padding: 0 3px;
   border-radius: 3px;
-  background: rgba(255, 213, 0, 0.42);
+  background: linear-gradient(
+    180deg,
+    transparent 34%,
+    var(--note-mark-hi, rgba(253, 224, 71, 0.62)) 34%,
+    var(--note-mark-hi, rgba(253, 224, 71, 0.62)) 92%,
+    transparent 92%
+  );
   color: inherit;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 .fx-notes-rich .milkdown .ProseMirror kbd {
   display: inline-block;
@@ -333,7 +345,25 @@
   color: var(--accent);
 }
 
-/* 列表的圆点和序号对齐到行高 */
+/* 列表的圆点和序号对齐到行高；区分紧凑列表(data-spread="false")与宽松列表(data-spread="true")，并给相邻独立列表留出块间距 */
+.fx-notes-rich .milkdown .ProseMirror :is(ul, ol) {
+  margin: 4px 0;
+}
+.fx-notes-rich .milkdown .ProseMirror :is(ul, ol) + :is(ul, ol) {
+  margin-top: 14px;
+}
+.fx-notes-rich .milkdown .ProseMirror :is(ul, ol)[data-spread="true"] > .milkdown-list-item-block + .milkdown-list-item-block,
+.fx-notes-rich .milkdown .ProseMirror :is(ul, ol)[data-spread="true"] > li + li {
+  margin-top: 9px;
+}
+.fx-notes-rich .milkdown .ProseMirror :is(ul, ol)[data-spread="true"] .milkdown-list-item-block > li > .children > p + p,
+.fx-notes-rich .milkdown .ProseMirror li[data-spread="true"] > p + p {
+  margin-top: 6px;
+}
+.fx-notes-rich .milkdown .ProseMirror :is(ul, ol)[data-spread="false"] > .milkdown-list-item-block + .milkdown-list-item-block,
+.fx-notes-rich .milkdown .ProseMirror :is(ul, ol)[data-spread="false"] > li + li {
+  margin-top: 0;
+}
 .fx-notes-rich .milkdown .milkdown-list-item-block li .label-wrapper {
   height: calc(1.7em + 6px);
 }
@@ -502,17 +532,45 @@
 .fx-notes-rich .milkdown .milkdown-code-block.pocket-code-active > .milkdown-code-block {
   margin: 8px 0;
 }
-.fx-notes-rich .milkdown .milkdown-code-block.pocket-code-idle .pocket-code-pre {
-  margin: 0;
+.fx-notes-rich .milkdown .milkdown-code-block.pocket-code-idle .pocket-code-idle-grid {
+  display: flex;
+  align-items: flex-start;
+  overflow-x: auto;
+}
+.fx-notes-rich .milkdown .milkdown-code-block.pocket-code-idle .pocket-code-gutter {
+  flex: none;
   padding: 2px 0 4px;
+  font-family: var(--font-mono);
+  font-size: calc(12.5px * var(--zoom-rich, 1));
+  line-height: 1.65;
+  color: var(--code-dim, var(--text-3));
+  user-select: none;
+  -webkit-user-select: none;
+}
+.fx-notes-rich .milkdown .milkdown-code-block.pocket-code-idle .pocket-code-lno {
+  padding: 0 10px 0 2px;
+  min-width: 24px;
+  text-align: right;
+  box-sizing: border-box;
+}
+.fx-notes-rich .milkdown .milkdown-code-block.pocket-code-idle .pocket-code-pre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 2px 4px 6px;
   background: transparent;
   font-family: var(--font-mono);
   font-size: calc(12.5px * var(--zoom-rich, 1));
   line-height: 1.65;
   color: var(--code-text, var(--text));
   white-space: pre;
-  overflow-x: auto;
+  overflow: visible;
   cursor: text;
+}
+.fx-notes-rich.is-readonly .milkdown .milkdown-code-block.pocket-code-idle .pocket-code-pre {
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
 }
 .fx-notes-rich .milkdown .milkdown-code-block.pocket-code-idle .pocket-code-pre code {
   font: inherit;
@@ -604,7 +662,7 @@
   text-align: left;
   cursor: pointer;
 }
-.fx-menu-item > span:not(.fx-code-swatch) {
+.fx-menu-item > span:not(.fx-code-swatch):not(.pocket-slash-icon):not(.fx-width-menu-val) {
   flex: 1;
   min-width: 0;
   white-space: nowrap;
@@ -1267,19 +1325,92 @@
   font-weight: 600;
   line-height: 1.5;
 }
-.pocket-html-preview { border: 0; width: 100%; height: 100%; flex: 1; background: var(--card); }
-.fx-notes-head { flex-wrap: wrap; }
+.pocket-html-preview-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+.pocket-html-preview-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--well);
+  color: var(--text-2);
+  font-size: 12px;
+}
+.pocket-html-preview { border: 0; width: 100%; flex: 1; min-height: 0; background: var(--card); }
+.fx-notes-head {
+  flex-wrap: wrap;
+  row-gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  container-type: inline-size;
+}
 .fx-notes-head-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 6px;
+  margin-left: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+.fx-notes-tool-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.fx-notes-mode-group {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: auto;
+  flex: none;
+  max-width: 100%;
 }
-.fx-notes-title { min-width: 100px; }
+.fx-notes-mode-group .ui-seg {
+  max-width: 100%;
+}
+.fx-notes-title {
+  flex: 1 1 140px;
+  min-width: 72px;
+  max-width: min(260px, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@container (max-width: 440px) {
+  .fx-notes-head .fx-notes-title {
+    flex-basis: 110px;
+    max-width: 100%;
+  }
+  .fx-notes-head .ui-seg button {
+    padding: 2px 7px;
+    font-size: 11.5px;
+  }
+}
 
-/* 文件栏右键菜单 */
-.fx-side-menu {
+/* 文件栏非 Markdown 文件（图片/附件等）次要视觉区分 */
+.fx-side-item.is-non-md {
+  color: var(--text-2);
+}
+.fx-side-item.is-non-md > svg {
+  opacity: 0.78;
+}
+
+/* 文件栏与大纲右键菜单 */
+.fx-side-menu,
+.fx-outline-menu {
   position: fixed;
+  min-width: 172px;
+}
+.fx-side-menu {
   min-width: 196px;
 }
 .fx-menu-kbd {
@@ -1359,4 +1490,1364 @@
 .fx-confirm-actions .ui-btn.is-primary.is-danger:hover:not(:disabled) {
   background: var(--danger);
   filter: brightness(1.08);
+}
+
+/* 右键时抑制 Milkdown 选区浮动 Toolbar，避免与自定义右键菜单重叠。 */
+.fx-notes-rich.pocket-hide-toolbar .milkdown-toolbar {
+  display: none !important;
+}
+
+/* 纯阅读态：隐藏块拖拽手柄并展示浏览光标。 */
+.fx-notes-rich.is-readonly .milkdown-block-handle {
+  display: none !important;
+}
+.fx-notes-rich.is-readonly .ProseMirror {
+  cursor: default;
+}
+.fx-notes-rich.is-readonly .ProseMirror a[href] {
+  cursor: pointer;
+}
+
+/* 实时渲染态 Markdown 语法前缀/标记悬停可编辑提示。 */
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap.is-passive:hover {
+  background: rgba(var(--accent-rgb), 0.19);
+  box-shadow: inset 0 -1px 0 rgba(var(--accent-rgb), 0.45);
+}
+.fx-notes-rich .milkdown .ProseMirror .milkdown-list-item-block.pocket-active-prefix-li > .list-item > .label-wrapper:hover:not(.is-editing)::after {
+  background: rgba(var(--accent-rgb), 0.22);
+}
+
+/* 类 Typora 自定义编辑器右键菜单与级联子菜单。 */
+.fx-editor-menu {
+  position: fixed;
+  z-index: 90;
+  min-width: 204px;
+  overflow: visible;
+}
+.fx-menu-sub-wrap {
+  position: relative;
+}
+.fx-menu-sub-trigger.is-active {
+  background: var(--hover);
+}
+.fx-menu-arrow {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+}
+.fx-submenu {
+  position: fixed;
+  z-index: 95;
+  min-width: 186px;
+  max-height: min(360px, calc(100vh - 16px));
+  overflow-y: auto;
+}
+
+/* 整块源码模式 `/` 斜线命令菜单。 */
+.pocket-block-slash {
+  position: fixed;
+  z-index: 88;
+  min-width: 210px;
+  max-height: min(300px, calc(100vh - 16px));
+  overflow-y: auto;
+}
+.pocket-block-slash .fx-menu-item.is-active {
+  background: var(--hover);
+  color: var(--accent);
+}
+
+/* 时间格式设置面板。 */
+.pocket-note-shortcuts.pocket-time-format {
+  align-items: center;
+}
+.pocket-time-preview {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-2);
+}
+.pocket-time-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  flex-basis: 100%;
+}
+
+/* 荧光笔高亮颜色动态变量：支持预设与任意自定义 Hex 颜色，深浅色分别自动适配。 */
+.fx-notes,
+.fx-settings-dialog {
+  --note-mark-hi: var(--note-mark-hi-light, rgba(253, 224, 71, 0.62));
+}
+:root[data-theme="dark"] .fx-notes,
+:root[data-theme="dark"] .fx-settings-dialog {
+  --note-mark-hi: var(--note-mark-hi-dark, rgba(250, 204, 21, 0.34));
+}
+
+/* 三处独立字号变量（文件栏、编辑区、大纲），不设上下限，默认 14 / 16 / 14。 */
+.fx-notes .fx-side .fx-side-item,
+.fx-notes .fx-side .fx-side-rename {
+  font-size: var(--note-side-fs, 14px);
+}
+.fx-notes .pocket-note-outline .pocket-outline-label {
+  font-size: var(--note-outline-fs, 14px);
+}
+
+/* 屏蔽 Crepe 原生斜线弹窗，由统一 SlashPopupController 接管实时与整块模式。 */
+.fx-notes-rich .milkdown .milkdown-slash-menu {
+  display: none !important;
+}
+.pocket-slash-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+}
+.pocket-block-slash .fx-menu-item {
+  justify-content: flex-start;
+  text-align: left;
+}
+.pocket-block-slash .fx-menu-item > span:not(.pocket-slash-icon) {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pocket-block-slash .fx-menu-item.is-active .pocket-slash-icon {
+  color: var(--accent);
+}
+
+/* 方案 5A：实时渲染行内原生文本展开态（左右键 / Shift+左右键自然编辑）。 */
+.fx-notes-rich .milkdown .ProseMirror .pocket-raw-inline {
+  border-radius: 3px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-raw-inline.is-strong {
+  font-weight: 700;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-raw-inline.is-emphasis {
+  font-style: italic;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-raw-inline.is-strike_through {
+  text-decoration: line-through;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-raw-inline.is-inlineCode {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--well);
+  color: var(--cm-tag, #c23b3b);
+  padding: 0 2px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-raw-inline.is-pocket_mark {
+  background: linear-gradient(
+    180deg,
+    transparent 34%,
+    var(--note-mark-hi, rgba(253, 224, 71, 0.62)) 34%,
+    var(--note-mark-hi, rgba(253, 224, 71, 0.62)) 92%,
+    transparent 92%
+  );
+  padding: 0 2px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-raw-inline.is-pocket_u {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-raw-inline.is-link {
+  color: var(--accent);
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-raw-delim {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  font-style: normal;
+  text-decoration: none;
+  color: var(--accent);
+  opacity: 0.8;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-raw-url {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+/* 右键菜单一级 2×4 快捷格式图标网格（类 Typora）。 */
+.fx-menu-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 3px 4px 5px;
+}
+.fx-menu-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  border: 0.5px solid var(--line-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
+}
+.fx-menu-icon-btn:hover {
+  background: var(--hover);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+}
+
+/* 笔记设置 Modal（固定尺寸，左侧导航 + 底部恢复默认 + 右侧独立滚动，切换 Tab 不跳动）。 */
+.fx-settings-dialog {
+  width: min(740px, 92vw);
+  height: min(560px, 84vh);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.fx-settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 12px 18px;
+  border-bottom: 0.5px solid var(--line);
+  flex: none;
+}
+.fx-settings-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.fx-settings-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.fx-settings-sidebar {
+  width: 152px;
+  flex: none;
+  border-right: 0.5px solid var(--line);
+  background: color-mix(in srgb, var(--well) 55%, transparent);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.fx-settings-nav {
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.fx-settings-nav-foot {
+  padding: 8px;
+  border-top: 0.5px solid var(--line);
+}
+.fx-settings-reset-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.fx-settings-reset-all:hover {
+  background: var(--hover);
+  color: var(--danger);
+}
+.fx-settings-reset-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.fx-settings-reset-btns {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.fx-settings-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+}
+.fx-settings-tab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.fx-settings-tab.is-active {
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--accent);
+  font-weight: 500;
+}
+.fx-settings-panel {
+  flex: 1;
+  min-width: 0;
+  padding: 16px 20px;
+  overflow-y: auto;
+}
+.fx-settings-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.fx-settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fx-settings-sec-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.fx-settings-sec-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.fx-settings-sec-desc {
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.fx-settings-sec-desc code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--well);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+/* 荧光笔纯色点 + 历史色点 + 色盘/十六进制输入 */
+.fx-mark-dots-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.fx-mark-dots-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.fx-mark-dots-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--line-strong);
+}
+.fx-color-dot {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid rgba(0, 0, 0, 0.14);
+  background: var(--dot-color, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #1c1f26;
+  cursor: pointer;
+  transition: transform 110ms ease, box-shadow 110ms ease;
+}
+:root[data-theme="dark"] .fx-color-dot {
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.fx-color-dot:hover:not(.is-slot) {
+  transform: scale(1.1);
+}
+.fx-color-dot.is-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.35);
+}
+.fx-color-dot.is-slot {
+  border: 1px dashed var(--line-strong);
+  background: transparent;
+  cursor: default;
+  opacity: 0.55;
+}
+.fx-mark-custom-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.fx-color-picker-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 0.5px solid var(--line-strong);
+  background: var(--well);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+}
+.fx-color-picker-btn:hover {
+  border-color: var(--accent);
+}
+.fx-color-picker-btn input[type="color"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.fx-hex-input {
+  width: 92px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 0.5px solid var(--line-strong);
+  background: var(--well);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+}
+.fx-hex-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.18);
+}
+.fx-mark-preview {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--well);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+}
+.fx-mark-preview.is-inline {
+  padding: 4px 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  flex: 1;
+  min-width: 150px;
+}
+
+/* 字号/栏宽/正文宽/图片/快捷键表单布局 */
+.fx-num-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.fx-num-grid-3 .fx-settings-field {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+}
+.fx-num-grid-3 .fx-settings-field input {
+  width: 100%;
+}
+.fx-width-control-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.fx-width-control-row input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.fx-width-num-input {
+  width: 76px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  border: 0.5px solid var(--line-strong);
+  background: var(--well);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  outline: none;
+}
+.fx-unit-label {
+  font-size: 12px;
+  color: var(--text-3);
+  min-width: 28px;
+}
+.fx-radio-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.fx-radio-row .fx-theme-card > span:first-child {
+  flex: 1;
+  text-align: left;
+}
+.fx-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--well) 70%, transparent);
+  cursor: pointer;
+}
+.fx-check-row input[type="checkbox"] {
+  margin-top: 3px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.fx-check-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+}
+.fx-upload-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.fx-upload-grid .fx-settings-field {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.fx-upload-grid .fx-settings-field input,
+.fx-upload-grid .fx-settings-field select {
+  width: 100%;
+}
+.fx-span-2 {
+  grid-column: span 2;
+}
+.fx-settings-inline-row {
+  display: flex;
+  gap: 10px;
+}
+.fx-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+.fx-theme-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0.5px solid var(--line-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.fx-theme-card:hover {
+  background: var(--hover);
+}
+.fx-theme-card.is-active {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.08);
+}
+.fx-theme-card > span:nth-child(2) {
+  flex: 1;
+  text-align: left;
+}
+.fx-time-live-box {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--well);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+}
+.fx-settings-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.fx-settings-field input,
+.fx-settings-field select {
+  width: 220px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  border: 0.5px solid var(--line-strong);
+  background: var(--well);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  outline: none;
+}
+.fx-settings-field select {
+  font-family: var(--font-ui);
+}
+.fx-settings-field input:focus,
+.fx-settings-field select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.18);
+}
+.fx-shortcut-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fx-shortcut-group-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-3);
+  padding-top: 2px;
+}
+.fx-shortcut-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fx-shortcut-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+}
+.fx-shortcut-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.fx-shortcut-conflict {
+  font-style: normal;
+  font-size: 10.5px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.16);
+  color: var(--danger);
+}
+.fx-shortcut-input-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.fx-shortcut-input {
+  width: 170px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  border: 0.5px solid var(--line-strong);
+  background: var(--well);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: center;
+  outline: none;
+  cursor: pointer;
+}
+.fx-shortcut-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.18);
+}
+.fx-shortcut-input.is-conflict {
+  border-color: var(--danger);
+}
+
+/* 编辑区查找与替换浮动条（3 列严格对齐网格） */
+.fx-find-bar {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  z-index: 42;
+  display: grid;
+  grid-template-columns: 236px 152px;
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 6px;
+  padding: 7px 8px;
+  border-radius: 10px;
+  border: 0.5px solid var(--note-float-line, var(--line-strong));
+  background: var(--note-float, var(--card-solid));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  max-width: calc(100% - 24px);
+}
+.fx-find-bar.can-replace {
+  grid-template-columns: 24px 236px 152px;
+}
+.fx-find-bar.is-error .fx-find-input-wrap {
+  border-color: var(--danger);
+}
+.fx-find-expand {
+  width: 24px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.fx-find-expand:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.fx-find-spacer {
+  display: block;
+  width: 24px;
+  height: 28px;
+}
+.fx-find-input-wrap {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 4px 0 9px;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  background: var(--well);
+  box-sizing: border-box;
+  gap: 4px;
+}
+.fx-find-input-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1.5px rgba(var(--accent-rgb), 0.18);
+}
+.fx-find-input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1;
+  outline: none;
+}
+.fx-find-flags {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.fx-find-flag {
+  min-width: 22px;
+  height: 21px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.fx-find-flag.is-word > span {
+  display: inline-block;
+  padding: 0 1px 1px;
+  border-bottom: 1.5px solid currentColor;
+  line-height: 1;
+}
+.fx-find-flag:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.fx-find-flag.is-on {
+  background: var(--sel, rgba(var(--accent-rgb), 0.16));
+  border-color: var(--sel-rim, rgba(var(--accent-rgb), 0.36));
+  color: var(--accent);
+}
+.fx-find-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  width: 100%;
+  height: 28px;
+}
+.fx-find-count {
+  flex: 1;
+  min-width: 52px;
+  padding-right: 4px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  text-align: right;
+  white-space: nowrap;
+}
+.fx-find-count.is-idle {
+  color: var(--text-3);
+}
+.fx-find-count.is-empty {
+  color: var(--danger);
+}
+.fx-find-icon-btn {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.fx-find-icon-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.fx-find-icon-btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.fx-replace-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  width: 100%;
+  height: 28px;
+}
+.fx-find-text-btn {
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  background: var(--well);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.fx-find-text-btn:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.fx-find-text-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-find-match {
+  background: rgba(250, 204, 21, 0.36);
+  border-radius: 2px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-find-match.is-current {
+  background: rgba(249, 115, 22, 0.58);
+  box-shadow: 0 0 0 1px rgba(249, 115, 22, 0.75);
+}
+
+/* 大纲命中高亮与选中行样式（搜索框直接沿用 .fx-side-search-row 对称上下留白） */
+.pocket-outline-label.is-hit {
+  color: var(--accent);
+  font-weight: 600;
+}
+.pocket-outline-row.is-selected {
+  background: var(--sel, rgba(var(--accent-rgb), 0.14));
+  border-radius: 6px;
+}
+.pocket-outline-label.is-selected {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* 精致纤细滑块（供底部宽度滑块与设置页透明度滑块共用） */
+.fx-thin-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  margin: 0;
+}
+.fx-thin-range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+.fx-thin-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  margin-top: -3.5px;
+  border-radius: 999px;
+  background: var(--accent);
+  border: 1.5px solid var(--card-solid, #fff);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.24);
+  transition: transform 0.12s ease;
+}
+.fx-thin-range:hover::-webkit-slider-thumb,
+.fx-thin-range:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.18);
+}
+.fx-thin-range:focus-visible {
+  outline: none;
+}
+
+/* 荧光笔透明度调节行 */
+.fx-opacity-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+.fx-opacity-label {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.fx-opacity-row .fx-thin-range {
+  flex: 1;
+  max-width: 240px;
+  height: 16px;
+}
+.fx-opacity-val {
+  min-width: 38px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  text-align: right;
+}
+
+/* 编辑区脚标：窄窗防裁切 + 纤细带刻度宽度滑块 + 向上预设弹出菜单 */
+.fx-notes-status {
+  align-items: center;
+  overflow: visible;
+  gap: 8px;
+  min-width: 0;
+  container-type: inline-size;
+}
+.fx-notes-stat-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fx-notes-saved {
+  flex: none;
+}
+.fx-status-width {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 4px;
+}
+.fx-width-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.fx-status-width-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 0;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.fx-status-width-btn:hover,
+.fx-status-width-btn.is-open {
+  background: var(--hover);
+  color: var(--text);
+}
+.fx-width-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 46;
+  min-width: 186px;
+}
+.fx-width-menu .fx-menu-item {
+  gap: 10px;
+}
+.fx-width-menu-val {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.fx-status-slider-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 96px;
+  height: 18px;
+}
+.fx-status-slider-wrap .fx-thin-range {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 14px;
+}
+.fx-slider-ticks {
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 0;
+  height: 4px;
+  pointer-events: none;
+}
+.fx-slider-tick {
+  position: absolute;
+  bottom: 0;
+  width: 1.5px;
+  height: 4px;
+  border-radius: 1px;
+  background: var(--text-3);
+  opacity: 0.65;
+  transform: translateX(-50%);
+}
+.fx-slider-tick.is-active {
+  background: var(--accent);
+  opacity: 0.95;
+  height: 5px;
+}
+@container (max-width: 420px) {
+  .fx-status-slider-wrap {
+    display: none;
+  }
+}
+
+/* 图片 NodeView：单击选中框、拖拽边缘调大小手柄、实时像素标牌、1:1 重置按钮 */
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+  border-radius: 6px;
+  vertical-align: middle;
+  user-select: none;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap > img.pocket-img-el {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 5px;
+  cursor: zoom-in;
+  transition: box-shadow 0.12s ease;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap.is-selected > img.pocket-img-el,
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap.is-resizing > img.pocket-img-el {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-handle {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, background-color 0.12s ease;
+  z-index: 4;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap.is-selected:not(.is-readonly) .pocket-img-handle,
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap.is-resizing:not(.is-readonly) .pocket-img-handle,
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap:not(.is-readonly):hover .pocket-img-handle {
+  opacity: 1;
+  pointer-events: auto;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-handle.is-left,
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-handle.is-right {
+  top: 50%;
+  width: 6px;
+  height: 32px;
+  max-height: 55%;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.85);
+  border: 1.5px solid var(--card-solid, #fff);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+  cursor: ew-resize;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-handle.is-left {
+  left: -3px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-handle.is-right {
+  right: -3px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-handle.is-corner {
+  right: -4px;
+  bottom: -4px;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: var(--accent);
+  border: 1.5px solid var(--card-solid, #fff);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  cursor: nwse-resize;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(15, 18, 24, 0.78);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.3;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap.is-resizing .pocket-img-badge,
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap.is-selected.has-width .pocket-img-badge {
+  opacity: 1;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-reset {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 0;
+  background: rgba(15, 18, 24, 0.76);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.3;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, background-color 0.12s ease;
+  z-index: 5;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap.is-selected.has-width:not(.is-readonly) .pocket-img-reset {
+  opacity: 1;
+  pointer-events: auto;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-reset:hover {
+  background: var(--accent);
+}
+
+/* 双击图片全屏放大预览 Lightbox */
+.fx-lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: rgba(10, 12, 16, 0.84);
+  backdrop-filter: blur(4px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+.fx-lightbox-stage {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 24px 24px 72px;
+  box-sizing: border-box;
+}
+.fx-lightbox-img {
+  border-radius: 6px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  cursor: grab;
+  transition: transform 0.08s ease-out;
+  transform-origin: center center;
+}
+.fx-lightbox-img.is-fit {
+  max-width: 90vw;
+  max-height: calc(100vh - 110px);
+  object-fit: contain;
+}
+.fx-lightbox-img.is-dragging {
+  cursor: grabbing;
+  transition: none;
+}
+.fx-lightbox-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(24, 27, 34, 0.9);
+  border: 0.5px solid rgba(255, 255, 255, 0.16);
+  color: #f3f5f8;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  max-width: 92vw;
+}
+.fx-lightbox-caption {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgba(243, 245, 248, 0.82);
+  padding: 0 4px;
+}
+.fx-lightbox-sep {
+  width: 1px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.16);
+  margin: 0 4px;
+}
+.fx-lightbox-pct {
+  min-width: 42px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #f3f5f8;
+}
+.fx-lightbox-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #f3f5f8;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.fx-lightbox-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.fx-lightbox-btn.is-active {
+  background: rgba(var(--accent-rgb), 0.34);
+  color: #fff;
+}
+
+/* 插入图片手动重命名确认弹窗 */
+.fx-img-rename-dialog {
+  width: min(440px, 92vw);
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.fx-img-rename-body {
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.fx-img-rename-body .fx-settings-field {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+}
+.fx-img-rename-body .fx-settings-field input {
+  width: 100%;
+}
+.fx-img-rename-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-height: 180px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--well);
+  overflow: hidden;
+}
+.fx-img-rename-preview img {
+  max-width: 100%;
+  max-height: 160px;
+  object-fit: contain;
+  border-radius: 4px;
+}
+.fx-img-rename-dialog .fx-confirm-actions {
+  padding: 10px 18px 14px;
+  border-top: 0.5px solid var(--line);
+}
+
+/* 方案 7A：大纲与 [TOC] 克制行内样式渲染。 */
+.pocket-outline-label strong,
+.md-toc-item strong {
+  font-weight: 650;
+}
+.pocket-outline-label em,
+.md-toc-item em {
+  font-style: italic;
+}
+.pocket-outline-label del,
+.md-toc-item del {
+  text-decoration: line-through;
+  opacity: 0.65;
+}
+.pocket-outline-label code,
+.md-toc-item code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--well);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--cm-tag, #c23b3b);
+}
+.pocket-outline-label u,
+.md-toc-item u {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.pocket-outline-label :is(sup, sub),
+.md-toc-item :is(sup, sub) {
+  font-size: 0.78em;
+  line-height: 0;
+}
+.pocket-outline-label sup,
+.md-toc-item sup {
+  vertical-align: super;
+}
+.pocket-outline-label sub,
+.md-toc-item sub {
+  vertical-align: sub;
 }

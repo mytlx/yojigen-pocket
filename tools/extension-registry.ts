@@ -5,10 +5,12 @@
 //   bun tools/extension-registry.ts check [--id <id|all>] [--tag <ext-id-vX.Y.Z>]
 //   bun tools/extension-registry.ts changelog --id <id> [--tag <tag>] [--manual <text>] [--out <file>] [--release-notes]
 //   bun tools/extension-registry.ts update --registry <extensions.json> --id <id> --zip <file.zip> --tag <tag> --repo <owner/repo> [--changelog-file <file>] [--changelog-explicit] [--force]
+//   bun tools/extension-registry.ts notes --registry <extensions.json> [--repo <owner/repo>] [--out <file>]
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { formatLocalTime } from "../src/shared/time";
 
 export interface PluginPermissions {
   peer?: boolean;
@@ -339,6 +341,63 @@ export function mergeRegistry(
   return { registry, changed };
 }
 
+function inferRepoFromURL(url: string): string | undefined {
+  const m = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\//.exec(url);
+  return m?.[1];
+}
+
+function escapeMarkdownCell(text: string): string {
+  return text.replace(/\|/g, "\\|").replace(/\r?\n+/g, " ").trim();
+}
+
+function formatRegistryTimestampPair(iso: string): string {
+  const trimmed = iso.trim();
+  const cst = formatLocalTime(trimmed, 480);
+  const utc = formatLocalTime(trimmed, 0);
+  if (!cst || cst === trimmed) return trimmed ? `\`${trimmed}\`` : "-";
+  return `\`${cst} (UTC+8)\` / \`${utc} UTC\``;
+}
+
+/** 为 GitHub 的 `extensions` Pre-release 生成包含同步时间与各扩展版本状态的说明文档。 */
+export function buildRegistryReleaseNotes(registry: ExtensionRegistry, repo?: string): string {
+  const lines: string[] = [
+    "供 Yojigen Pocket 客户端在线读取官方扩展目录、版本号与更新日志（`extensions.json`）。如需安装扩展，请下载各扩展或主程序 Release 中的 `.zip` 包。",
+    "",
+    `- **索引最近同步时间**：${formatRegistryTimestampPair(registry.updatedAt)}`,
+  ];
+
+  if (registry.extensions.length === 0) {
+    lines.push("", "暂无已收录的扩展。");
+    return lines.join("\n") + "\n";
+  }
+
+  lines.push(
+    "",
+    "### 📦 收录扩展一览",
+    "",
+    "| 扩展 | ID | 最新版本 | 接口 | 发布来源 | 发布时间（UTC+8） |",
+    "| --- | --- | --- | --- | --- | --- |",
+  );
+
+  for (const ext of registry.extensions) {
+    const extRepo = repo?.trim() || inferRepoFromURL(ext.url);
+    const tagCell = extRepo
+      ? `[${ext.tag}](https://github.com/${extRepo}/releases/tag/${encodeURIComponent(ext.tag)})`
+      : `\`${ext.tag}\``;
+    const publishedCell = formatLocalTime(ext.publishedAt, 480) || "-";
+    lines.push(
+      `| ${escapeMarkdownCell(ext.name || ext.id)} | \`${ext.id}\` | \`${ext.version}\` | API v${ext.api} | ${tagCell} | \`${publishedCell}\` |`,
+    );
+  }
+
+  lines.push(
+    "",
+    "> 说明：GitHub Release 顶部的创建日期固定为初次建页时间；实际索引同步时间与各扩展最后更新时刻以上表和 `extensions.json` 为准（未发生版本或包体 SHA-256 变化的扩展会保留原发布时间与来源 Tag）。",
+  );
+
+  return lines.join("\n") + "\n";
+}
+
 // ---- 以下为本地文件与 Git CLI 封装 ----
 
 function repoRoot(): string {
@@ -497,6 +556,15 @@ export function flagStr(flags: Record<string, string | boolean>, key: string): s
   return typeof v === "string" ? v : undefined;
 }
 
+function writeCliOutput(text: string, out?: string) {
+  if (out) {
+    mkdirSync(dirname(resolve(out)), { recursive: true });
+    writeFileSync(out, text, "utf8");
+  } else {
+    process.stdout.write(text);
+  }
+}
+
 function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   const { flags } = parseFlags(rest);
@@ -601,13 +669,7 @@ function main() {
         const rangeHint = res.prevTag ? `\n\n变更基准：\`${res.prevTag}..HEAD\`` : "";
         text = `### 更新内容\n\n${res.changelog}\n\n---\n- 扩展 ID：\`${info.id}\`\n- 版本：\`${info.version}\`\n- 接口要求：\`API v${info.api}\`（请确保 Yojigen Pocket 支持该版本及以上扩展接口）${rangeHint}\n`;
       }
-      const out = flagStr(flags, "out");
-      if (out) {
-        mkdirSync(dirname(resolve(out)), { recursive: true });
-        writeFileSync(out, text, "utf8");
-      } else {
-        process.stdout.write(text);
-      }
+      writeCliOutput(text, flagStr(flags, "out"));
       return;
     }
 
@@ -685,8 +747,22 @@ function main() {
       return;
     }
 
+    case "notes": {
+      const registryPath = flagStr(flags, "registry");
+      if (!registryPath) {
+        throw new Error("notes 需要 --registry <extensions.json>");
+      }
+      if (!existsSync(registryPath)) {
+        throw new Error(`找不到扩展索引文件：${registryPath}`);
+      }
+      const registry = JSON.parse(readFileSync(registryPath, "utf8")) as ExtensionRegistry;
+      const text = buildRegistryReleaseNotes(registry, flagStr(flags, "repo"));
+      writeCliOutput(text, flagStr(flags, "out"));
+      return;
+    }
+
     default:
-      throw new Error(`未知子命令：${cmd ?? "(空)"}；支持 list | check | meta | changelog | update`);
+      throw new Error(`未知子命令：${cmd ?? "(空)"}；支持 list | check | meta | changelog | update | notes`);
   }
 }
 

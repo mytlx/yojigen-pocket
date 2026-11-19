@@ -139,7 +139,38 @@ function stringify(node: MdNode, _parent: unknown, state: ToMarkdownState, info:
   return value + tracker.move(close);
 }
 
-export const pocketMarks = [remarkPocketMarks, ...schemas, ...rules].flat();
+const rawInlineSchema = $markSchema("pocket_raw_inline", () => ({
+  attrs: { hint: { default: "" } },
+  code: true,
+  inclusive: true,
+  excludes: "_",
+  parseDOM: [{ tag: "span[data-pocket-raw-inline]" }],
+  toDOM: (mark) => [
+    "span",
+    {
+      class: `pocket-raw-inline${mark.attrs.hint ? ` is-${String(mark.attrs.hint)}` : ""}`,
+      "data-pocket-raw-inline": "1",
+    },
+    0,
+  ],
+  parseMarkdown: {
+    match: () => false,
+    runner: () => {},
+  },
+  toMarkdown: {
+    match: (mark) => mark.type.name === "pocket_raw_inline",
+    runner: (state, mark) => {
+      state.withMark(mark, "pocketRawInline");
+    },
+  },
+}));
+
+export const pocketMarks = [remarkPocketMarks, ...schemas, rawInlineSchema, ...rules].flat();
+
+function rawInlineStringify(node: MdNode): string {
+  if (typeof node.value === "string") return node.value;
+  return (node.children ?? []).map(rawInlineStringify).join("");
+}
 
 export function configurePocketMarks(ctx: Ctx) {
   ctx.update(remarkStringifyOptionsCtx, (prev) => ({
@@ -147,6 +178,10 @@ export function configurePocketMarks(ctx: Ctx) {
     // 列表用 - 、分割线用 ---：最常见的写法，别的编辑器打开也不会被改来改去。
     bullet: "-" as const,
     rule: "-" as const,
-    handlers: { ...prev.handlers, [nodeType]: stringify as never },
+    handlers: {
+      ...prev.handlers,
+      [nodeType]: stringify as never,
+      pocketRawInline: rawInlineStringify as never,
+    },
   }));
 }
