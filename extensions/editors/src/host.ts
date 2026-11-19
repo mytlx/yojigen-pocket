@@ -60,6 +60,7 @@ export const openExternal = (url: string) => pocket.openExternal(url);
 export const editorClipboard = {
   write: (text: string) => pocket.copyText(text),
   read: () => pocket.readClipboard(),
+  readImage: () => (pocket.readClipboardImage ? pocket.readClipboardImage() : Promise.resolve("")),
 };
 
 const NOTES = "notes";
@@ -82,6 +83,19 @@ export const Notes = {
   open: (path: string) => pocket.fs.open(NOTES, path),
   openWith: (path: string) => pocket.fs.openWith(NOTES, path),
   saveAs: (name: string, content: string) => pocket.fs.saveAs(name, content),
+  writeImage: (dir: string, name: string, base64: string) =>
+    pocket.fs.writeBinary ? pocket.fs.writeBinary(NOTES, dir, name, base64) : Promise.reject(new Error("当前宿主版本暂不支持写入本地图片，请更新主程序")),
+  imageAssetUrl: (path: string) => (pocket.fs.assetUrl ? pocket.fs.assetUrl(NOTES, path) : Promise.resolve("")),
+  pickImage: () => pocket.fs.pick(["png", "jpg", "jpeg", "gif", "webp", "avif", "svg", "bmp"]),
+  uploadImage: (
+    url: string,
+    opts: {
+      method?: string;
+      headers?: Record<string, string>;
+      multipart?: { field: string; filename: string; mime?: string; base64: string; fields?: Record<string, string> };
+      bodyBase64?: string;
+    },
+  ) => pocket.fetch(url, opts),
   getMode: () => pocket.storage.get<string>("notes.mode").catch(() => null),
   setMode: (mode: string) => void pocket.storage.set("notes.mode", mode).catch(() => undefined),
   getPrefs: <T>() => pocket.storage.get<T>("notes.prefs").catch(() => null),

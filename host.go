@@ -149,7 +149,7 @@ func (a *App) pluginURL(id, main string) string {
 	return schemeURL("pocketplugin", id, p)
 }
 
-var imageExts = []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp", ".heic", ".tiff", ".icns"}
+var imageExts = []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg", ".ico", ".bmp", ".heic", ".tiff", ".icns"}
 
 func (a *App) registerProtocols() {
 	if err := mygo.Protocol.HandleFunc("pocketicon", a.serveIcon); err != nil {
@@ -304,6 +304,7 @@ const pluginRuntime = `(() => {
     // 老接口，保留。
     copyText: (text) => call("copyText", String(text)),
     readClipboard: () => call("readClipboard"),
+    readClipboardImage: () => call("readClipboardImage"),
     pasteText: (text) => call("pasteText", String(text)),
     openExternal: (url) => call("openExternal", String(url)),
     notify: (title, body) => call("notify", String(title), String(body ?? "")),
@@ -323,6 +324,8 @@ const pluginRuntime = `(() => {
       read: (root, path) => call("fs.read", root, path),
       write: (root, path, content) => call("fs.write", root, path, content),
       createFile: (root, dir, name, content = "") => call("fs.createFile", root, dir, name, content),
+      writeBinary: (root, dir, name, base64) => call("fs.writeBinary", root, dir, name, base64),
+      assetUrl: (root, path) => call("fs.assetUrl", root, path),
       createFolder: (root, dir, name) => call("fs.createFolder", root, dir, name),
       rename: (root, path, name) => call("fs.rename", root, path, name),
       move: (root, path, dir) => call("fs.move", root, path, dir),

@@ -181,11 +181,28 @@ export const fastCodeBlockView = $view(codeBlockSchema.node, (ctx) => {
     let activeInner: CodeMirrorBlock | null = null;
     let teardownTimer: number | null = null;
     let codeEl: HTMLElement | null = null;
+    let gutterEl: HTMLElement | null = null;
+    let lastLineCount = 0;
     let langBtn: HTMLButtonElement | null = null;
     let previewContainer: HTMLElement | null = null;
     let previewPanel: HTMLElement | null = null;
     let lastHlLang = "";
     let lastHlText = "";
+
+    const syncLineNumbers = (text: string) => {
+      if (!gutterEl) return;
+      const lines = text.split("\n").length;
+      if (lines === lastLineCount) return;
+      lastLineCount = lines;
+      const frag = document.createDocumentFragment();
+      for (let i = 1; i <= lines; i++) {
+        const el = document.createElement("div");
+        el.className = "pocket-code-lno";
+        el.textContent = String(i);
+        frag.appendChild(el);
+      }
+      gutterEl.replaceChildren(frag);
+    };
 
     const dom = document.createElement("div");
     dom.className = "milkdown-code-block pocket-code-idle";
@@ -293,15 +310,24 @@ export const fastCodeBlockView = $view(codeBlockSchema.node, (ctx) => {
 
       const host = document.createElement("div");
       host.className = "codemirror-host";
+      const grid = document.createElement("div");
+      grid.className = "pocket-code-idle-grid";
+      gutterEl = document.createElement("div");
+      gutterEl.className = "pocket-code-gutter";
+      gutterEl.setAttribute("aria-hidden", "true");
+      lastLineCount = 0;
+      syncLineNumbers(curNode.textContent);
+
       const pre = document.createElement("pre");
       pre.className = "pocket-code-pre";
       codeEl = document.createElement("code");
       codeEl.textContent = curNode.textContent;
       pre.appendChild(codeEl);
-      host.appendChild(pre);
+      grid.append(gutterEl, pre);
+      host.appendChild(grid);
 
       pre.addEventListener("mousedown", (e) => {
-        if (e.button !== 0 || e.ctrlKey || e.metaKey) return;
+        if (!view.editable || e.button !== 0 || e.ctrlKey || e.metaKey) return;
         e.preventDefault();
         e.stopPropagation();
         activate({ clientX: e.clientX, clientY: e.clientY });
@@ -350,6 +376,8 @@ export const fastCodeBlockView = $view(codeBlockSchema.node, (ctx) => {
         jobByTarget.delete(dom);
         pendingJobs.delete(dom);
         codeEl = null;
+        gutterEl = null;
+        lastLineCount = 0;
         langBtn = null;
         previewPanel = null;
         previewContainer = null;
@@ -405,6 +433,7 @@ export const fastCodeBlockView = $view(codeBlockSchema.node, (ctx) => {
         }
         if (codeEl && codeEl.textContent !== node.textContent) {
           codeEl.textContent = node.textContent;
+          syncLineNumbers(node.textContent);
           lastHlLang = "";
           lastHlText = "";
         }
@@ -413,6 +442,7 @@ export const fastCodeBlockView = $view(codeBlockSchema.node, (ctx) => {
         return true;
       },
       setSelection(anchor, head) {
+        if (!view.editable) return;
         activate({ anchor, head });
       },
       selectNode() {

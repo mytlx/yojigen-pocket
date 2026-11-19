@@ -3,6 +3,8 @@ import { DOMSerializer, type Node as PMNode } from "@milkdown/kit/prose/model";
 export interface PreviewOptions {
   strictLineBreaks?: boolean;
   themeEl?: Element | null;
+  editorMaxWidth?: number;
+  resolveImgSrc?: (src: string) => string | undefined;
 }
 
 const PREVIEW_VAR_DEFAULTS = (dark: boolean): Record<string, string> => ({
@@ -22,6 +24,7 @@ const PREVIEW_VAR_DEFAULTS = (dark: boolean): Record<string, string> => ({
   "--code-border": dark ? "rgba(255, 255, 255, 0.08)" : "rgba(16, 18, 24, 0.08)",
   "--code-text": dark ? "#e7e9ee" : "#20232a",
   "--cm-tag": dark ? "#ff7b72" : "#c23b3b",
+  "--note-mark-hi": dark ? "rgba(250, 204, 21, 0.34)" : "rgba(253, 224, 71, 0.62)",
 });
 
 function readThemeVars(dark: boolean, themeEl?: Element | null): string {
@@ -50,17 +53,26 @@ export function previewDocument(doc: PMNode, dark: boolean, opts?: PreviewOption
     const index = raw.push(el.dataset.value ?? el.textContent ?? "") - 1;
     el.replaceWith(document.createComment(`pocket-html-${index}`));
   });
+  if (opts?.resolveImgSrc) {
+    box.querySelectorAll<HTMLImageElement>("img[src]").forEach((img) => {
+      const orig = img.getAttribute("src") ?? "";
+      const next = opts.resolveImgSrc?.(orig);
+      if (next) img.setAttribute("src", next);
+    });
+  }
   const html = box.innerHTML.replace(/<!--pocket-html-(\d+)-->/g, (_, n: string) => raw[Number(n)] ?? "");
   const vars = readThemeVars(dark, opts?.themeEl);
   const softBreakRule = opts?.strictLineBreaks
     ? ""
     : 'span[data-type="hardbreak"][data-is-inline="true"]::after { content: "\\A"; white-space: pre; }';
+  const maxWidthRule =
+    opts?.editorMaxWidth && opts.editorMaxWidth > 0 ? `max-width: ${opts.editorMaxWidth}px; margin-left: auto; margin-right: auto;` : "";
 
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: https: http:; font-src data:; base-uri 'none'; form-action 'none'"><style>
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: https: http: pocketicon:; font-src data:; base-uri 'none'; form-action 'none'"><style>
   :root { color-scheme: ${dark ? "dark" : "light"}; ${vars} }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--card); color: var(--text); }
-  body { margin: 18px 26px 40px; font: 14px/1.7 var(--font-ui); overflow-wrap: anywhere; }
+  body { margin: 18px 26px 40px; padding: 0 12px; font: 15px/1.7 var(--font-ui); overflow-wrap: anywhere; ${maxWidthRule} }
   p { margin: 0 0 8px; line-height: 1.7; }
   h1, h2, h3, h4, h5, h6 { margin: 16px 0 8px; font-weight: 600; line-height: 1.38; color: var(--text); }
   h1 { font-size: 1.85em; font-weight: 700; line-height: 1.28; padding-bottom: 7px; border-bottom: 1px solid var(--line-strong); }
@@ -81,7 +93,14 @@ export function previewDocument(doc: PMNode, dark: boolean, opts?: PreviewOption
   img { max-width: 100%; }
   ul, ol { padding-left: 24px; margin: 6px 0; }
   li.task-list-item { list-style: none; margin-left: -18px; }
-  mark, .md-mark { background: rgba(250, 204, 21, 0.35); color: inherit; padding: 0 2px; border-radius: 3px; }
+  mark, .md-mark {
+    background: linear-gradient(180deg, transparent 34%, var(--note-mark-hi) 34%, var(--note-mark-hi) 92%, transparent 92%);
+    color: inherit;
+    padding: 0 3px;
+    border-radius: 3px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
   kbd, .md-kbd { padding: 1px 5px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--well); font-family: var(--font-mono); font-size: 0.85em; }
   sup, sub { font-size: 0.75em; line-height: 0; }
   sup { vertical-align: super; }

@@ -32,7 +32,10 @@ type Node struct {
 	Children []Node `json:"children,omitempty"`
 }
 
-const maxFileSize = 8 << 20
+const (
+	maxFileSize   = 8 << 20
+	maxBinarySize = 16 << 20
+)
 
 func (s *Store) root() (*os.Root, error) {
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
@@ -317,6 +320,44 @@ func (s *Store) CreateFile(dir, name, content string) (string, error) {
 	name = unique(r, dir, strings.TrimSpace(name))
 	p := path.Join(dir, name)
 	return p, r.WriteFile(local(p), []byte(content), 0o644)
+}
+
+// CreateBinary 在 dir 里原子写入二进制文件（如笔记图片附件），重名时自动加序号；返回相对路径。
+func (s *Store) CreateBinary(dir, name string, data []byte) (string, error) {
+	dir, err := clean(dir)
+	if err != nil {
+		return "", err
+	}
+	if err := validName(name); err != nil {
+		return "", err
+	}
+	if len(data) == 0 {
+		return "", errors.New("文件内容为空")
+	}
+	if len(data) > maxBinarySize {
+		return "", errors.New("文件太大了（超过 16 MB）")
+	}
+	r, err := s.root()
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+	if dir != "" {
+		if err := r.MkdirAll(local(dir), 0o755); err != nil {
+			return "", err
+		}
+	}
+	name = unique(r, dir, strings.TrimSpace(name))
+	p := path.Join(dir, name)
+	tmp := local(p) + ".tmp~"
+	if err := r.WriteFile(tmp, data, 0o644); err != nil {
+		return "", err
+	}
+	if err := r.Rename(tmp, local(p)); err != nil {
+		_ = r.Remove(tmp)
+		return "", err
+	}
+	return p, nil
 }
 
 // CreateFolder 在 dir 里新建文件夹。

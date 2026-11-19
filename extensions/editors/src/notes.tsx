@@ -5,7 +5,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  Clock,
   Code,
   Copy,
   ExternalLink,
@@ -17,13 +16,11 @@ import {
   FolderPlus,
   Heading,
   Italic,
-  Keyboard,
   Link,
   List,
   ListChecks,
   ListTree,
   MoreHorizontal,
-  Palette,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -33,6 +30,7 @@ import {
   Quote,
   RotateCcw,
   Search,
+  Settings,
   SpellCheck,
   SquareArrowOutUpRight,
   Table,
@@ -44,13 +42,63 @@ import { CodeEditor, linkOpener } from "./code/editor";
 import { Btn, Empty, Seg } from "../../../src/features/ui";
 import { applySourceFormat, applySourceParagraph, buildSourceInsert, type BlockKind } from "./notes/blockops";
 import { EditorContextMenu, type EditorMenuActions, type EditorMenuTarget } from "./notes/editormenu";
-import { frontSummary, joinFrontmatter, splitFrontmatter } from "./notes/frontmatter";
-import { defaultShortcuts, noteLineKeys, shortcutOf, type NoteShortcuts } from "./notes/shortcuts";
-import { outlineOf, outlineTree, type OutlineNode } from "./notes/outline";
-import { RichEditor, type RichViewMode } from "./notes/rich";
-import { DEFAULT_TIME_FORMAT, TIME_FORMAT_PRESETS, formatTime } from "./notes/timefmt";
+import { FindReplaceBar } from "./notes/findbar";
 import {
+  codeFindExtension,
+  getCodeFindStats,
+  replaceAllCode,
+  replaceCurrentCode,
+  setCodeFindQuery,
+  stepCodeFind,
+  type FindQuery,
+  type FindStats,
+} from "./notes/findreplace";
+import { frontSummary, joinFrontmatter, splitFrontmatter } from "./notes/frontmatter";
+import {
+  DEFAULT_HIGHLIGHT_COLOR,
+  normalizeHighlightColor,
+  normalizeHighlightHistory,
+  pushHighlightHistory,
+  resolveHighlightVars,
+  type HighlightColorId,
+} from "./notes/highlights";
+import {
+  ImageRenameModal,
+  blobToBase64,
+  buildImageFilename,
+  defaultImagePrefs,
+  normalizeImagePrefs,
+  persistImage,
+  resolveImageDir,
+  type ImagePrefs,
+  type PendingImageInput,
+} from "./notes/images";
+import {
+  applySourceIndent,
+  defaultShortcuts,
+  insertLine,
+  matchShortcutAction,
+  normalizeShortcuts,
+  noteLineKeys,
+  type NoteShortcuts,
+  type ShortcutActionId,
+} from "./notes/shortcuts";
+import { outlineTree, richOutlineOf, type OutlineInline, type OutlineNode, type RichOutlineHeading } from "./notes/outline";
+import { RichEditor, type RichHandle, type RichViewMode } from "./notes/rich";
+import {
+  DEFAULT_EDITOR_FONT_SIZE,
+  DEFAULT_EDITOR_MAX_WIDTH,
+  DEFAULT_OUTLINE_FONT_SIZE,
+  DEFAULT_SIDEBAR_FONT_SIZE,
+  NotesSettingsModal,
+  type SettingsTabId,
+} from "./notes/settingsmodal";
+import { anchorToSourceOffset, sourceOffsetToAnchor, type EditorAnchor } from "./notes/syncpos";
+import { DEFAULT_TIME_FORMAT, formatTime } from "./notes/timefmt";
+import {
+  DEFAULT_OUTLINE_BOUNDS,
   DEFAULT_OUTLINE_W,
+  DEFAULT_SIDEBAR_BOUNDS,
   DEFAULT_SIDEBAR_W,
   clampDragWidth,
   collectNestedDirs,
@@ -58,8 +106,10 @@ import {
   computePanelWidths,
   filterDirPaths,
   normalizeDeleteTargets,
+  normalizePanelBounds,
   selectRange,
   visibleTreePaths,
+  type PanelBounds,
 } from "./notes/sidebar";
 import { DeleteConfirmModal, SideContextMenu, type PendingDeleteItem, type SideMenuActions, type SideMenuTarget } from "./notes/sidemenu";
 import "./notes/notes.css";
@@ -143,27 +193,114 @@ interface Prefs {
   /** 拼写检查（单词下面的红色波浪线）。默认关。 */
   spell: boolean;
   codeTheme: string;
+  highlightColor: HighlightColorId;
+  highlightHistory: string[];
+  sidebarFontSize: number;
+  editorFontSize: number;
+  outlineFontSize: number;
+  /** 编辑区正文最大宽度（px）；0 表示铺满窗口。 */
+  editorMaxWidth: number;
   sidebarHidden: boolean;
   outline: boolean;
   sidebarWidth: number;
   outlineWidth: number;
+  sidebarBounds: PanelBounds;
+  outlineBounds: PanelBounds;
   revealSource: boolean;
   strictLineBreaks: boolean;
   timeFormat: string;
+  imagePrefs: ImagePrefs;
   shortcuts: NoteShortcuts;
 }
 const defaultPrefs: Prefs = {
   spell: false,
   codeTheme: "auto",
+  highlightColor: DEFAULT_HIGHLIGHT_COLOR,
+  highlightHistory: [],
+  sidebarFontSize: DEFAULT_SIDEBAR_FONT_SIZE,
+  editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
+  outlineFontSize: DEFAULT_OUTLINE_FONT_SIZE,
+  editorMaxWidth: DEFAULT_EDITOR_MAX_WIDTH,
   sidebarHidden: false,
   outline: false,
   sidebarWidth: DEFAULT_SIDEBAR_W,
   outlineWidth: DEFAULT_OUTLINE_W,
+  sidebarBounds: { ...DEFAULT_SIDEBAR_BOUNDS },
+  outlineBounds: { ...DEFAULT_OUTLINE_BOUNDS },
   revealSource: false,
   strictLineBreaks: false,
   timeFormat: DEFAULT_TIME_FORMAT,
-  shortcuts: defaultShortcuts,
+  imagePrefs: { ...defaultImagePrefs },
+  shortcuts: { ...defaultShortcuts },
 };
+
+function positiveFontSize(val: unknown, fallback: number): number {
+  return typeof val === "number" && Number.isFinite(val) && val > 0 ? val : fallback;
+}
+
+function normalizeEditorMaxWidth(val: unknown): number {
+  if (val === 0) return 0;
+  if (typeof val === "number" && Number.isFinite(val) && val > 0) return Math.round(val);
+  return DEFAULT_EDITOR_MAX_WIDTH;
+}
+
+interface FilteredOutlineNode {
+  node: OutlineNode<RichOutlineHeading>;
+  matched: boolean;
+  children: FilteredOutlineNode[];
+}
+
+function filterOutlineNodes(nodes: OutlineNode<RichOutlineHeading>[], rawQuery: string): FilteredOutlineNode[] {
+  const q = rawQuery.trim().toLowerCase();
+  if (!q) {
+    const wrap = (list: OutlineNode<RichOutlineHeading>[]): FilteredOutlineNode[] =>
+      list.map((node) => ({ node, matched: false, children: wrap(node.children) }));
+    return wrap(nodes);
+  }
+  const walk = (list: OutlineNode<RichOutlineHeading>[]): FilteredOutlineNode[] => {
+    const out: FilteredOutlineNode[] = [];
+    for (const node of list) {
+      const matched = node.heading.text.toLowerCase().includes(q);
+      const children = walk(node.children);
+      if (matched || children.length > 0) out.push({ node, matched, children });
+    }
+    return out;
+  };
+  return walk(nodes);
+}
+
+interface PendingImageRename {
+  input: PendingImageInput;
+  initialName: string;
+  previewDataUrl: string;
+  targetHint: string;
+  insert: (markdownUrl: string, alt: string) => void;
+}
+
+function renderOutlineInlines(inlines: OutlineInline[]) {
+  return inlines.map((node, i) => {
+    if (node.type === "text") return node.value;
+    const children = renderOutlineInlines(node.children);
+    switch (node.type) {
+      case "strong":
+        return <strong key={i}>{children}</strong>;
+      case "em":
+        return <em key={i}>{children}</em>;
+      case "del":
+        return <del key={i}>{children}</del>;
+      case "code":
+        return <code key={i}>{children}</code>;
+      case "mark":
+        return <mark key={i} class="md-mark">{children}</mark>;
+      case "u":
+        return <u key={i}>{children}</u>;
+      case "sup":
+        return <sup key={i}>{children}</sup>;
+      case "sub":
+        return <sub key={i}>{children}</sub>;
+    }
+  });
+}
 
 /** 一段文字的指纹：判断“这段内容是不是刚才已经存成笔记了”。 */
 function fingerprint(text: string) {
@@ -199,8 +336,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const [loaded, setLoaded] = useState(false);
   const [prefs, setPrefs] = useState<Prefs>(defaultPrefs);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [shortcutOpen, setShortcutOpen] = useState(false);
-  const [timeFormatOpen, setTimeFormatOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTabId | null>(null);
   const [htmlPreview, setHtmlPreview] = useState(false);
   const [sourceMenu, setSourceMenu] = useState<EditorMenuTarget | null>(null);
   const [resizing, setResizing] = useState<"sidebar" | "outline" | null>(null);
@@ -212,7 +348,22 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   prefsRef.current = prefs;
   const [frontOpen, setFrontOpen] = useState(false);
   const [outlineCollapsed, setOutlineCollapsed] = useState<Record<string, boolean>>({});
+  const [outlineQuery, setOutlineQuery] = useState("");
+  const [findOpen, setFindOpen] = useState(false);
+  const [findShowReplace, setFindShowReplace] = useState(false);
+  const [findQuery, setFindQuery] = useState<FindQuery>({ query: "", caseSensitive: false, wholeWord: false, regex: false });
+  const findQueryRef = useRef(findQuery);
+  findQueryRef.current = findQuery;
+  const [findReplaceText, setFindReplaceText] = useState("");
+  const [findStats, setFindStats] = useState<FindStats>({ total: 0, current: 0 });
+  const [findFocusNonce, setFindFocusNonce] = useState(0);
+  const [pendingImgRename, setPendingImgRename] = useState<PendingImageRename | null>(null);
+  const lastWrittenRef = useRef<{ path: string; content: string; at: number } | null>(null);
   const richScroll = useRef(0); // 所见即所得编辑器重建后要恢复到的滚动位置
+  const richHandleRef = useRef<RichHandle | null>(null);
+  const pendingRichAnchor = useRef<EditorAnchor | null>(null);
+  const pendingSourceOffset = useRef<number | null>(null);
+  const frontInputRef = useRef<HTMLTextAreaElement>(null);
   const notesRef = useRef<HTMLDivElement>(null);
   const sideListRef = useRef<HTMLDivElement>(null);
   const renameRef = useRef<HTMLInputElement>(null);
@@ -248,6 +399,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     clearTimeout(timer.current);
     const s = state.current;
     if (!s.path || !s.dirty) return Promise.resolve();
+    lastWrittenRef.current = { path: s.path, content: s.content, at: Date.now() };
     return Notes.write(s.path, s.content).then(() => {
       if (state.current.path === s.path && state.current.content === s.content) {
         state.current = { ...state.current, dirty: false };
@@ -268,6 +420,8 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       setContent(text);
       setTitle(stem(p.slice(p.lastIndexOf("/") + 1)));
       richScroll.current = 0;
+      pendingRichAnchor.current = null;
+      pendingSourceOffset.current = null;
       setNonce((n) => n + 1);
       setDirty(false);
       setSaved("");
@@ -358,14 +512,25 @@ export function NotesTool({ input, ctx }: FeatureProps) {
         setMode(savedPrefs?.revealSource ? "block" : "live");
       }
       if (savedPrefs && typeof savedPrefs === "object") {
+        const sb = normalizePanelBounds(savedPrefs.sidebarBounds, DEFAULT_SIDEBAR_BOUNDS);
+        const ob = normalizePanelBounds(savedPrefs.outlineBounds, DEFAULT_OUTLINE_BOUNDS);
         setPrefs((p) => ({
           ...p,
           ...savedPrefs,
-          sidebarWidth: savedPrefs.sidebarWidth ?? DEFAULT_SIDEBAR_W,
-          outlineWidth: savedPrefs.outlineWidth ?? DEFAULT_OUTLINE_W,
+          sidebarBounds: sb,
+          outlineBounds: ob,
+          sidebarWidth: savedPrefs.sidebarWidth ?? sb.defaultWidth,
+          outlineWidth: savedPrefs.outlineWidth ?? ob.defaultWidth,
+          sidebarFontSize: positiveFontSize(savedPrefs.sidebarFontSize, DEFAULT_SIDEBAR_FONT_SIZE),
+          editorFontSize: positiveFontSize(savedPrefs.editorFontSize, DEFAULT_EDITOR_FONT_SIZE),
+          outlineFontSize: positiveFontSize(savedPrefs.outlineFontSize, DEFAULT_OUTLINE_FONT_SIZE),
+          editorMaxWidth: normalizeEditorMaxWidth(savedPrefs.editorMaxWidth),
+          highlightColor: normalizeHighlightColor(savedPrefs.highlightColor),
+          highlightHistory: normalizeHighlightHistory(savedPrefs.highlightHistory),
           strictLineBreaks: savedPrefs.strictLineBreaks ?? false,
           timeFormat: savedPrefs.timeFormat || DEFAULT_TIME_FORMAT,
-          shortcuts: { ...defaultShortcuts, ...savedPrefs.shortcuts },
+          imagePrefs: normalizeImagePrefs(savedPrefs.imagePrefs),
+          shortcuts: normalizeShortcuts(savedPrefs.shortcuts),
         }));
       }
       const list = t ?? [];
@@ -406,10 +571,12 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       const s = state.current;
       if (ev.op === "write") {
         if (ev.path !== s.path || s.dirty) return;
+        const lw = lastWrittenRef.current;
+        if (lw && lw.path === ev.path && lw.content === s.content && Date.now() - lw.at < 1500) return;
         void Notes.read(ev.path).then((text) => {
           const now = state.current;
-          // 自己刚存的（内容一样）不用管；这边正在改的以这边为准。
-          if (now.path !== ev.path || now.dirty || text === now.content) return;
+          // 自己刚存的（内容一样或仅换行符规范化差异）不用管；这边正在改的以这边为准。
+          if (now.path !== ev.path || now.dirty || text === now.content || text.replace(/\r\n/g, "\n") === now.content.replace(/\r\n/g, "\n")) return;
           richScroll.current = body.current?.querySelector(".fx-notes-rich")?.scrollTop ?? 0;
           setContent(text);
           setNonce((n) => n + 1);
@@ -452,19 +619,55 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     setSourceMenu(null);
     if (prev !== "source" && next === "source") {
       richScroll.current = body.current?.querySelector(".fx-notes-rich")?.scrollTop ?? 0;
+      const anchor = richHandleRef.current?.captureAnchor() ?? null;
+      pendingSourceOffset.current = anchor ? anchorToSourceOffset(state.current.content, anchor) : null;
+      pendingRichAnchor.current = null;
+    } else if (prev === "source" && next !== "source") {
+      const head = view.current?.state.selection.main.head;
+      pendingRichAnchor.current = typeof head === "number" ? sourceOffsetToAnchor(state.current.content, head) : null;
+      pendingSourceOffset.current = null;
     }
     setMode(next);
     if (prev === "source" && next !== "source") {
-      setNonce((n) => n + 1); // 带着源码模式里改过的内容重建
+      setNonce((n) => n + 1); // 带着源码模式里改过的内容重建并定位到原光标块
     }
     if (next === "live" || next === "block") {
       updatePrefs({ revealSource: next === "block" });
     }
     Notes.setMode(next);
   };
+  const insertFrontmatter = () => {
+    const cur = splitFrontmatter(state.current.content);
+    if (cur.front !== null) {
+      if (state.current.mode === "source" && view.current) {
+        view.current.dispatch({ selection: { anchor: 4 }, effects: EditorView.scrollIntoView(0, { y: "start" }) });
+        view.current.focus();
+      } else {
+        setFrontOpen(true);
+        requestAnimationFrame(() => frontInputRef.current?.focus());
+      }
+      return;
+    }
+    const yaml = `---\ntitle: ${title || "未命名"}\n---\n\n`;
+    const nextContent = yaml + state.current.content;
+    edit(nextContent);
+    if (state.current.mode === "source" && view.current) {
+      const v = view.current;
+      v.dispatch({
+        changes: { from: 0, to: 0, insert: yaml },
+        selection: { anchor: 4 + "title: ".length, head: 4 + "title: ".length + (title || "未命名").length },
+        effects: EditorView.scrollIntoView(0, { y: "start" }),
+      });
+      v.focus();
+    } else {
+      setFrontOpen(true);
+      requestAnimationFrame(() => frontInputRef.current?.focus());
+    }
+  };
   const toggleStrictLineBreaks = () => {
     if (state.current.mode !== "source") {
       richScroll.current = body.current?.querySelector(".fx-notes-rich")?.scrollTop ?? 0;
+      pendingRichAnchor.current = richHandleRef.current?.captureAnchor() ?? null;
       setNonce((n) => n + 1);
     }
     updatePrefs({ strictLineBreaks: !prefs.strictLineBreaks });
@@ -627,11 +830,61 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       setNonce((n) => n + 1);
     }
   };
+  const runPersistImage = useCallback(
+    async (input: PendingImageInput, finalName: string, insert: (url: string, alt: string) => void) => {
+      try {
+        const res = await persistImage(input, finalName, state.current.path, prefsRef.current.imagePrefs);
+        insert(res.markdownUrl, res.alt);
+        if (res.fallbackNotice) ctx.toast(res.fallbackNotice, true);
+      } catch (e) {
+        fail(e as Error);
+      }
+    },
+    [],
+  );
+
+  const handlePasteImage = useCallback(
+    (input: PendingImageInput, insert: (markdownUrl: string, alt: string) => void) => {
+      const imgPrefs = prefsRef.current.imagePrefs;
+      const defaultName = buildImageFilename(input.originalName, input.mime, imgPrefs.renameMode);
+      if (imgPrefs.promptRename) {
+        const { storeDir, mdPrefix } = resolveImageDir(imgPrefs.dir, state.current.path || "note.md");
+        const targetHint =
+          imgPrefs.mode === "upload" && imgPrefs.uploadUrl.trim()
+            ? `图床 ${imgPrefs.uploadUrl.trim()}`
+            : `${mdPrefix}（目录：${storeDir || "."}）`;
+        setPendingImgRename({
+          input,
+          initialName: defaultName,
+          previewDataUrl: `data:${input.mime || "image/png"};base64,${input.base64}`,
+          targetHint,
+          insert,
+        });
+        return;
+      }
+      void runPersistImage(input, defaultName, insert);
+    },
+    [runPersistImage],
+  );
+
   const pasteToSource = async () => {
     const v = view.current;
     if (!v) return;
     const clip = await editorClipboard.read();
-    if (!clip) return;
+    if (!clip) {
+      const imgB64 = await editorClipboard.readImage().catch(() => "");
+      if (imgB64) {
+        handlePasteImage({ base64: imgB64, mime: "image/png", originalName: "clipboard.png" }, (url, alt) => {
+          const cur = view.current;
+          if (!cur) return;
+          const { from, to } = cur.state.selection.main;
+          const md = `![${alt}](${url})`;
+          cur.dispatch({ changes: { from, to, insert: md }, selection: { anchor: from + md.length } });
+          cur.focus();
+        });
+      }
+      return;
+    }
     const { from, to } = v.state.selection.main;
     v.dispatch({ changes: { from, to, insert: clip }, selection: { anchor: from + clip.length } });
     v.focus();
@@ -712,13 +965,31 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       v.focus();
     },
     onInsert: (kind) => {
+      if (kind === "frontmatter") {
+        insertFrontmatter();
+        return;
+      }
       const v = view.current;
       if (!v) return;
       const { from, to } = v.state.selection.main;
+      const docText = v.state.doc.toString();
+      if (kind === "paraAbove" || kind === "paraBelow") {
+        const res = insertLine(docText, from, kind === "paraAbove" ? "above" : "below");
+        v.dispatch({ changes: { from: res.from, to: res.from, insert: res.insert }, selection: { anchor: res.anchor } });
+        v.focus();
+        return;
+      }
       const line = v.state.doc.lineAt(from);
       const emptyLine = v.state.sliceDoc(line.from, from).trim() === "";
-      const { insert: snippet, cursorOffset } = buildSourceInsert(kind, prefs.timeFormat, emptyLine);
-      v.dispatch({ changes: { from, to, insert: snippet }, selection: { anchor: from + cursorOffset } });
+      const res = buildSourceInsert(kind, prefs.timeFormat, emptyLine, docText);
+      const changes: { from: number; to: number; insert: string }[] = [{ from, to, insert: res.insert }];
+      if (res.appendDoc) {
+        const prefix = docText.endsWith("\n\n") ? "" : docText.endsWith("\n") ? "\n" : "\n\n";
+        changes.push({ from: docText.length, to: docText.length, insert: `${prefix}${res.appendDoc}\n` });
+      }
+      const anchor = from + res.cursorOffset;
+      const head = anchor + (res.selectLen ?? 0);
+      v.dispatch({ changes, selection: { anchor, head } });
       v.focus();
     },
   };
@@ -793,20 +1064,24 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const sideAnim = useAnimatedPanel(sidebarOpen, loaded);
   const outlineAnim = useAnimatedPanel(outlineOpen, loaded);
 
-  const savedSideW = prefs.sidebarWidth || DEFAULT_SIDEBAR_W;
-  const savedOutlineW = prefs.outlineWidth || DEFAULT_OUTLINE_W;
-  const canResetWidths = savedSideW !== DEFAULT_SIDEBAR_W || savedOutlineW !== DEFAULT_OUTLINE_W;
+  const sidebarBounds = prefs.sidebarBounds;
+  const outlineBounds = prefs.outlineBounds;
+  const savedSideW = prefs.sidebarWidth || sidebarBounds.defaultWidth;
+  const savedOutlineW = prefs.outlineWidth || outlineBounds.defaultWidth;
+  const canResetWidths = savedSideW !== sidebarBounds.defaultWidth || savedOutlineW !== outlineBounds.defaultWidth;
   const widths = computePanelWidths({
     containerWidth,
     sidebarOpen,
     outlineOpen,
     sidebarWidth: resizing === "sidebar" && dragWidth !== null ? dragWidth : savedSideW,
     outlineWidth: resizing === "outline" && dragWidth !== null ? dragWidth : savedOutlineW,
+    sidebarBounds,
+    outlineBounds,
   });
 
   const resetWidths = () => {
     setMenuOpen(false);
-    updatePrefs({ sidebarWidth: DEFAULT_SIDEBAR_W, outlineWidth: DEFAULT_OUTLINE_W });
+    updatePrefs({ sidebarWidth: sidebarBounds.defaultWidth, outlineWidth: outlineBounds.defaultWidth });
     ctx.toast("已恢复默认栏宽");
   };
 
@@ -831,6 +1106,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
         containerWidth: containerWidthRef.current,
         otherWidth: otherW,
         otherOpen,
+        bounds: which === "sidebar" ? prefsRef.current.sidebarBounds : prefsRef.current.outlineBounds,
       });
       setDragWidth(latest);
     };
@@ -849,13 +1125,235 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     window.addEventListener("pointercancel", stop);
   };
 
+  // 查找与替换控制（覆盖阅读、实时、整块与源码四种模式）
+  const applyFindQueryToActive = useCallback((q: FindQuery, scroll = true) => {
+    if (state.current.mode === "source") {
+      setFindStats(setCodeFindQuery(view.current, q, scroll));
+    } else if (richHandleRef.current) {
+      setFindStats(richHandleRef.current.setFindQuery(q, scroll));
+    } else {
+      setFindStats({ total: 0, current: 0 });
+    }
+  }, []);
+
+  const openFindBar = useCallback((withReplace: boolean) => {
+    if (!state.current.path) return;
+    let picked = "";
+    if (state.current.mode === "source" && view.current) {
+      const sel = view.current.state.selection.main;
+      if (sel.from !== sel.to) picked = view.current.state.sliceDoc(sel.from, sel.to);
+    } else if (richHandleRef.current) {
+      picked = richHandleRef.current.getSelectedText();
+    }
+    const cleanPicked = picked && !picked.includes("\n") && picked.length <= 80 ? picked : "";
+    setFindOpen(true);
+    setFindShowReplace(withReplace && state.current.mode !== "read");
+    setFindFocusNonce((n) => n + 1);
+    if (cleanPicked) {
+      setFindQuery((prev) => {
+        const next = { ...prev, query: cleanPicked };
+        requestAnimationFrame(() => applyFindQueryToActive(next, true));
+        return next;
+      });
+    } else {
+      setFindQuery((prev) => {
+        if (prev.query) requestAnimationFrame(() => applyFindQueryToActive(prev, false));
+        return prev;
+      });
+    }
+  }, [applyFindQueryToActive]);
+
+  const closeFindBar = useCallback(() => {
+    setFindOpen(false);
+    const cleared: FindQuery = { query: "", caseSensitive: false, wholeWord: false, regex: false };
+    setCodeFindQuery(view.current, cleared, false);
+    richHandleRef.current?.setFindQuery(cleared, false);
+    setFindStats({ total: 0, current: 0 });
+    if (state.current.mode === "source") view.current?.focus();
+    else richHandleRef.current?.focus();
+  }, []);
+
+  const updateFindQuery = useCallback(
+    (patch: Partial<FindQuery>) => {
+      setFindQuery((prev) => {
+        const next = { ...prev, ...patch };
+        applyFindQueryToActive(next, true);
+        return next;
+      });
+    },
+    [applyFindQueryToActive],
+  );
+
+  const stepFind = useCallback((dir: 1 | -1) => {
+    if (state.current.mode === "source") setFindStats(stepCodeFind(view.current, dir));
+    else if (richHandleRef.current) setFindStats(richHandleRef.current.stepFind(dir));
+  }, []);
+
+  const replaceOneFind = useCallback(() => {
+    if (state.current.mode === "read") return;
+    if (state.current.mode === "source") setFindStats(replaceCurrentCode(view.current, findReplaceText));
+    else if (richHandleRef.current) setFindStats(richHandleRef.current.replaceFind(findReplaceText));
+  }, [findReplaceText]);
+
+  const replaceAllFind = useCallback(() => {
+    if (state.current.mode === "read") return;
+    if (state.current.mode === "source") {
+      const { count: n, stats: next } = replaceAllCode(view.current, findReplaceText);
+      setFindStats(next);
+      if (n > 0) ctx.toast(`已替换 ${n} 处`);
+    } else if (richHandleRef.current) {
+      const { count: n, stats: next } = richHandleRef.current.replaceAllFind(findReplaceText);
+      setFindStats(next);
+      if (n > 0) ctx.toast(`已替换 ${n} 处`);
+    }
+  }, [findReplaceText]);
+
+  // 切换模式或内容更新时，保持打开的查找条命中计数与高亮同步。
+  useEffect(() => {
+    if (!findOpen) return;
+    if (mode === "read") setFindShowReplace(false);
+    const id = window.setTimeout(() => {
+      const q = findQueryRef.current;
+      if (state.current.mode === "source") {
+        setFindStats(setCodeFindQuery(view.current, q, false));
+      } else if (richHandleRef.current) {
+        setFindStats(richHandleRef.current.setFindQuery(q, false));
+      }
+    }, 60);
+    return () => window.clearTimeout(id);
+  }, [findOpen, mode, path, nonce]);
+
+  useEffect(() => {
+    if (!findOpen || !findQueryRef.current.query) return;
+    const id = window.setTimeout(() => {
+      if (state.current.mode === "source") setFindStats(getCodeFindStats(view.current));
+      else if (richHandleRef.current) setFindStats(richHandleRef.current.getFindStats());
+    }, 120);
+    return () => window.clearTimeout(id);
+  }, [content, findOpen]);
+
+  // 全局查找/替换快捷键（保证阅读模式、焦点在顶栏/侧栏时也能直接呼出查找条）。
+  useEffect(() => {
+    const onGlobalKey = (e: KeyboardEvent) => {
+      if (settingsTab || pendingDelete || pendingImgRename) return;
+      const act = matchShortcutAction(e, prefsRef.current.shortcuts, ctx.platform);
+      if (act === "find" || act === "replace") {
+        if (!state.current.path) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openFindBar(act === "replace");
+      }
+    };
+    document.addEventListener("keydown", onGlobalKey, true);
+    return () => document.removeEventListener("keydown", onGlobalKey, true);
+  }, [openFindBar, settingsTab, pendingDelete, pendingImgRename, ctx.platform]);
+
   // 所见即所得模式下，frontmatter 摘出来单独编辑，编辑器只管正文。
   const split = useMemo(() => splitFrontmatter(content), [content]);
   const front = useRef(split);
   front.current = split;
   const openLinkRef = useRef(openLink);
   openLinkRef.current = openLink;
-  const sourceExtensions = useMemo(() => [linkOpener((href) => openLinkRef.current(href)), noteLineKeys(() => prefsRef.current.shortcuts)], []);
+  const openFindRef = useRef(openFindBar);
+  openFindRef.current = openFindBar;
+  const handlePasteImageRef = useRef(handlePasteImage);
+  handlePasteImageRef.current = handlePasteImage;
+  const runSourceShortcut = useCallback((act: ShortcutActionId, v: EditorView): boolean => {
+    if (act === "find" || act === "replace") {
+      openFindRef.current(act === "replace");
+      return true;
+    }
+    const { from, to } = v.state.selection.main;
+    const docText = v.state.doc.toString();
+    if (act === "above" || act === "below") {
+      const ch = insertLine(docText, from, act);
+      v.dispatch({ changes: { from: ch.from, insert: ch.insert }, selection: { anchor: ch.anchor }, scrollIntoView: true });
+      return true;
+    }
+    if (act === "indent" || act === "outdent") {
+      const ch = applySourceIndent(docText, from, to, act);
+      v.dispatch({ changes: { from: ch.from, to: ch.to, insert: ch.insert }, selection: { anchor: ch.anchor, head: ch.head }, scrollIntoView: true });
+      return true;
+    }
+    if (act === "codeBlock" || act === "mathBlock") {
+      const line = v.state.doc.lineAt(from);
+      const emptyLine = v.state.sliceDoc(line.from, from).trim() === "";
+      const res = buildSourceInsert(act === "codeBlock" ? "code" : "math", prefsRef.current.timeFormat, emptyLine, docText);
+      const anchor = from + res.cursorOffset;
+      v.dispatch({ changes: { from, to, insert: res.insert }, selection: { anchor }, scrollIntoView: true });
+      return true;
+    }
+    const paraMap: Partial<Record<ShortcutActionId, BlockKind>> = {
+      h1: "h1",
+      h2: "h2",
+      h3: "h3",
+      h4: "h4",
+      h5: "h5",
+      h6: "h6",
+      quote: "quote",
+      orderedList: "ordered",
+      bulletList: "bullet",
+      taskList: "task",
+    };
+    const kind = paraMap[act];
+    if (kind) {
+      const res = applySourceParagraph(docText, from, to, kind);
+      v.dispatch({ changes: { from: res.from, to: res.to, insert: res.insert }, selection: { anchor: res.anchor, head: res.head }, scrollIntoView: true });
+      return true;
+    }
+    return false;
+  }, []);
+
+  const sourceExtensions = useMemo(
+    () => [
+      codeFindExtension,
+      linkOpener((href) => openLinkRef.current(href)),
+      noteLineKeys(() => prefsRef.current.shortcuts, { platform: ctx.platform, onAction: runSourceShortcut }),
+      EditorView.domEventHandlers({
+        paste(e, v) {
+          const dt = e.clipboardData;
+          if (!dt) return false;
+          const imgFile = Array.from(dt.items)
+            .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+            .map((it) => it.getAsFile())
+            .find((f): f is File => !!f);
+          if (!imgFile) return false;
+          e.preventDefault();
+          const sel = v.state.selection.main;
+          void blobToBase64(imgFile).then((base64) => {
+            handlePasteImageRef.current({ base64, mime: imgFile.type || "image/png", originalName: imgFile.name || "image.png" }, (url, alt) => {
+              const cur = view.current;
+              if (!cur) return;
+              const from = Math.min(sel.from, cur.state.doc.length);
+              const to = Math.min(sel.to, cur.state.doc.length);
+              const md = `![${alt}](${url})`;
+              cur.dispatch({ changes: { from, to, insert: md }, selection: { anchor: from + md.length } });
+              cur.focus();
+            });
+          });
+          return true;
+        },
+        drop(e, v) {
+          const imgFile = e.dataTransfer?.files ? Array.from(e.dataTransfer.files).find((f) => f.type.startsWith("image/")) : undefined;
+          if (!imgFile) return false;
+          e.preventDefault();
+          const dropPos = v.posAtCoords({ x: e.clientX, y: e.clientY }) ?? v.state.selection.main.head;
+          void blobToBase64(imgFile).then((base64) => {
+            handlePasteImageRef.current({ base64, mime: imgFile.type || "image/png", originalName: imgFile.name || "image.png" }, (url, alt) => {
+              const cur = view.current;
+              if (!cur) return;
+              const at = Math.min(dropPos, cur.state.doc.length);
+              const md = `![${alt}](${url})`;
+              cur.dispatch({ changes: { from: at, to: at, insert: md }, selection: { anchor: at + md.length } });
+              cur.focus();
+            });
+          });
+          return true;
+        },
+      }),
+    ],
+    [ctx.platform, runSourceShortcut],
+  );
   const outlineActive = outlineOpen || outlineAnim.mounted;
   const [derivedBody, setDerivedBody] = useState(() => split.body);
   const [derivedContent, setDerivedContent] = useState(() => content);
@@ -880,7 +1378,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     if (outlineOpen) setDerivedBody(splitBodyRef.current);
   }, [outlineOpen]);
 
-  const headings = useMemo(() => (outlineActive ? outlineOf(derivedBody) : []), [outlineActive, derivedBody]);
+  const headings = useMemo(() => (outlineActive ? richOutlineOf(derivedBody) : []), [outlineActive, derivedBody]);
   const jumpRef = useRef<{ seq: number; raf1: number; raf2: number }>({ seq: 0, raf1: 0, raf2: 0 });
   useEffect(
     () => () => {
@@ -962,6 +1460,21 @@ export function NotesTool({ input, ctx }: FeatureProps) {
 
   const stats = useMemo(() => count(derivedContent), [derivedContent]);
   const outlineNodes = useMemo(() => outlineTree(headings), [headings]);
+  const filteredOutline = useMemo(() => filterOutlineNodes(outlineNodes, outlineQuery), [outlineNodes, outlineQuery]);
+  const hiVars = useMemo(() => resolveHighlightVars(prefs.highlightColor), [prefs.highlightColor]);
+  const rootStyle = useMemo(
+    () =>
+      ({
+        "--note-mark-hi-light": hiVars.light,
+        "--note-mark-hi-dark": hiVars.dark,
+        "--note-side-fs": `${prefs.sidebarFontSize}px`,
+        "--note-editor-fs": `${prefs.editorFontSize}px`,
+        "--note-source-fs": `${Math.max(10, Math.round(prefs.editorFontSize * 0.86 * 10) / 10)}px`,
+        "--note-outline-fs": `${prefs.outlineFontSize}px`,
+        "--note-editor-max-w": prefs.editorMaxWidth > 0 ? `${prefs.editorMaxWidth}px` : "none",
+      }) as Record<string, string>,
+    [hiVars, prefs.sidebarFontSize, prefs.editorFontSize, prefs.outlineFontSize, prefs.editorMaxWidth],
+  );
   const searchMatcher = useMemo(() => compileFileSearch(filter, searchRegex), [filter, searchRegex]);
   const matches = useMemo(
     () => (searchMatcher ? all.filter((n) => !n.isDir && (searchMatcher.test(n.name) || searchMatcher.test(stem(n.name)))) : null),
@@ -1136,7 +1649,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   };
 
   return (
-    <div class={`fx-page fx-notes${resizing ? " is-resizing" : ""}`} ref={notesRef}>
+    <div class={`fx-page fx-notes${resizing ? " is-resizing" : ""}`} ref={notesRef} data-mark-color={prefs.highlightColor} style={rootStyle}>
       <aside
         class={`fx-out fx-side${sideAnim.shown ? "" : " is-collapsed"}`}
         hidden={!sideAnim.mounted}
@@ -1240,7 +1753,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
         aria-label="调整文件栏宽度"
         title="拖动调整宽度，双击恢复默认"
         onPointerDown={(e) => startResize("sidebar", e as unknown as PointerEvent)}
-        onDblClick={() => updatePrefs({ sidebarWidth: DEFAULT_SIDEBAR_W })}
+        onDblClick={() => updatePrefs({ sidebarWidth: sidebarBounds.defaultWidth })}
       />
 
       {!path ? (
@@ -1288,11 +1801,17 @@ export function NotesTool({ input, ctx }: FeatureProps) {
               }}
             />
             <div class="fx-notes-head-tools">
+              <Btn small ghost icon title="查找与替换 (Ctrl+F)" onClick={() => openFindBar(false)}>
+                <Search size={14} />
+              </Btn>
               <Btn small ghost icon title="复制全文（Markdown）" onClick={() => void ctx.copy(content)}>
                 <Copy size={14} />
               </Btn>
+              <Btn small ghost icon title="笔记设置" onClick={() => { setMenuOpen(false); setSettingsTab("appearance"); }}>
+                <Settings size={14} />
+              </Btn>
               <div class="fx-notes-more">
-                <Btn small ghost icon title="更多：打开方式、另存为、排版与设置" onClick={() => setMenuOpen((o) => !o)}>
+                <Btn small ghost icon title="更多：打开方式、另存为、排版与预览" onClick={() => setMenuOpen((o) => !o)}>
                   <MoreHorizontal size={14} />
                 </Btn>
                 {menuOpen && (
@@ -1318,32 +1837,6 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                       <RotateCcw size={14} />
                       <span>恢复默认栏宽</span>
                     </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      class="fx-menu-item"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        setTimeFormatOpen(false);
-                        setShortcutOpen((o) => !o);
-                      }}
-                    >
-                      <Keyboard size={14} />
-                      <span>自定义快捷键…</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      class="fx-menu-item"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        setShortcutOpen(false);
-                        setTimeFormatOpen((o) => !o);
-                      }}
-                    >
-                      <Clock size={14} />
-                      <span>时间格式…</span>
-                    </button>
                     <div class="fx-menu-sep" />
                     <button type="button" role="menuitemcheckbox" aria-checked={prefs.strictLineBreaks} class="fx-menu-item" onClick={toggleStrictLineBreaks}>
                       <Pilcrow size={14} />
@@ -1360,17 +1853,6 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                       <span>HTML 沙箱预览</span>
                       {htmlPreview && <Check size={12} class="fx-menu-check" />}
                     </button>
-                    <div class="fx-menu-sep" />
-                    <div class="fx-menu-label">
-                      <Palette size={12} /> 代码块配色
-                    </div>
-                    {codeThemes.map((t) => (
-                      <button key={t.id} type="button" role="menuitemradio" aria-checked={prefs.codeTheme === t.id} class="fx-menu-item" onClick={() => updatePrefs({ codeTheme: t.id })}>
-                        <span class={`fx-code-swatch is-${t.id}`} />
-                        <span>{t.label}</span>
-                        {prefs.codeTheme === t.id && <Check size={12} class="fx-menu-check" />}
-                      </button>
-                    ))}
                   </div>
                 )}
               </div>
@@ -1391,52 +1873,6 @@ export function NotesTool({ input, ctx }: FeatureProps) {
               )}
             </div>
           </div>
-          {shortcutOpen && <div class="pocket-note-shortcuts" role="region" aria-label="笔记快捷键设置">
-            {(["above", "below"] as const).map((action) => <label key={action}>
-              <span>{action === "above" ? "在上方插入新行" : "在下方插入新行"}</span>
-              <input readOnly value={prefs.shortcuts[action]} aria-label={action === "above" ? "上方插行快捷键" : "下方插行快捷键"} title="点击后按下新快捷键，Esc 取消" onKeyDown={(e) => {
-                e.preventDefault(); e.stopPropagation();
-                if (e.key === "Escape") { (e.target as HTMLInputElement).blur(); return; }
-                if (e.isComposing) return;
-                const key = shortcutOf(e);
-                if (!key) return;
-                if (!e.ctrlKey && !e.metaKey && !e.altKey) return ctx.toast("快捷键需要包含 Ctrl、⌘ 或 Alt", true);
-                if (key === prefs.shortcuts[action === "above" ? "below" : "above"]) return ctx.toast("两个动作不能使用同一个快捷键", true);
-                updatePrefs({ shortcuts: { ...prefs.shortcuts, [action]: key } });
-              }} />
-            </label>)}
-            <Btn small onClick={() => updatePrefs({ shortcuts: defaultShortcuts })}>恢复默认</Btn>
-            <Btn small onClick={() => setShortcutOpen(false)}>完成</Btn>
-          </div>}
-          {timeFormatOpen && (
-            <div class="pocket-note-shortcuts pocket-time-format" role="region" aria-label="时间格式设置">
-              <label>
-                <span>时间格式</span>
-                <input
-                  value={prefs.timeFormat}
-                  placeholder={DEFAULT_TIME_FORMAT}
-                  aria-label="时间格式模板"
-                  title="支持 YYYY YY MM M DD D HH H mm m ss s ddd dddd"
-                  onInput={(e) => updatePrefs({ timeFormat: (e.target as HTMLInputElement).value })}
-                />
-              </label>
-              <span class="pocket-time-preview">示例：{formatTime(new Date(), prefs.timeFormat)}</span>
-              <div class="pocket-time-presets">
-                {TIME_FORMAT_PRESETS.map((preset) => (
-                  <Btn
-                    key={preset}
-                    small
-                    primary={(prefs.timeFormat || DEFAULT_TIME_FORMAT) === preset}
-                    onClick={() => updatePrefs({ timeFormat: preset })}
-                  >
-                    {preset}
-                  </Btn>
-                ))}
-              </div>
-              <Btn small onClick={() => updatePrefs({ timeFormat: DEFAULT_TIME_FORMAT })}>恢复默认</Btn>
-              <Btn small onClick={() => setTimeFormatOpen(false)}>完成</Btn>
-            </div>
-          )}
           {mode === "source" && (
             <div class="fx-notes-bar">
               <Btn small ghost icon title="标题" onClick={() => prefixLines("## ")}><Heading size={14} /></Btn>
@@ -1459,6 +1895,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
               </button>
               {frontOpen && (
                 <textarea
+                  ref={frontInputRef}
                   class="fx-notes-front-text"
                   readOnly={mode === "read"}
                   spellcheck={false}
@@ -1470,12 +1907,33 @@ export function NotesTool({ input, ctx }: FeatureProps) {
             </div>
           )}
           <div class="fx-out fx-notes-body" ref={body} data-code-theme={prefs.codeTheme} onContextMenu={openSourceContextMenu}>
+            {findOpen && (
+              <FindReplaceBar
+                query={findQuery}
+                replaceText={findReplaceText}
+                showReplace={findShowReplace}
+                canReplace={mode !== "read"}
+                stats={findStats}
+                focusNonce={findFocusNonce}
+                onChangeQuery={updateFindQuery}
+                onChangeReplaceText={setFindReplaceText}
+                onToggleReplace={() => setFindShowReplace((v) => !v)}
+                onNext={() => stepFind(1)}
+                onPrev={() => stepFind(-1)}
+                onReplaceOne={replaceOneFind}
+                onReplaceAll={replaceAllFind}
+                onClose={closeFindBar}
+              />
+            )}
             {mode !== "source" ? (
               <RichEditor
                 key={`${path}#${nonce}`}
                 value={split.body}
+                notePath={path}
                 viewMode={mode as RichViewMode}
                 strictLineBreaks={prefs.strictLineBreaks}
+                highlightColor={prefs.highlightColor}
+                editorMaxWidth={prefs.editorMaxWidth}
                 timeFormat={prefs.timeFormat}
                 platform={ctx.platform}
                 shortcuts={prefs.shortcuts}
@@ -1486,16 +1944,47 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                 onCopy={ctx.copy}
                 onToast={ctx.toast}
                 onExitHtmlPreview={() => setHtmlPreview(false)}
+                onInsertFrontmatter={insertFrontmatter}
+                onOpenFind={openFindBar}
+                onPasteImage={handlePasteImage}
                 scrollTop={richScroll.current}
+                initialAnchor={pendingRichAnchor.current}
+                handleRef={richHandleRef}
               />
             ) : (
-              <CodeEditor key={path} value={content} lang="markdown" wrap onChange={edit} onReady={(v) => (view.current = v)} onCursor={setCursor} autoFocus extensions={sourceExtensions} />
+              <CodeEditor
+                key={path}
+                value={content}
+                lang="markdown"
+                wrap
+                onChange={edit}
+                onReady={(v) => {
+                  view.current = v;
+                  const target = pendingSourceOffset.current;
+                  if (target !== null) {
+                    pendingSourceOffset.current = null;
+                    const clamped = Math.max(0, Math.min(v.state.doc.length, target));
+                    v.dispatch({
+                      selection: { anchor: clamped },
+                      effects: EditorView.scrollIntoView(clamped, { y: "center" }),
+                    });
+                    v.focus();
+                  }
+                }}
+                onDestroy={() => {
+                  view.current = null;
+                }}
+                onCursor={setCursor}
+                autoFocus
+                extensions={sourceExtensions}
+              />
             )}
             {mode === "source" && sourceMenu && (
               <EditorContextMenu
                 menu={sourceMenu}
                 platform={ctx.platform}
                 timeFormat={prefs.timeFormat}
+                shortcuts={prefs.shortcuts}
                 actions={sourceMenuActions}
                 onClose={() => setSourceMenu(null)}
               />
@@ -1507,6 +1996,24 @@ export function NotesTool({ input, ctx }: FeatureProps) {
               {mode === "source" ? ` · 第 ${cursor.line} 行，第 ${cursor.col} 列${cursor.selected ? `（选中 ${cursor.selected}）` : ""}` : ""}
             </span>
             <span class="fx-spacer" />
+            <div class="fx-status-width" title="拖动调整编辑区文字显示宽度（自动记住），点击数值在限宽与铺满间切换">
+              <button
+                type="button"
+                class="fx-status-width-btn"
+                onClick={() => updatePrefs({ editorMaxWidth: prefs.editorMaxWidth > 0 ? 0 : DEFAULT_EDITOR_MAX_WIDTH })}
+              >
+                {prefs.editorMaxWidth > 0 ? `宽 ${prefs.editorMaxWidth}px` : "铺满"}
+              </button>
+              <input
+                type="range"
+                min={480}
+                max={1600}
+                step={20}
+                aria-label="编辑区文字宽度"
+                value={prefs.editorMaxWidth > 0 ? Math.max(480, Math.min(1600, prefs.editorMaxWidth)) : 1600}
+                onInput={(e) => updatePrefs({ editorMaxWidth: Number((e.target as HTMLInputElement).value) })}
+              />
+            </div>
             <span>{dirty ? "正在保存…" : saved ? `已保存 ${saved}` : "自动保存"}</span>
           </div>
         </div>
@@ -1519,7 +2026,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
         aria-label="调整大纲宽度"
         title="拖动调整宽度，双击恢复默认"
         onPointerDown={(e) => startResize("outline", e as unknown as PointerEvent)}
-        onDblClick={() => updatePrefs({ outlineWidth: DEFAULT_OUTLINE_W })}
+        onDblClick={() => updatePrefs({ outlineWidth: outlineBounds.defaultWidth })}
       />
       <nav
         class={`fx-out pocket-note-outline${outlineAnim.shown ? "" : " is-collapsed"}`}
@@ -1534,15 +2041,33 @@ export function NotesTool({ input, ctx }: FeatureProps) {
             <PanelRightClose size={14} />
           </Btn>
         </div>
+        <div class="fx-side-search-row pocket-outline-search-row">
+          <label class="fx-side-search">
+            <Search size={12} />
+            <input
+              placeholder="搜索大纲"
+              aria-label="搜索大纲"
+              value={outlineQuery}
+              spellcheck={false}
+              onInput={(e) => setOutlineQuery((e.target as HTMLInputElement).value)}
+            />
+            {outlineQuery && (
+              <button type="button" class="fx-side-clear" title="清空大纲搜索" aria-label="清空大纲搜索" onClick={() => setOutlineQuery("")}>
+                <X size={12} />
+              </button>
+            )}
+          </label>
+        </div>
         <div class="fx-side-list">
-          {outlineNodes.length ? (
+          {filteredOutline.length ? (
             <div class="pocket-outline-tree">
               {(() => {
-                const renderNodes = (nodes: OutlineNode[]) =>
-                  nodes.map((node) => {
+                const searching = !!outlineQuery.trim();
+                const renderNodes = (items: FilteredOutlineNode[]) =>
+                  items.map(({ node, matched, children }) => {
                     const nodeKey = `${node.heading.level}:${node.index}`;
-                    const hasChildren = node.children.length > 0;
-                    const collapsed = !!outlineCollapsed[nodeKey];
+                    const hasChildren = children.length > 0;
+                    const collapsed = !searching && !!outlineCollapsed[nodeKey];
                     const toggle = () => setOutlineCollapsed((prev) => ({ ...prev, [nodeKey]: !prev[nodeKey] }));
                     return (
                       <div key={`${node.heading.from}-${node.index}`} class="pocket-outline-node">
@@ -1571,19 +2096,24 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                           ) : (
                             <span class="pocket-outline-spacer" />
                           )}
-                          <button type="button" class="pocket-outline-label" onClick={() => jumpHeading(node.index)} title={node.heading.text}>
-                            {node.heading.text || "（空标题）"}
+                          <button
+                            type="button"
+                            class={`pocket-outline-label${matched ? " is-hit" : ""}`}
+                            onClick={() => jumpHeading(node.index)}
+                            title={node.heading.text}
+                          >
+                            {node.heading.text ? renderOutlineInlines(node.heading.inlines) : "（空标题）"}
                           </button>
                         </div>
-                        {hasChildren && !collapsed && <div class="pocket-outline-children">{renderNodes(node.children)}</div>}
+                        {hasChildren && !collapsed && <div class="pocket-outline-children">{renderNodes(children)}</div>}
                       </div>
                     );
                   });
-                return renderNodes(outlineNodes);
+                return renderNodes(filteredOutline);
               })()}
             </div>
           ) : (
-            <div class="fx-side-empty">使用 # 标题后会显示在这里</div>
+            <div class="fx-side-empty">{outlineQuery.trim() ? "没有匹配的标题" : "使用 # 标题后会显示在这里"}</div>
           )}
         </div>
       </nav>
@@ -1607,6 +2137,76 @@ export function NotesTool({ input, ctx }: FeatureProps) {
           busy={deleting}
           onConfirm={() => void confirmBatchDelete()}
           onCancel={() => !deleting && setPendingDelete(null)}
+        />
+      )}
+      {pendingImgRename && (
+        <ImageRenameModal
+          previewDataUrl={pendingImgRename.previewDataUrl}
+          initialName={pendingImgRename.initialName}
+          targetHint={pendingImgRename.targetHint}
+          onConfirm={(finalName) => {
+            const cur = pendingImgRename;
+            setPendingImgRename(null);
+            void runPersistImage(cur.input, finalName, cur.insert);
+          }}
+          onCancel={() => setPendingImgRename(null)}
+        />
+      )}
+      {settingsTab && (
+        <NotesSettingsModal
+          initialTab={settingsTab}
+          notePath={path}
+          codeTheme={prefs.codeTheme}
+          codeThemes={codeThemes}
+          highlightColor={prefs.highlightColor}
+          highlightHistory={prefs.highlightHistory}
+          sidebarFontSize={prefs.sidebarFontSize}
+          editorFontSize={prefs.editorFontSize}
+          outlineFontSize={prefs.outlineFontSize}
+          editorMaxWidth={prefs.editorMaxWidth}
+          sidebarBounds={prefs.sidebarBounds}
+          outlineBounds={prefs.outlineBounds}
+          imagePrefs={prefs.imagePrefs}
+          timeFormat={prefs.timeFormat}
+          shortcuts={prefs.shortcuts}
+          onChangeCodeTheme={(id) => updatePrefs({ codeTheme: id })}
+          onChangeHighlightColor={(color, recordHistory) => {
+            if (recordHistory) {
+              updatePrefs({
+                highlightColor: color,
+                highlightHistory: pushHighlightHistory(prefsRef.current.highlightHistory, color),
+              });
+            } else {
+              updatePrefs({ highlightColor: color });
+            }
+          }}
+          onChangeFontSizes={(patch) => updatePrefs(patch)}
+          onChangeEditorMaxWidth={(editorMaxWidth) => updatePrefs({ editorMaxWidth })}
+          onChangeSidebarBounds={(sb) =>
+            updatePrefs({
+              sidebarBounds: sb,
+              sidebarWidth: Math.max(sb.minWidth, Math.min(sb.maxWidth, prefsRef.current.sidebarWidth)),
+            })
+          }
+          onChangeOutlineBounds={(ob) =>
+            updatePrefs({
+              outlineBounds: ob,
+              outlineWidth: Math.max(ob.minWidth, Math.min(ob.maxWidth, prefsRef.current.outlineWidth)),
+            })
+          }
+          onChangeImagePrefs={(patch) => updatePrefs({ imagePrefs: { ...prefsRef.current.imagePrefs, ...patch } })}
+          onChangeTimeFormat={(fmt) => updatePrefs({ timeFormat: fmt })}
+          onChangeShortcuts={(shortcuts) => updatePrefs({ shortcuts })}
+          onResetAll={() => {
+            updatePrefs({
+              ...defaultPrefs,
+              sidebarHidden: prefsRef.current.sidebarHidden,
+              outline: prefsRef.current.outline,
+            });
+            ctx.toast("已恢复全部默认设置");
+          }}
+          onToast={ctx.toast}
+          onClose={() => setSettingsTab(null)}
         />
       )}
     </div>

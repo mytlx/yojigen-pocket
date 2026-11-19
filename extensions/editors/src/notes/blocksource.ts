@@ -7,8 +7,11 @@ import { liftListItem, splitListItem } from "@milkdown/kit/prose/schema-list";
 import { type EditorState, Plugin, PluginKey, Selection, TextSelection } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { $prose } from "@milkdown/kit/utils";
-import { insertLine, lineAction, type NoteShortcuts } from "./shortcuts";
+import { applySourceParagraph, type BlockKind } from "./blockops";
+import { blobToBase64, type PendingImageInput } from "./images";
+import { applySourceIndent, insertLine, lineAction, matchShortcutAction, type NoteShortcuts } from "./shortcuts";
 import { filterSlashItems, matchBlockSlash, type SlashCommandItem } from "./slash";
+import { SlashPopupController, insertRichFootnote } from "./slashmenu";
 import { formatTime } from "./timefmt";
 
 interface Editing {
@@ -160,10 +163,20 @@ function adjacentSelection(doc: PMNode, from: number, to: number, dir: -1 | 1): 
 }
 
 /** 光标所在块实时展示紧凑的 Markdown 源码（类 Typora）；离开或按 Esc 恢复渲染。 */
-export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: NoteShortcuts; timeFormat: string }) {
+export function blockSourcePlugin(
+  options: () => {
+    enabled: boolean;
+    shortcuts: NoteShortcuts;
+    platform?: string;
+    timeFormat: string;
+    onOpenFind?: (replace: boolean) => void;
+    onPasteImage?: (input: PendingImageInput, insert: (markdownUrl: string, alt: string) => void) => void;
+  },
+) {
   return $prose((ctx) => {
     let dismissedFrom: number | null = null;
     let pointerDown = false;
+    let viewDestroyed = false;
     let closeActiveSlash: (() => void) | null = null;
 
     const serializeBlock = (state: EditorState, node: PMNode): string =>
@@ -209,34 +222,39 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
           return tr.docChanged ? null : active;
         },
       },
-      view: () => ({
-        update(view) {
-          view.dom.classList.toggle("pocket-hide-vcursor-block", !!key.getState(view.state));
-          if (!key.getState(view.state)) closeActiveSlash?.();
-          const area = view.dom.querySelector<HTMLTextAreaElement>(".pocket-block-source");
-          const areaHasFocus = area !== null && document.activeElement === area;
-          if (!options().enabled) {
+      view: () => {
+        viewDestroyed = false;
+        return {
+          update(view) {
+            if (viewDestroyed || view.isDestroyed) return;
+            view.dom.classList.toggle("pocket-hide-vcursor-block", !!key.getState(view.state));
+            if (!key.getState(view.state)) closeActiveSlash?.();
+            const area = view.dom.querySelector<HTMLTextAreaElement>(".pocket-block-source");
+            const areaHasFocus = area !== null && document.activeElement === area;
+            if (!options().enabled) {
+              closeActiveSlash?.();
+              if (key.getState(view.state)) view.dispatch(view.state.tr.setMeta(key, null));
+              return;
+            }
+            if (areaHasFocus) return;
+            const { selection } = view.state;
+            if (!(selection instanceof TextSelection) || !selection.empty) {
+              if (key.getState(view.state)) view.dispatch(view.state.tr.setMeta(key, null));
+              return;
+            }
+            const target = findBlockTarget(view.state.doc, selection.$from.pos);
+            if (dismissedFrom !== null && target?.from !== dismissedFrom) dismissedFrom = null;
+            const cur = key.getState(view.state);
+            if (!pointerDown && view.hasFocus() && (!cur || !target || cur.from !== target.from)) {
+              activateAtSelection(view, selection.$from.pos);
+            }
+          },
+          destroy() {
+            viewDestroyed = true;
             closeActiveSlash?.();
-            if (key.getState(view.state)) view.dispatch(view.state.tr.setMeta(key, null));
-            return;
-          }
-          if (areaHasFocus) return;
-          const { selection } = view.state;
-          if (!(selection instanceof TextSelection) || !selection.empty) {
-            if (key.getState(view.state)) view.dispatch(view.state.tr.setMeta(key, null));
-            return;
-          }
-          const target = findBlockTarget(view.state.doc, selection.$from.pos);
-          if (dismissedFrom !== null && target?.from !== dismissedFrom) dismissedFrom = null;
-          const cur = key.getState(view.state);
-          if (!pointerDown && view.hasFocus() && (!cur || !target || cur.from !== target.from)) {
-            activateAtSelection(view, selection.$from.pos);
-          }
-        },
-        destroy() {
-          closeActiveSlash?.();
-        },
-      }),
+          },
+        };
+      },
       props: {
         handleDOMEvents: {
           mousedown() {
@@ -254,10 +272,15 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
             return false;
           },
           blur(view, event) {
+            if (viewDestroyed || view.isDestroyed || !view.dom.isConnected) return false;
             if (document.querySelector(".fx-editor-menu")) return false;
             const next = event.relatedTarget as Node | null;
             if (next && view.dom.contains(next)) return false;
-            if (key.getState(view.state)) view.dispatch(view.state.tr.setMeta(key, null));
+            try {
+              if (key.getState(view.state)) view.dispatch(view.state.tr.setMeta(key, null));
+            } catch {
+              /* 编辑器正在卸载时忽略失焦清理 */
+            }
             return false;
           },
         },
@@ -279,6 +302,7 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
                 const area = document.createElement("textarea");
                 area.className = "pocket-block-source";
                 area.rows = 1;
+                area.dataset.pocketBlockFrom = String(active.from);
                 area.setAttribute("aria-label", "当前块 Markdown 源码");
                 if (targetNode?.type.name === "heading") {
                   area.dataset.headingLevel = String(targetNode.attrs.level ?? 1);
@@ -480,27 +504,14 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
                 };
 
                 let composing = false;
-                let slashEl: HTMLDivElement | null = null;
-                let slashItems: SlashCommandItem[] = [];
-                let slashIdx = 0;
+                const slashPopup = new SlashPopupController();
                 let slashFrom = 0;
 
                 const closeSlash = () => {
-                  if (slashEl) {
-                    slashEl.remove();
-                    slashEl = null;
-                  }
-                  slashItems = [];
-                  slashIdx = 0;
+                  slashPopup.close();
                   if (closeActiveSlash === closeSlash) closeActiveSlash = null;
                 };
                 closeActiveSlash = closeSlash;
-
-                const slashHintText = (item: SlashCommandItem) => {
-                  if (item.id === "time") return "时间";
-                  if (item.markdown !== undefined) return item.markdown.trim() || "¶";
-                  return "/";
-                };
 
                 const runSlashItem = (item: SlashCommandItem) => {
                   const current = key.getState(view.state);
@@ -531,6 +542,41 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
                     area.setRangeText(item.markdown, from, end, "end");
                     syncContent(area.value);
                     if (area.isConnected) area.focus();
+                    return;
+                  }
+                  if (item.richKind === "image") {
+                    const snippet = "![图片描述](https://)";
+                    area.setRangeText(snippet, from, end, "end");
+                    area.setSelectionRange(from + 8, from + 16);
+                    syncContent(area.value);
+                    if (area.isConnected) area.focus();
+                    return;
+                  }
+                  if (item.richKind === "toc") {
+                    const remaining = area.value.slice(0, from) + area.value.slice(end);
+                    const schema = view.state.schema;
+                    if (!remaining.trim() && current && current.id === active.id && schema.nodes.paragraph) {
+                      const tocPara = schema.nodes.paragraph.create(null, schema.text("[TOC]"));
+                      const nextPara = schema.nodes.paragraph.create();
+                      const tr = view.state.tr.replaceWith(current.from, current.to, [tocPara, nextPara]);
+                      tr.setSelection(Selection.near(tr.doc.resolve(clampPos(tr.doc, current.from + tocPara.nodeSize + 1))));
+                      tr.setMeta(key, null);
+                      view.dispatch(tr.scrollIntoView());
+                      view.focus();
+                      return;
+                    }
+                    area.setRangeText("[TOC]", from, end, "end");
+                    syncContent(area.value);
+                    if (area.isConnected) area.focus();
+                    return;
+                  }
+                  if (item.richKind === "footnote") {
+                    area.setRangeText("", from, end, "end");
+                    syncContent(area.value);
+                    if (key.getState(view.state)?.id === active.id) {
+                      view.dispatch(view.state.tr.setMeta(key, null));
+                    }
+                    insertRichFootnote(view, ctx);
                     return;
                   }
                   if (item.richKind) {
@@ -566,45 +612,8 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
                       area.setSelectionRange(inner, inner);
                     }
                     syncContent(area.value);
-                    area.focus();
+                    if (area.isConnected) area.focus();
                   }
-                };
-
-                const renderSlash = () => {
-                  if (!slashEl) return;
-                  slashEl.replaceChildren();
-                  let lastGroup = "";
-                  slashItems.forEach((item, idx) => {
-                    if (item.groupLabel !== lastGroup) {
-                      lastGroup = item.groupLabel;
-                      const grp = document.createElement("div");
-                      grp.className = "fx-menu-label";
-                      grp.textContent = item.groupLabel;
-                      slashEl!.appendChild(grp);
-                    }
-                    const btn = document.createElement("button");
-                    btn.type = "button";
-                    btn.className = `fx-menu-item${idx === slashIdx ? " is-active" : ""}`;
-                    const label = document.createElement("span");
-                    label.textContent = item.label;
-                    const hint = document.createElement("kbd");
-                    hint.className = "fx-menu-kbd";
-                    hint.textContent = slashHintText(item);
-                    btn.append(label, hint);
-                    btn.addEventListener("mouseenter", () => {
-                      if (slashIdx === idx) return;
-                      slashIdx = idx;
-                      slashEl?.querySelectorAll(".fx-menu-item").forEach((el, i) => el.classList.toggle("is-active", i === slashIdx));
-                    });
-                    btn.addEventListener("mousedown", (ev) => {
-                      ev.preventDefault();
-                      ev.stopPropagation();
-                      runSlashItem(item);
-                    });
-                    slashEl!.appendChild(btn);
-                  });
-                  const activeBtn = slashEl.querySelector<HTMLElement>(".fx-menu-item.is-active");
-                  activeBtn?.scrollIntoView({ block: "nearest" });
                 };
 
                 const updateSlash = () => {
@@ -623,27 +632,8 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
                     return;
                   }
                   slashFrom = m.from;
-                  slashItems = filtered;
-                  if (slashIdx >= filtered.length) slashIdx = 0;
-
-                  if (!slashEl) {
-                    slashEl = document.createElement("div");
-                    slashEl.className = "fx-menu pocket-block-slash";
-                    slashEl.setAttribute("role", "listbox");
-                    document.body.appendChild(slashEl);
-                  }
-                  renderSlash();
-
                   const coords = measureTextareaCaret(area);
-                  const rect = slashEl.getBoundingClientRect();
-                  const left = Math.max(6, Math.min(coords.left, window.innerWidth - rect.width - 6));
-                  const spaceBelow = window.innerHeight - coords.bottom - 8;
-                  const top =
-                    spaceBelow < rect.height && coords.top - rect.height - 6 > 6
-                      ? coords.top - rect.height - 4
-                      : Math.min(coords.bottom + 4, window.innerHeight - rect.height - 6);
-                  slashEl.style.left = `${left}px`;
-                  slashEl.style.top = `${Math.max(6, top)}px`;
+                  slashPopup.open(filtered, coords, runSlashItem);
                 };
 
                 area.addEventListener("compositionstart", () => {
@@ -658,6 +648,52 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
                   syncContent(area.value);
                   updateSlash();
                 });
+                const handleImageFiles = (files: FileList | File[]) => {
+                  const cb = options().onPasteImage;
+                  if (!cb) return false;
+                  const imgFile = Array.from(files).find((f) => f.type.startsWith("image/"));
+                  if (!imgFile) return false;
+                  const atStart = area.selectionStart;
+                  const atEnd = area.selectionEnd;
+                  void blobToBase64(imgFile).then((base64) => {
+                    cb({ base64, mime: imgFile.type || "image/png", originalName: imgFile.name || "image.png" }, (url, alt) => {
+                      const md = `![${alt}](${url})`;
+                      if (area.isConnected) {
+                        const s = Math.min(atStart, area.value.length);
+                        const e = Math.min(atEnd, area.value.length);
+                        area.setRangeText(md, s, e, "end");
+                        syncContent(area.value);
+                        area.focus();
+                      } else if (!viewDestroyed && !view.isDestroyed) {
+                        view.dispatch(view.state.tr.insertText(md).scrollIntoView());
+                        view.focus();
+                      }
+                    });
+                  });
+                  return true;
+                };
+                area.addEventListener("paste", (e) => {
+                  const dt = e.clipboardData;
+                  if (!dt) return;
+                  const files: File[] = [];
+                  for (const item of Array.from(dt.items)) {
+                    if (item.kind === "file" && item.type.startsWith("image/")) {
+                      const f = item.getAsFile();
+                      if (f) files.push(f);
+                    }
+                  }
+                  if (files.length > 0 && handleImageFiles(files)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }
+                });
+                area.addEventListener("drop", (e) => {
+                  const files = e.dataTransfer?.files;
+                  if (files && files.length > 0 && handleImageFiles(files)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }
+                });
                 area.addEventListener("click", updateSlash);
                 area.addEventListener("keyup", (e) => {
                   if (["ArrowLeft", "ArrowRight", "Home", "End", "Backspace", "Delete"].includes(e.key)) {
@@ -666,23 +702,20 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
                 });
                 area.addEventListener("keydown", (e) => {
                   e.stopPropagation();
-                  if (slashEl && slashItems.length > 0 && !e.isComposing) {
+                  if (slashPopup.isOpen() && !e.isComposing) {
                     if (e.key === "ArrowDown") {
                       e.preventDefault();
-                      slashIdx = (slashIdx + 1) % slashItems.length;
-                      renderSlash();
+                      slashPopup.move(1);
                       return;
                     }
                     if (e.key === "ArrowUp") {
                       e.preventDefault();
-                      slashIdx = (slashIdx - 1 + slashItems.length) % slashItems.length;
-                      renderSlash();
+                      slashPopup.move(-1);
                       return;
                     }
                     if ((e.key === "Enter" || e.key === "Tab") && !e.ctrlKey && !e.metaKey && !e.altKey) {
                       e.preventDefault();
-                      const chosen = slashItems[slashIdx];
-                      if (chosen) runSlashItem(chosen);
+                      slashPopup.selectCurrent();
                       return;
                     }
                     if (e.key === "Escape") {
@@ -692,15 +725,69 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
                     }
                   }
 
-                  const direction = lineAction(e, options().shortcuts);
-                  if (direction) {
-                    e.preventDefault();
-                    closeSlash();
-                    const edit = insertLine(area.value, area.selectionStart, direction);
-                    area.setRangeText(edit.insert, edit.from, edit.from, "end");
-                    area.setSelectionRange(edit.anchor, edit.anchor);
-                    syncContent(area.value);
-                    return;
+                  const act = matchShortcutAction(e, options().shortcuts, options().platform);
+                  if (act) {
+                    if (act === "find" || act === "replace") {
+                      e.preventDefault();
+                      closeSlash();
+                      options().onOpenFind?.(act === "replace");
+                      return;
+                    }
+                    if (act === "above" || act === "below") {
+                      e.preventDefault();
+                      closeSlash();
+                      const edit = insertLine(area.value, area.selectionStart, act);
+                      area.setRangeText(edit.insert, edit.from, edit.from, "end");
+                      area.setSelectionRange(edit.anchor, edit.anchor);
+                      syncContent(area.value);
+                      return;
+                    }
+                    if (act === "indent" || act === "outdent") {
+                      e.preventDefault();
+                      closeSlash();
+                      const res = applySourceIndent(area.value, area.selectionStart, area.selectionEnd, act);
+                      area.setRangeText(res.insert, res.from, res.to, "end");
+                      area.setSelectionRange(res.anchor, res.head);
+                      syncContent(area.value);
+                      return;
+                    }
+                    if (act === "codeBlock" || act === "mathBlock") {
+                      e.preventDefault();
+                      closeSlash();
+                      const current = key.getState(view.state);
+                      const schema = view.state.schema;
+                      if (current && current.id === active.id && schema.nodes.code_block) {
+                        const attrs = act === "mathBlock" ? { language: "LaTeX" } : undefined;
+                        const tr = view.state.tr.replaceWith(current.from, current.to, schema.nodes.code_block.create(attrs));
+                        tr.setSelection(Selection.near(tr.doc.resolve(clampPos(tr.doc, current.from + 1))));
+                        tr.setMeta(key, null);
+                        view.dispatch(tr.scrollIntoView());
+                        view.focus();
+                      }
+                      return;
+                    }
+                    const paraMap: Partial<Record<typeof act, BlockKind>> = {
+                      h1: "h1",
+                      h2: "h2",
+                      h3: "h3",
+                      h4: "h4",
+                      h5: "h5",
+                      h6: "h6",
+                      quote: "quote",
+                      orderedList: "ordered",
+                      bulletList: "bullet",
+                      taskList: "task",
+                    };
+                    const blockKind = paraMap[act];
+                    if (blockKind) {
+                      e.preventDefault();
+                      closeSlash();
+                      const res = applySourceParagraph(area.value, area.selectionStart, area.selectionEnd, blockKind);
+                      area.setRangeText(res.insert, res.from, res.to, "end");
+                      area.setSelectionRange(res.anchor, res.head);
+                      syncContent(area.value);
+                      return;
+                    }
                   }
                   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.isComposing) {
                     e.preventDefault();
@@ -760,9 +847,23 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
 
                 area.addEventListener("blur", (e) => {
                   closeSlash();
+                  if (viewDestroyed || view.isDestroyed || !view.dom.isConnected) return;
                   if (document.querySelector(".fx-editor-menu")) return;
-                  if ((e.relatedTarget as Element | null)?.closest?.(".fx-editor-menu")) return;
-                  if (key.getState(view.state)?.id === active.id) view.dispatch(view.state.tr.setMeta(key, null));
+                  const next = e.relatedTarget as Element | null;
+                  if (next?.closest?.(".fx-editor-menu")) return;
+                  try {
+                    const current = key.getState(view.state);
+                    if (current?.id === active.id) {
+                      const tr = view.state.tr.setMeta(key, null);
+                      if (!next || !view.dom.contains(next)) {
+                        const off = Math.min(Math.max(0, current.to - current.from - 2), area.selectionStart);
+                        tr.setSelection(TextSelection.near(view.state.doc.resolve(clampPos(view.state.doc, current.from + 1 + off))));
+                      }
+                      view.dispatch(tr);
+                    }
+                  } catch {
+                    /* 编辑器正在卸载时忽略失焦清理 */
+                  }
                 });
 
                 requestAnimationFrame(() => {

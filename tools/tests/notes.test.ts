@@ -2,11 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { splitFrontmatter, joinFrontmatter } from "../../extensions/editors/src/notes/frontmatter";
 import { applyBlankLinesToAst } from "../../extensions/editors/src/notes/blanklines";
 import { matchStandaloneHtmlSnippet, parseBlockPrefix } from "../../extensions/editors/src/notes/liveinline";
-import { applySourceFormat, applySourceParagraph, buildSourceInsert } from "../../extensions/editors/src/notes/blockops";
+import { applySourceFormat, applySourceParagraph, buildSourceInsert, nextFootnoteIndex, nextLinkRefId } from "../../extensions/editors/src/notes/blockops";
+import { DEFAULT_HIGHLIGHT_COLOR, normalizeHighlightColor, pushHighlightHistory, resolveHighlightVars } from "../../extensions/editors/src/notes/highlights";
+import { expandReplacement, findTextRanges } from "../../extensions/editors/src/notes/findreplace";
+import { buildImageFilename, extractUrlByPath, resolveImageDir, resolveNoteRelativePath, sanitizeImageName } from "../../extensions/editors/src/notes/images";
+import { anchorToSourceOffset, pickBestBlockIndex, sourceOffsetToAnchor } from "../../extensions/editors/src/notes/syncpos";
 import { DEFAULT_TIME_FORMAT, formatTime } from "../../extensions/editors/src/notes/timefmt";
 import { filterSlashItems, matchBlockSlash } from "../../extensions/editors/src/notes/slash";
-import { outlineOf, outlineTree } from "../../extensions/editors/src/notes/outline";
-import { defaultShortcuts, insertLine, lineAction, shortcutOf } from "../../extensions/editors/src/notes/shortcuts";
+import { outlineOf, outlineTree, richOutlineOf } from "../../extensions/editors/src/notes/outline";
+import { applySourceIndent, defaultShortcuts, findShortcutConflicts, insertLine, lineAction, matchShortcutAction, shortcutOf } from "../../extensions/editors/src/notes/shortcuts";
 import {
   DEFAULT_OUTLINE_W,
   DEFAULT_SIDEBAR_W,
@@ -17,6 +21,7 @@ import {
   computePanelWidths,
   filterDirPaths,
   normalizeDeleteTargets,
+  normalizePanelBounds,
   selectRange,
   sortTreeNodes,
   visibleTreePaths,
@@ -270,5 +275,168 @@ describe("notes v2: timefmt, slash menu, block prefix & source helpers", () => {
 
     const insertedTime = buildSourceInsert("time", DEFAULT_TIME_FORMAT, true);
     expect(insertedTime.insert).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  });
+});
+
+describe("notes v3: rich outline inlines, cursor sync, highlight presets & extended inserts", () => {
+  test("richOutlineOf preserves restrained inline styles and strips == / ^ / ~ markers", () => {
+    const md = "## **加粗** ==重点== ~~废弃~~ `API` <u>下划线</u> H~2~O x^2^ [链接](https://a.com)";
+    const list = richOutlineOf(md);
+    expect(list.length).toBe(1);
+    expect(list[0]!.text).toBe("加粗 重点 废弃 API 下划线 H2O x2 链接");
+    const tags = list[0]!.inlines.filter((n) => n.type !== "text").map((n) => n.type);
+    expect(tags).toEqual(["strong", "mark", "del", "code", "u", "sub", "sup"]);
+    expect(outlineOf(md)[0]!.text).toBe("加粗 重点 废弃 API 下划线 H2O x2 链接");
+  });
+
+  test("anchorToSourceOffset and sourceOffsetToAnchor round-trip across frontmatter and blocks", () => {
+    const doc = [
+      "---",
+      "title: 长文档",
+      "---",
+      "",
+      "# 第一章",
+      "",
+      "这是一段普通文字，里面有 **加粗关键词** 和其他内容。",
+      "",
+      "- 列表条目一",
+      "- 列表条目二",
+      "",
+      "## 第二章",
+      "",
+      "结尾段落用于定位测试。",
+      "",
+    ].join("\n");
+
+    const targetIdx = doc.indexOf("加粗关键词");
+    const anchor = sourceOffsetToAnchor(doc, targetIdx + 3);
+    expect(anchor.blockIndex).toBe(1);
+    const back = anchorToSourceOffset(doc, anchor);
+    expect(Math.abs(back - (targetIdx + 3))).toBeLessThanOrEqual(3);
+
+    const endTarget = doc.indexOf("定位测试");
+    const endAnchor = sourceOffsetToAnchor(doc, endTarget);
+    expect(endAnchor.blockIndex).toBe(4);
+    const endBack = anchorToSourceOffset(doc, endAnchor);
+    expect(Math.abs(endBack - endTarget)).toBeLessThanOrEqual(2);
+
+    // 即使 blockIndex 因空段落发生偏移，凭借上下文片段仍能精准对齐原块
+    const driftedOffset = anchorToSourceOffset(doc, { ...endAnchor, blockIndex: endAnchor.blockIndex + 2 });
+    expect(Math.abs(driftedOffset - endTarget)).toBeLessThanOrEqual(2);
+    expect(pickBestBlockIndex(["甲段", "乙段", "结尾段落用于定位测试。"], (s) => s, { ...endAnchor, blockIndex: 0 })).toBe(2);
+  });
+
+  test("extended source format/insert helpers and highlight presets work accurately", () => {
+    expect(normalizeHighlightColor("green")).toBe("green");
+    expect(normalizeHighlightColor("pink")).toBe("pink");
+    expect(normalizeHighlightColor("invalid")).toBe(DEFAULT_HIGHLIGHT_COLOR);
+
+    const mathFmt = applySourceFormat("a+b", 0, 3, "math");
+    expect(mathFmt.insert).toBe("$a+b$");
+
+    expect(nextFootnoteIndex("已有 [^1] 和 [^3]")).toBe(4);
+    expect(nextLinkRefId("[ref]: https://a.com\n[ref2]: https://b.com")).toBe("ref3");
+
+    const fn = buildSourceInsert("footnote", DEFAULT_TIME_FORMAT, false, "示例 [^2]");
+    expect(fn.insert).toBe("[^3]");
+    expect(fn.appendDoc).toBe("[^3]: 脚注内容");
+
+    const img = buildSourceInsert("image", DEFAULT_TIME_FORMAT, false);
+    expect(img.insert).toBe("![图片描述](https://)");
+    expect(img.selectLen).toBe(8);
+
+    const toc = buildSourceInsert("toc", DEFAULT_TIME_FORMAT, true);
+    expect(toc.insert).toBe("[TOC]\n");
+
+    expect(filterSlashItems("toc").some((i) => i.id === "toc")).toBe(true);
+    expect(filterSlashItems("图像").some((i) => i.id === "image")).toBe(true);
+    expect(filterSlashItems("脚注").some((i) => i.id === "footnote")).toBe(true);
+  });
+});
+
+
+describe("notes v4: find/replace, custom highlight history, Typora shortcuts, panel bounds & image helpers", () => {
+  test("findTextRanges supports case, wholeWord, regex, invalid regex, and group replacement", () => {
+    const src = "Foo foo foobar FOO_1";
+    expect(findTextRanges(src, { query: "foo", caseSensitive: false, wholeWord: false, regex: false }).matches.length).toBe(4);
+    expect(findTextRanges(src, { query: "foo", caseSensitive: true, wholeWord: false, regex: false }).matches.length).toBe(2);
+    expect(findTextRanges(src, { query: "foo", caseSensitive: false, wholeWord: true, regex: false }).matches.length).toBe(2);
+    const rx = findTextRanges("id=12, id=345", { query: "id=(\\d+)", caseSensitive: false, wholeWord: false, regex: true });
+    expect(rx.matches).toEqual([{ from: 0, to: 5 }, { from: 7, to: 13 }]);
+    expect(expandReplacement("id=12", { query: "id=(\\d+)", caseSensitive: false, wholeWord: false, regex: true }, "[$1]")).toBe("[12]");
+    expect(findTextRanges("abc", { query: "[", caseSensitive: false, wholeWord: false, regex: true }).error).toBeTruthy();
+  });
+
+  test("custom highlight hex normalization, history LRU, and RGBA resolution", () => {
+    expect(normalizeHighlightColor("#0F8")).toBe("#00ff88");
+    expect(normalizeHighlightColor("#fde047")).toBe("yellow");
+    const vars = resolveHighlightVars("#00ff88");
+    expect(vars.light).toBe("rgba(0, 255, 136, 0.56)");
+    expect(vars.dark).toBe("rgba(0, 255, 136, 0.36)");
+
+    let hist: string[] = [];
+    hist = pushHighlightHistory(hist, "#fde047"); // preset ignored
+    expect(hist).toEqual([]);
+    for (const c of ["#111111", "#222222", "#333333", "#444444", "#555555", "#666666"]) {
+      hist = pushHighlightHistory(hist, c, 5);
+    }
+    expect(hist).toEqual(["#666666", "#555555", "#444444", "#333333", "#222222"]);
+    hist = pushHighlightHistory(hist, "#333333", 5);
+    expect(hist[0]).toBe("#333333");
+    expect(hist.length).toBe(5);
+  });
+
+  test("Typora shortcuts match Shift+[ / Shift+] physical keys, exclude Ctrl+0/=/−, and detect conflicts", () => {
+    expect(defaultShortcuts.h1).toBe("Ctrl+1");
+    expect(defaultShortcuts.codeBlock).toBe("Ctrl+Shift+K");
+    expect(defaultShortcuts.orderedList).toBe("Ctrl+Shift+[");
+    expect(defaultShortcuts.bulletList).toBe("Ctrl+Shift+]");
+    expect(Object.values(defaultShortcuts)).not.toContain("Ctrl+0");
+    expect(Object.values(defaultShortcuts)).not.toContain("Ctrl+=");
+    expect(Object.values(defaultShortcuts)).not.toContain("Ctrl+-");
+
+    const ev = { key: "{", code: "BracketLeft", ctrlKey: true, metaKey: false, altKey: false, shiftKey: true, isComposing: false };
+    expect(shortcutOf(ev)).toBe("Ctrl+Shift+[");
+    expect(matchShortcutAction(ev, defaultShortcuts)).toBe("orderedList");
+
+    const indented = applySourceIndent("a\nb", 0, 3, "indent");
+    expect(indented.insert).toBe("  a\n  b");
+    const outdented = applySourceIndent("  a\n  b", 0, 7, "outdent");
+    expect(outdented.insert).toBe("a\nb");
+
+    const dup = findShortcutConflicts({ ...defaultShortcuts, h2: "Ctrl+1" });
+    expect(dup.has("h1") && dup.has("h2")).toBe(true);
+  });
+
+  test("parameterized panel bounds clamp cleanly without breaking editor minimum width", () => {
+    const b = normalizePanelBounds({ defaultWidth: 500, minWidth: 180, maxWidth: 420 }, { defaultWidth: 210, minWidth: 150, maxWidth: 380 });
+    expect(b).toEqual({ defaultWidth: 420, minWidth: 180, maxWidth: 420 });
+    const w = computePanelWidths({
+      containerWidth: 1200,
+      sidebarOpen: true,
+      outlineOpen: true,
+      sidebarWidth: 410,
+      outlineWidth: 220,
+      sidebarBounds: b,
+    });
+    expect(w.sidebar).toBe(410);
+    expect(clampDragWidth({ which: "sidebar", rawWidth: 100, containerWidth: 1200, otherWidth: 200, otherOpen: true, bounds: b })).toBe(180);
+  });
+
+  test("image dir resolution, relative path security, filename sanitization & response URL extraction", () => {
+    expect(resolveImageDir("./img/", "work/weekly.md")).toEqual({ storeDir: "work/img", mdPrefix: "./img/" });
+    expect(resolveImageDir("./${filename}.assets/", "work/weekly.md")).toEqual({ storeDir: "work/weekly.assets", mdPrefix: "./weekly.assets/" });
+    expect(resolveImageDir("/img/", "work/weekly.md")).toEqual({ storeDir: "img", mdPrefix: "../img/" });
+
+    expect(resolveNoteRelativePath("work/weekly.md", "./img/a.png")).toBe("work/img/a.png");
+    expect(resolveNoteRelativePath("work/weekly.md", "../../etc/passwd")).toBeNull();
+    expect(resolveNoteRelativePath("work/weekly.md", "https://cdn.example.com/a.png")).toBeNull();
+
+    expect(sanitizeImageName("架构图:v1/2", ".png")).toBe("架构图-v1-2.png");
+    expect(buildImageFilename("photo.jpg", "image/jpeg", "timestamp", new Date(2026, 10, 19, 20, 35, 5))).toBe("20261119-203505.jpg");
+
+    expect(extractUrlByPath({ data: { url: "https://cdn.a.com/1.png" } }, "data.url")).toBe("https://cdn.a.com/1.png");
+    expect(extractUrlByPath({ result: ["https://cdn.a.com/2.png"] }, "result[0]")).toBe("https://cdn.a.com/2.png");
+    expect(extractUrlByPath({ nested: { link: "https://cdn.a.com/3.png" } }, "")).toBe("https://cdn.a.com/3.png");
   });
 });

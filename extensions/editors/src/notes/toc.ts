@@ -2,6 +2,7 @@ import type { Node as PMNode } from "@milkdown/kit/prose/model";
 import { Plugin, PluginKey } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { $prose } from "@milkdown/kit/utils";
+import { renderOutlineInlinesDOM, type OutlineInline, type OutlineInlineTag } from "./outline";
 
 /**
  * [TOC]：单独占一行时，在它下面显示根据标题生成的目录，点一下跳到对应的标题。
@@ -10,6 +11,48 @@ import { $prose } from "@milkdown/kit/utils";
 interface Head {
   level: number;
   text: string;
+  inlines: OutlineInline[];
+}
+
+function headingNodeToInlines(heading: PMNode): OutlineInline[] {
+  const out: OutlineInline[] = [];
+  heading.forEach((child) => {
+    if (!child.isText || !child.text) return;
+    let node: OutlineInline = { type: "text", value: child.text };
+    for (const mark of child.marks) {
+      let tag: OutlineInlineTag | null = null;
+      switch (mark.type.name) {
+        case "strong":
+          tag = "strong";
+          break;
+        case "emphasis":
+          tag = "em";
+          break;
+        case "strike_through":
+          tag = "del";
+          break;
+        case "inlineCode":
+        case "pocket_kbd":
+          tag = "code";
+          break;
+        case "pocket_mark":
+          tag = "mark";
+          break;
+        case "pocket_u":
+          tag = "u";
+          break;
+        case "pocket_sup":
+          tag = "sup";
+          break;
+        case "pocket_sub":
+          tag = "sub";
+          break;
+      }
+      if (tag) node = { type: tag, children: [node] };
+    }
+    out.push(node);
+  });
+  return out;
 }
 
 function jump(view: EditorView, index: number) {
@@ -51,7 +94,8 @@ function render(view: EditorView, heads: Head[]): HTMLElement {
     const a = document.createElement("a");
     a.className = "md-toc-item";
     a.style.paddingLeft = `${(h.level - top) * 16}px`;
-    a.textContent = h.text || "（空标题）";
+    if (h.inlines.length > 0 && h.text) a.appendChild(renderOutlineInlinesDOM(h.inlines));
+    else a.textContent = h.text || "（空标题）";
     a.addEventListener("mousedown", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -66,11 +110,14 @@ function buildTocDecos(doc: PMNode): DecorationSet | null {
   const marks: { pos: number; size: number }[] = [];
   const heads: Head[] = [];
   doc.forEach((node, pos) => {
-    if (node.type.name === "heading") heads.push({ level: node.attrs.level as number, text: node.textContent });
-    else if (node.type.name === "paragraph" && /^\[toc\]$/i.test(node.textContent.trim())) marks.push({ pos, size: node.nodeSize });
+    if (node.type.name === "heading") {
+      heads.push({ level: node.attrs.level as number, text: node.textContent, inlines: headingNodeToInlines(node) });
+    } else if (node.type.name === "paragraph" && /^\[toc\]$/i.test(node.textContent.trim())) {
+      marks.push({ pos, size: node.nodeSize });
+    }
   });
   if (marks.length === 0) return null;
-  // 标题没变就复用上一次画好的目录。
+  // 标题内容与样式没变就复用上一次画好的目录。
   const key = `toc:${JSON.stringify(heads)}`;
   return DecorationSet.create(
     doc,

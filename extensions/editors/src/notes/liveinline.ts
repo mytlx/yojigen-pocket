@@ -1,89 +1,36 @@
+import { parserCtx, serializerCtx } from "@milkdown/kit/core";
 import { lift, setBlockType, wrapIn } from "@milkdown/kit/prose/commands";
-import type { Fragment, Mark, Node as PMNode, ResolvedPos, Slice } from "@milkdown/kit/prose/model";
+import type { Fragment, Mark, MarkType, Node as PMNode, ResolvedPos, Slice } from "@milkdown/kit/prose/model";
 import { liftListItem, wrapInList } from "@milkdown/kit/prose/schema-list";
-import { NodeSelection, Plugin, PluginKey, TextSelection, type Transaction } from "@milkdown/kit/prose/state";
+import { NodeSelection, Plugin, PluginKey, Selection, TextSelection, type Transaction } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { $prose } from "@milkdown/kit/utils";
 
-interface MarkSpan {
-  mark: Mark;
-  from: number;
-  to: number;
-}
-
-interface SyntaxSpec {
-  open: string;
-  close: string;
-  kind: "mark" | "link" | "html";
-  href?: string;
-}
-
 const liveKey = new PluginKey("pocket-live-inline");
 
-function syntaxForMark(mark: Mark): SyntaxSpec | null {
-  switch (mark.type.name) {
-    case "strong":
-      return { open: "**", close: "**", kind: "mark" };
-    case "emphasis":
-      return { open: "*", close: "*", kind: "mark" };
-    case "strike_through":
-      return { open: "~~", close: "~~", kind: "mark" };
-    case "inlineCode":
-      return { open: "`", close: "`", kind: "mark" };
-    case "pocket_mark": {
-      const m = !!mark.attrs.md;
-      return { open: m ? "==" : "<mark>", close: m ? "==" : "</mark>", kind: "mark" };
-    }
-    case "pocket_sup": {
-      const m = !!mark.attrs.md;
-      return { open: m ? "^" : "<sup>", close: m ? "^" : "</sup>", kind: "mark" };
-    }
-    case "pocket_sub": {
-      const m = !!mark.attrs.md;
-      return { open: m ? "~" : "<sub>", close: m ? "~" : "</sub>", kind: "mark" };
-    }
-    case "pocket_u":
-      return { open: "<u>", close: "</u>", kind: "mark" };
-    case "pocket_kbd":
-      return { open: "<kbd>", close: "</kbd>", kind: "mark" };
-    case "pocket_html_span": {
-      const tag = String(mark.attrs.tag || "span");
-      return { open: String(mark.attrs.rawOpen || `<${tag}>`), close: `</${tag}>`, kind: "html" };
-    }
-    case "link":
-      return { open: "[", close: `](${String(mark.attrs.href ?? "")})`, kind: "link", href: String(mark.attrs.href ?? "") };
-    default:
-      return null;
-  }
+const EXPANDABLE_MARKS = new Set([
+  "strong",
+  "emphasis",
+  "strike_through",
+  "inlineCode",
+  "pocket_mark",
+  "pocket_sup",
+  "pocket_sub",
+  "pocket_u",
+  "pocket_kbd",
+  "pocket_html_span",
+  "link",
+]);
+
+function hasExpandableMark(marks: readonly Mark[]): boolean {
+  return marks.some((m) => EXPANDABLE_MARKS.has(m.type.name));
 }
 
-/** 收集文本块中连续的同属性 mark 区间。 */
-function collectMarkSpans(block: PMNode, blockStart: number): MarkSpan[] {
-  const spans: MarkSpan[] = [];
-  const open: MarkSpan[] = [];
-  let offset = blockStart + 1;
-
-  block.forEach((child) => {
-    const end = offset + child.nodeSize;
-    const childMarks = child.isText ? child.marks : [];
-
-    for (let i = open.length - 1; i >= 0; i--) {
-      if (!childMarks.some((m) => m.eq(open[i]!.mark))) {
-        spans.push(open.splice(i, 1)[0]!);
-      }
-    }
-    for (const m of childMarks) {
-      if (!syntaxForMark(m)) continue;
-      const existing = open.find((o) => o.mark.eq(m));
-      if (existing) existing.to = end;
-      else open.push({ mark: m, from: offset, to: end });
-    }
-    offset = end;
-  });
-
-  spans.push(...open);
-  spans.sort((a, b) => a.from - b.from || b.to - a.to);
-  return spans;
+function primaryMarkHint(marks: readonly Mark[]): string {
+  for (const name of ["strong", "emphasis", "strike_through", "inlineCode", "pocket_mark", "pocket_u", "link", "pocket_sup", "pocket_sub", "pocket_kbd"]) {
+    if (marks.some((m) => m.type.name === name)) return name;
+  }
+  return "";
 }
 
 function ancestorOf($pos: ResolvedPos, name: string): { depth: number; pos: number; node: PMNode } | null {
@@ -116,16 +63,155 @@ export function parseBlockPrefix(raw: string): ParsedBlockPrefix | null {
   return null;
 }
 
+interface RawDelimRange {
+  from: number;
+  to: number;
+  cls: string;
+}
+
+/** 分析展开态行内 Markdown 文本中的语法定界符位置，用于等宽强调着色及精确光标映射。 */
+function analyzeRawInlineDelimiters(text: string): { openLen: number; ranges: RawDelimRange[] } {
+  const ranges: RawDelimRange[] = [];
+  let start = 0;
+  let end = text.length;
+  let guard = 0;
+
+  while (start < end && guard++ < 8) {
+    const slice = text.slice(start, end);
+    let matched = false;
+
+    // 1) 成对对称定界符（*** / ** / ~~ / == / ` / * / ^ / ~）
+    for (const sym of ["***", "**", "~~", "==", "`", "*", "^", "~"]) {
+      if (slice.length >= sym.length * 2 + 1 && slice.startsWith(sym) && slice.endsWith(sym)) {
+        ranges.push({ from: start, to: start + sym.length, cls: "pocket-raw-delim" });
+        ranges.push({ from: end - sym.length, to: end, cls: "pocket-raw-delim" });
+        start += sym.length;
+        end -= sym.length;
+        matched = true;
+        break;
+      }
+    }
+    if (matched) continue;
+
+    // 2) 成对行内 HTML 标签（<u> / <mark> / <sup> / <sub> / <kbd> / <span ...>）
+    const htmlM = /^(<([a-z][a-z0-9-]*)(?:\s+[^>]*)?>)([\s\S]*?)(<\/\2>)$/i.exec(slice);
+    if (htmlM) {
+      const openTag = htmlM[1]!;
+      const closeTag = htmlM[4]!;
+      ranges.push({ from: start, to: start + openTag.length, cls: "pocket-raw-delim" });
+      ranges.push({ from: end - closeTag.length, to: end, cls: "pocket-raw-delim" });
+      start += openTag.length;
+      end -= closeTag.length;
+      continue;
+    }
+
+    // 3) 链接 [text](url)
+    const linkM = /^(\[)([^\]]*)(\]\()([^)]*)(\))$/.exec(slice);
+    if (linkM) {
+      const openBracket = linkM[1]!;
+      const innerText = linkM[2]!;
+      const mid = linkM[3]!;
+      const url = linkM[4]!;
+      const closeParen = linkM[5]!;
+      const midStart = start + openBracket.length + innerText.length;
+      const urlStart = midStart + mid.length;
+      ranges.push({ from: start, to: start + openBracket.length, cls: "pocket-raw-delim" });
+      ranges.push({ from: midStart, to: urlStart, cls: "pocket-raw-delim" });
+      if (url.length > 0) ranges.push({ from: urlStart, to: urlStart + url.length, cls: "pocket-raw-url" });
+      ranges.push({ from: end - closeParen.length, to: end, cls: "pocket-raw-delim" });
+      start += openBracket.length;
+      end = midStart;
+      continue;
+    }
+
+    break;
+  }
+
+  return { openLen: start, ranges };
+}
+
+interface MarkCluster {
+  from: number;
+  to: number;
+  hint: string;
+}
+
+function collectExpandableClusters(block: PMNode, blockStart: number): MarkCluster[] {
+  const clusters: MarkCluster[] = [];
+  let offset = blockStart + 1;
+  let cur: MarkCluster | null = null;
+
+  block.forEach((child) => {
+    const end = offset + child.nodeSize;
+    if (child.isText && hasExpandableMark(child.marks)) {
+      if (cur && cur.to === offset) {
+        cur.to = end;
+        if (!cur.hint) cur.hint = primaryMarkHint(child.marks);
+      } else {
+        cur = { from: offset, to: end, hint: primaryMarkHint(child.marks) };
+        clusters.push(cur);
+      }
+    } else {
+      cur = null;
+    }
+    offset = end;
+  });
+
+  return clusters;
+}
+
+interface ActiveRawSpan {
+  from: number;
+  to: number;
+  text: string;
+  blockStart: number;
+  blockEnd: number;
+}
+
+function findActiveRawSpan(doc: PMNode, rawType: MarkType): ActiveRawSpan | null {
+  let found: ActiveRawSpan | null = null;
+  doc.descendants((node, pos) => {
+    if (found) return false;
+    if (!node.isTextblock) return true;
+    const blockStart = pos + 1;
+    const blockEnd = pos + node.nodeSize - 1;
+    let offset = blockStart;
+    let from = -1;
+    let to = -1;
+    let text = "";
+
+    node.forEach((child) => {
+      const end = offset + child.nodeSize;
+      if (child.isText && rawType.isInSet(child.marks)) {
+        if (from < 0) from = offset;
+        to = end;
+        text += child.text ?? "";
+      } else if (from >= 0 && !found) {
+        found = { from, to, text, blockStart, blockEnd };
+      }
+      offset = end;
+    });
+
+    if (from >= 0 && !found) {
+      found = { from, to, text, blockStart, blockEnd };
+    }
+    return false;
+  });
+  return found;
+}
+
 function mountTokenInput(
   wrap: HTMLElement,
   view: EditorView,
   text: string,
   opts: {
     label: string;
+    initialCaret?: "select" | "end" | "start";
     onCommit: (next: string, returnFocus: boolean) => void;
     onLiveInput?: (next: string) => void;
     onCancel?: () => void;
     onExitForward?: () => void;
+    onExitBackward?: () => void;
     onDone: (finalText: string) => void;
   },
 ) {
@@ -176,6 +262,14 @@ function mountTokenInput(
         opts.onCommit(val, false);
         opts.onExitForward();
       }
+    } else if (e.key === "ArrowLeft" && input.selectionStart === 0 && input.selectionEnd === 0) {
+      if (opts.onExitBackward) {
+        e.preventDefault();
+        const val = input.value;
+        close(val);
+        opts.onCommit(val, false);
+        opts.onExitBackward();
+      }
     }
   });
   input.addEventListener("blur", () => {
@@ -190,14 +284,21 @@ function mountTokenInput(
     });
   });
 
+  const placeCaret = () => {
+    const mode = opts.initialCaret ?? "select";
+    if (mode === "end") input.setSelectionRange(input.value.length, input.value.length);
+    else if (mode === "start") input.setSelectionRange(0, 0);
+    else input.select();
+  };
+
   wrap.replaceChildren(input);
   if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(view, wrap);
   input.focus();
-  input.select();
+  placeCaret();
   requestAnimationFrame(() => {
     if (!closed && input.isConnected && document.activeElement !== input) {
       input.focus();
-      input.select();
+      placeCaret();
     }
   });
 }
@@ -221,7 +322,7 @@ function syncPlaceholderHostOffset(view: EditorView, wrap: HTMLElement | null): 
   }
 }
 
-/** 创建按需可编辑的语法标记：正常打字与 IME 期间为纯静态 <span>（不向编辑区注入 <input>），点击后再就地转为输入框。 */
+/** 创建可点击且支持键盘 ArrowLeft 无缝滑入的块前缀标记。 */
 function makeTokenWidget(
   view: EditorView,
   text: string,
@@ -232,12 +333,13 @@ function makeTokenWidget(
     onLiveInput?: (next: string) => void;
     onCancel?: () => void;
     onExitForward?: () => void;
+    onExitBackward?: () => void;
   },
 ): HTMLElement {
   const wrap = document.createElement("span");
   wrap.className = `pocket-syntax-wrap is-passive${opts.className ? ` ${opts.className}` : ""}`;
   wrap.dataset.text = text || " ";
-  wrap.title = "点击修改语法标记";
+  wrap.title = "点击或在行首按 ← 修改前缀";
 
   const labelEl = document.createElement("span");
   labelEl.className = "pocket-syntax-text";
@@ -245,14 +347,12 @@ function makeTokenWidget(
   wrap.appendChild(labelEl);
 
   let editing = false;
-  wrap.addEventListener("mousedown", (e) => {
-    e.stopPropagation();
-    if (!view.editable) return;
-    if (editing) return;
+  const startEdit = (initialCaret: "select" | "end" | "start" = "select") => {
+    if (!view.editable || editing) return;
     editing = true;
-    e.preventDefault();
     mountTokenInput(wrap, view, text, {
       ...opts,
+      initialCaret,
       onDone: (val) => {
         editing = false;
         wrap.classList.add("is-passive");
@@ -262,8 +362,29 @@ function makeTokenWidget(
         if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(view, wrap);
       },
     });
+  };
+
+  wrap.addEventListener("mousedown", (e) => {
+    e.stopPropagation();
+    if (!view.editable) return;
+    if (editing) return;
+    e.preventDefault();
+    startEdit("select");
+  });
+  wrap.addEventListener("pocket-edit-token", (e) => {
+    const caret = (e as CustomEvent<{ caret?: "select" | "end" | "start" }>).detail?.caret ?? "end";
+    startEdit(caret);
   });
   return wrap;
+}
+
+function exitBackwardFromBlock(v: EditorView, tbPos: number) {
+  const target = Math.max(0, tbPos - 1);
+  const sel = Selection.findFrom(v.state.doc.resolve(target), -1, true);
+  if (sel) {
+    v.dispatch(v.state.tr.setSelection(sel).setMeta("pocket-selection", true).scrollIntoView());
+  }
+  v.focus();
 }
 
 function commitBlockPrefixEdit(v: EditorView, tbPos: number, val: string, refocus: boolean) {
@@ -381,48 +502,12 @@ function commitBlockPrefixEdit(v: EditorView, tbPos: number, val: string, refocu
   }
 }
 
-function mapTokenToMark(token: string): { name: string; attrs?: Record<string, unknown> } | null {
-  switch (token) {
-    case "**":
-      return { name: "strong" };
-    case "*":
-      return { name: "emphasis" };
-    case "~~":
-      return { name: "strike_through" };
-    case "`":
-      return { name: "inlineCode" };
-    case "==":
-      return { name: "pocket_mark", attrs: { md: true } };
-    case "<mark>":
-    case "</mark>":
-      return { name: "pocket_mark", attrs: { md: false } };
-    case "^":
-      return { name: "pocket_sup", attrs: { md: true } };
-    case "<sup>":
-    case "</sup>":
-      return { name: "pocket_sup", attrs: { md: false } };
-    case "~":
-      return { name: "pocket_sub", attrs: { md: true } };
-    case "<sub>":
-    case "</sub>":
-      return { name: "pocket_sub", attrs: { md: false } };
-    case "<u>":
-    case "</u>":
-      return { name: "pocket_u", attrs: { md: false } };
-    case "<kbd>":
-    case "</kbd>":
-      return { name: "pocket_kbd", attrs: { md: false } };
-    default:
-      return null;
-  }
-}
-
 const STANDALONE_VOID_HTML_RE = /^<(?:br|hr)\s*\/?>$/i;
 const STANDALONE_COMMENT_HTML_RE = /^<!--[\s\S]*-->$/;
 const STANDALONE_PAIRED_HTML_RE = /^<([a-z][a-z0-9-]*)(?:\s+[^>]*)?>[\s\S]*<\/\1>$/i;
 const DISALLOWED_INLINE_UPGRADE = new Set(["script", "iframe", "object", "embed", "applet", "base", "meta", "link", "form", "noscript"]);
 
-/** 判断整段纯文本是否为手动输入的独立 HTML 片段（用于阅读模式输入后实时渲染）。 */
+/** 判断整段纯文本是否为手动输入的独立 HTML 片段（用于实时渲染模式输入后自动渲染）。 */
 export function matchStandaloneHtmlSnippet(text: string): string | null {
   const trimmed = text.trim();
   if (!trimmed || !trimmed.startsWith("<") || !trimmed.endsWith(">")) return null;
@@ -462,29 +547,236 @@ function singleHtmlNodePos(state: EditorView["state"]): number {
 }
 
 /**
- * 模式一（Typora 式实时渲染）：
- * - 行内块：光标点到加粗/斜体/代码/高亮/上标/下标/链接等行内格式时，仅在两侧展开语法符号；
- * - 块前缀：光标进入标题、单个列表项或引用段落时，仅展示/替换当前行的 # / - / 1. / - [ ] / > 前缀；
- * - HTML 节点：单击或光标移入 HTML 节点实时编辑源码，输入独立 HTML 片段后失焦/回车自动渲染。
+ * 实时渲染插件（方案 5A）：
+ * - 行内语法（加粗/斜体/删除线/行内代码/高亮/下划线/上下标/链接等）：光标进入后原地展开为真实可编辑文本，
+ *   支持左右键逐字移动、Shift+左右键跨语法与文字连选、直接增删 `*`/`~~`/`==`/URL，离开后自动还原富文本；
+ * - 块前缀（标题 # / 引用 > / 列表 - / 1. / - [ ]）：行首按 ArrowLeft 无缝滑入前缀编辑（或点击编辑），ArrowRight/Enter 滑回正文；
+ * - HTML 节点：单击或光标移入实时编辑源码，输入独立 HTML 片段后失焦/回车自动渲染。
  */
 export function liveInlinePlugin(options: () => { enabled: boolean }) {
-  return $prose(() => {
+  return $prose((ctx) => {
     let pointerDown = false;
     let pointerRefreshTimer = 0;
     let dismissedHtmlPos: number | null = null;
     let lastAutoHtmlPos: number | null = null;
     let editedParaPos: number | null = null;
+    let activeRawInitial = "";
+    let suppressedPos: number | null = null;
+    let lastClickInMark = false;
+    let prevCaretPos = -1;
+
+    const getRawMarkType = (state: EditorView["state"]): MarkType | null => state.schema.marks.pocket_raw_inline ?? null;
+
+    const parseInlineMarkdown = (state: EditorView["state"], rawText: string): PMNode[] => {
+      const schema = state.schema;
+      if (!rawText) return [];
+      const leadWs = /^[ \t]+/.exec(rawText)?.[0] ?? "";
+      const restAfterLead = rawText.slice(leadWs.length);
+      const trailWs = /[ \t]+$/.exec(restAfterLead)?.[0] ?? "";
+      const core = restAfterLead.slice(0, restAfterLead.length - trailWs.length);
+
+      const out: PMNode[] = [];
+      if (leadWs) out.push(schema.text(leadWs));
+
+      if (core) {
+        try {
+          const parsed = ctx.get(parserCtx)(core);
+          if (parsed && parsed.childCount === 1 && parsed.firstChild?.type.name === "paragraph") {
+            parsed.firstChild.forEach((child) => {
+              if (child.isInline) out.push(child);
+            });
+          } else {
+            out.push(schema.text(core));
+          }
+        } catch {
+          out.push(schema.text(core));
+        }
+      }
+
+      if (trailWs) out.push(schema.text(trailWs));
+      return out;
+    };
+
+    const collapseRawInline = (
+      view: EditorView,
+      opts?: { clearStoredMarks?: boolean; forceCaretAt?: "start" | "end"; suppressAfter?: boolean; revertToInitial?: boolean },
+    ): boolean => {
+      const rawType = getRawMarkType(view.state);
+      if (!rawType) return false;
+      const active = findActiveRawSpan(view.state.doc, rawType);
+      if (!active) return false;
+
+      const rawText = opts?.revertToInitial && activeRawInitial ? activeRawInitial : active.text;
+      const unchanged = rawText === activeRawInitial || !!opts?.revertToInitial;
+      const replacement = parseInlineMarkdown(view.state, rawText);
+      const newSize = replacement.reduce((sum, n) => sum + n.nodeSize, 0);
+      const oldSize = active.to - active.from;
+      const sel = view.state.selection;
+      const { openLen } = analyzeRawInlineDelimiters(active.text);
+
+      const mapPos = (p: number): number => {
+        if (p < active.from) return p;
+        if (p > active.to) return p + (newSize - oldSize);
+        if (opts?.forceCaretAt === "start") return active.from;
+        if (opts?.forceCaretAt === "end") return active.from + newSize;
+        const inner = Math.max(0, p - active.from - openLen);
+        return active.from + Math.min(newSize, inner);
+      };
+
+      const tr = view.state.tr;
+      if (replacement.length > 0) tr.replaceWith(active.from, active.to, replacement);
+      else tr.delete(active.from, active.to);
+
+      const nextFrom = Math.max(0, Math.min(tr.doc.content.size, mapPos(sel.from)));
+      const nextTo = Math.max(0, Math.min(tr.doc.content.size, mapPos(sel.to)));
+      if (sel instanceof TextSelection) {
+        tr.setSelection(TextSelection.create(tr.doc, nextFrom, nextTo));
+      } else {
+        tr.setSelection(Selection.near(tr.doc.resolve(nextFrom)));
+      }
+      if (opts?.clearStoredMarks) tr.setStoredMarks([]);
+      if (unchanged) tr.setMeta("addToHistory", false);
+      tr.setMeta("pocket-raw-sync", true);
+      tr.setMeta("pocket-selection", true);
+
+      activeRawInitial = "";
+      if (opts?.suppressAfter) suppressedPos = nextFrom;
+      view.dispatch(tr);
+      return true;
+    };
+
+    const expandClusterAt = (view: EditorView, cluster: MarkCluster, cursorPos: number): boolean => {
+      const rawType = getRawMarkType(view.state);
+      if (!rawType) return false;
+      const schema = view.state.schema;
+      const paraType = schema.nodes.paragraph;
+      if (!paraType) return false;
+
+      const slice = view.state.doc.slice(cluster.from, cluster.to);
+      let rawMd = "";
+      try {
+        const tempDoc = schema.topNodeType.create(null, paraType.create(null, slice.content));
+        rawMd = ctx.get(serializerCtx)(tempDoc).replace(/\n+$/, "");
+      } catch {
+        return false;
+      }
+      if (!rawMd) return false;
+
+      const plainBefore = view.state.doc.textBetween(cluster.from, Math.max(cluster.from, Math.min(cursorPos, cluster.to)));
+      const { openLen } = analyzeRawInlineDelimiters(rawMd);
+      let caretOffset = openLen + plainBefore.length;
+      if (plainBefore && rawMd.slice(openLen, openLen + plainBefore.length) !== plainBefore) {
+        const foundIdx = rawMd.indexOf(plainBefore);
+        if (foundIdx >= 0) caretOffset = foundIdx + plainBefore.length;
+      }
+      caretOffset = Math.max(0, Math.min(rawMd.length, caretOffset));
+
+      const tr = view.state.tr;
+      const rawTextNode = schema.text(rawMd, [rawType.create({ hint: cluster.hint })]);
+      tr.replaceWith(cluster.from, cluster.to, rawTextNode);
+      const nextCaret = cluster.from + caretOffset;
+      tr.setSelection(TextSelection.create(tr.doc, nextCaret));
+      tr.setMeta("addToHistory", false);
+      tr.setMeta("pocket-raw-sync", true);
+      tr.setMeta("pocket-selection", true);
+
+      activeRawInitial = rawMd;
+      suppressedPos = null;
+      view.dispatch(tr);
+      return true;
+    };
+
+    const syncRawInlineState = (view: EditorView): boolean => {
+      if (view.isDestroyed || view.composing || pointerDown) return false;
+      const rawType = getRawMarkType(view.state);
+      if (!rawType) return false;
+
+      const active = findActiveRawSpan(view.state.doc, rawType);
+      if (!options().enabled || !view.editable || !view.hasFocus()) {
+        if (active) return collapseRawInline(view);
+        return false;
+      }
+
+      const sel = view.state.selection;
+      if (active) {
+        // 只要光标或选区仍与当前展开的 raw span 有交集（包括 Shift+左右键跨语法与正文连选），保持展开态！
+        const disjoint = sel.to < active.from || sel.from > active.to;
+        if (disjoint) {
+          return collapseRawInline(view);
+        }
+        return false;
+      }
+
+      if (!(sel instanceof TextSelection) || !sel.empty) {
+        lastClickInMark = false;
+        return false;
+      }
+
+      if (suppressedPos !== null) {
+        if (sel.from === suppressedPos) {
+          lastClickInMark = false;
+          return false;
+        }
+        suppressedPos = null;
+      }
+
+      const $from = sel.$from;
+      const tbDepth = (() => {
+        for (let d = $from.depth; d >= 1; d--) {
+          if ($from.node(d).isTextblock) return d;
+        }
+        return -1;
+      })();
+      if (tbDepth < 0) return false;
+      const tb = $from.node(tbDepth);
+      if (tb.type.name === "code_block") return false;
+      const tbPos = $from.before(tbDepth);
+
+      const clusters = collectExpandableClusters(tb, tbPos);
+      const clicked = lastClickInMark;
+      lastClickInMark = false;
+
+      const hit = clusters.find((c) => {
+        if (sel.from > c.from && sel.from < c.to) return true;
+        if (clicked && sel.from >= c.from && sel.from <= c.to) return true;
+        if (c.to - c.from === 1 && ((prevCaretPos === c.from && sel.from === c.to) || (prevCaretPos === c.to && sel.from === c.from))) {
+          return true;
+        }
+        return false;
+      });
+      if (!hit) return false;
+      return expandClusterAt(view, hit, sel.from);
+    };
 
     const buildDecorations = (view: EditorView | null, state: EditorView["state"]): DecorationSet | null => {
       if (!options().enabled || pointerDown) return null;
       const sel = state.selection;
       if (!(sel instanceof TextSelection)) return null;
 
-      // 仅当编辑器拥有焦点（含子孙内联输入框正被编辑）时激活实时标记揭示。
       const activeEl = typeof document !== "undefined" ? document.activeElement : null;
-      const inWidget = !!(activeEl && view?.dom.contains(activeEl) && (activeEl.closest(".pocket-syntax-wrap") || activeEl.closest(".pocket-html-editing") || activeEl.closest(".label-wrapper.is-editing")));
+      const inWidget = !!(
+        activeEl &&
+        view?.dom.contains(activeEl) &&
+        (activeEl.closest(".pocket-syntax-wrap") || activeEl.closest(".pocket-html-editing") || activeEl.closest(".label-wrapper.is-editing"))
+      );
       const hasFocus = view ? view.hasFocus() || inWidget : false;
       if (!hasFocus && !inWidget) return null;
+
+      const decos: Decoration[] = [];
+
+      // 1) 为展开态的行内原生语法文本着色定界符（** / * / ~~ / == / [ ] (url) / <u> 等）
+      const rawType = getRawMarkType(state);
+      if (rawType) {
+        const activeRaw = findActiveRawSpan(state.doc, rawType);
+        if (activeRaw) {
+          const { ranges } = analyzeRawInlineDelimiters(activeRaw.text);
+          for (const r of ranges) {
+            if (r.to > r.from) {
+              decos.push(Decoration.inline(activeRaw.from + r.from, activeRaw.from + r.to, { class: r.cls }));
+            }
+          }
+        }
+      }
 
       const $from = sel.$from;
       const textblockDepth = (() => {
@@ -493,128 +785,11 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
         }
         return -1;
       })();
-      if (textblockDepth < 0) return null;
+      if (textblockDepth < 0) return decos.length ? DecorationSet.create(state.doc, decos) : null;
 
       const tb = $from.node(textblockDepth);
-      if (tb.type.name === "code_block") return null;
+      if (tb.type.name === "code_block") return decos.length ? DecorationSet.create(state.doc, decos) : null;
       const tbPos = $from.before(textblockDepth);
-      const decos: Decoration[] = [];
-
-      // 1) 行内标记与链接两侧符号显隐
-      const spans = collectMarkSpans(tb, tbPos);
-      spans.forEach((span, order) => {
-        if (sel.from > span.to || sel.to < span.from) return;
-        const spec = syntaxForMark(span.mark);
-        if (!spec) return;
-
-        const openSide = -100 + order;
-        const closeSide = 100 - order;
-
-        if (spec.kind === "link") {
-          decos.push(
-            Decoration.widget(
-              span.from,
-              (v) => {
-                const s = document.createElement("span");
-                s.className = "pocket-syntax-static";
-                s.textContent = "[";
-                s.addEventListener("mousedown", (e) => {
-                  e.preventDefault();
-                  v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, span.from)).setMeta("pocket-selection", true));
-                  v.focus();
-                });
-                return s;
-              },
-              { key: `live-open:link:${span.from}:${span.to}`, side: openSide, ignoreSelection: true, stopEvent: () => true },
-            ),
-            Decoration.widget(
-              span.to,
-              (v) => {
-                const container = document.createElement("span");
-                container.className = "pocket-syntax-link-tail";
-                const mid = document.createElement("span");
-                mid.className = "pocket-syntax-static";
-                mid.textContent = "](";
-                const end = document.createElement("span");
-                end.className = "pocket-syntax-static";
-                end.textContent = ")";
-                const updateHref = (href: string, refocus: boolean) => {
-                  const trimmed = href.trim();
-                  const curMark = v.state.schema.marks.link!;
-                  const tr = v.state.tr.removeMark(span.from, span.to, curMark);
-                  if (trimmed) tr.addMark(span.from, span.to, curMark.create({ ...span.mark.attrs, href: trimmed }));
-                  v.dispatch(tr);
-                  if (refocus) v.focus();
-                };
-                const urlInput = makeTokenWidget(v, spec.href ?? "", {
-                  className: "is-url",
-                  label: "链接地址",
-                  onLiveInput: (val) => {
-                    const trimmed = val.trim();
-                    const curMark = v.state.schema.marks.link!;
-                    if (!trimmed) return;
-                    const tr = v.state.tr.removeMark(span.from, span.to, curMark).addMark(span.from, span.to, curMark.create({ ...span.mark.attrs, href: trimmed }));
-                    v.dispatch(tr);
-                  },
-                  onCancel: () => updateHref(spec.href ?? "", true),
-                  onCommit: (val, refocus) => updateHref(val, refocus),
-                });
-                container.append(mid, urlInput, end);
-                return container;
-              },
-              { key: `live-close:link:${span.from}:${span.to}`, side: closeSide, ignoreSelection: true, stopEvent: () => true },
-            ),
-          );
-          return;
-        }
-
-        const applyTokenEdit = (v: EditorView, nextText: string, refocus: boolean) => {
-          const t = nextText.trim();
-          const curFrom = span.from;
-          const curTo = span.to;
-          if (!t) {
-            v.dispatch(v.state.tr.removeMark(curFrom, curTo, span.mark.type));
-            if (refocus) v.focus();
-            return;
-          }
-          if (t === spec.open || t === spec.close) {
-            if (refocus) v.focus();
-            return;
-          }
-          const mapped = mapTokenToMark(t);
-          if (mapped && v.state.schema.marks[mapped.name]) {
-            const tr = v.state.tr.removeMark(curFrom, curTo, span.mark.type);
-            tr.addMark(curFrom, curTo, v.state.schema.marks[mapped.name]!.create(mapped.attrs));
-            v.dispatch(tr);
-          }
-          if (refocus) v.focus();
-        };
-
-        decos.push(
-          Decoration.widget(
-            span.from,
-            (v) =>
-              makeTokenWidget(v, spec.open, {
-                label: "行内语法前缀",
-                onCommit: (val, refocus) => applyTokenEdit(v, val, refocus),
-                onExitForward: () => {
-                  v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, span.from)).setMeta("pocket-selection", true));
-                  v.focus();
-                },
-              }),
-            { key: `live-open:${span.mark.type.name}:${span.from}:${span.to}`, side: openSide, ignoreSelection: true, stopEvent: () => true },
-          ),
-          Decoration.widget(
-            span.to,
-            (v) =>
-              makeTokenWidget(v, spec.close, {
-                label: "行内语法后缀",
-                onCommit: (val, refocus) => applyTokenEdit(v, val, refocus),
-              }),
-            { key: `live-close:${span.mark.type.name}:${span.from}:${span.to}`, side: closeSide, ignoreSelection: true, stopEvent: () => true },
-          ),
-        );
-      });
 
       // 2) 块级前缀实时渲染（标题 # 、单条列表项 - / 1. / - [ ] 、引用 > ）
       if (sel.empty) {
@@ -636,6 +811,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
                     v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
                     v.focus();
                   },
+                  onExitBackward: () => exitBackwardFromBlock(v, tbPos),
                 }),
               { key: `live-prefix:h:${tbPos}`, side: -200, ignoreSelection: true, stopEvent: () => true },
             ),
@@ -655,7 +831,6 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
                   ? `${String(liNode.attrs.label || "1.").replace(/\.?$/, ".")} `
                   : "- ";
 
-          // 把列表前缀渲染在 <p> 外部的 .label-wrapper 槽位中，避免破坏多行缩进或在段落首部插入 widget 干扰中文输入法。
           decos.push(
             Decoration.node(liPos, liPos + liNode.nodeSize, {
               class: "pocket-active-prefix-li",
@@ -680,6 +855,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
                     v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
                     v.focus();
                   },
+                  onExitBackward: () => exitBackwardFromBlock(v, tbPos),
                 }),
               { key: `live-prefix:quote:${tbPos}`, side: -200, ignoreSelection: true, stopEvent: () => true },
             ),
@@ -691,6 +867,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
     };
 
     let boundView: EditorView | null = null;
+    let viewDestroyed = false;
     let cachedDecos: DecorationSet | null = null;
     let cachedState: EditorView["state"] | null = null;
     let dirtyDuringCompose = false;
@@ -717,12 +894,15 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
       return true;
     };
 
+    const GUTTER_SEL = ".milkdown-list-item-block.pocket-active-prefix-li > .list-item > .label-wrapper";
+    let openGutterFn: ((labelWrap: HTMLElement, caret: "select" | "end") => void) | null = null;
+
     return new Plugin({
       key: liveKey,
       state: {
         init: () => DecorationSet.empty,
-        apply(tr, prev, _oldState, newState) {
-          // 中文输入法组合输入期间保留并映射既有装饰，避免重构前缀/行内 widget 干扰组合选区。
+        apply(tr, prev, oldState, newState) {
+          prevCaretPos = oldState.selection.from;
           if (boundView?.composing) {
             dirtyDuringCompose = true;
             const mapped = (cachedDecos ?? prev).map(tr.mapping, newState.doc);
@@ -735,15 +915,47 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
       },
       view(editorView) {
         boundView = editorView;
+        viewDestroyed = false;
         const onDismiss = (e: Event) => {
           const detail = (e as CustomEvent<{ pos?: number }>).detail;
           dismissedHtmlPos = typeof detail?.pos === "number" ? detail.pos : null;
         };
-        const GUTTER_SEL = ".milkdown-list-item-block.pocket-active-prefix-li > .list-item > .label-wrapper";
         let justOpenedGutter = false;
         const clearJustOpened = () => {
           justOpenedGutter = false;
         };
+        const openGutterInput = (labelWrap: HTMLElement, caret: "select" | "end") => {
+          if (!options().enabled || !editorView.editable || labelWrap.classList.contains("is-editing")) return;
+          const liBlock = labelWrap.closest(".milkdown-list-item-block.pocket-active-prefix-li") as HTMLElement | null;
+          if (!liBlock) return;
+          const tbPos = Number(liBlock.dataset.pocketTb);
+          const prefix = liBlock.dataset.pocketPrefix ?? "- ";
+          if (!Number.isFinite(tbPos)) return;
+
+          labelWrap.classList.add("is-editing");
+          const wrap = document.createElement("span");
+          wrap.className = "pocket-syntax-wrap is-block-prefix is-gutter-prefix";
+          wrap.dataset.text = prefix || " ";
+          labelWrap.appendChild(wrap);
+          mountTokenInput(wrap, editorView, prefix, {
+            label: "列表前缀",
+            initialCaret: caret,
+            onCommit: (val, refocus) => commitBlockPrefixEdit(editorView, tbPos, val, refocus),
+            onExitForward: () => {
+              const nextPos = Math.min(tbPos + 1, editorView.state.doc.content.size);
+              editorView.dispatch(editorView.state.tr.setSelection(TextSelection.near(editorView.state.doc.resolve(nextPos))).setMeta("pocket-selection", true));
+              editorView.focus();
+            },
+            onExitBackward: () => exitBackwardFromBlock(editorView, tbPos),
+            onDone: () => {
+              justOpenedGutter = false;
+              wrap.remove();
+              labelWrap.classList.remove("is-editing");
+            },
+          });
+        };
+        openGutterFn = openGutterInput;
+
         const onGutterPointerDown = (e: PointerEvent) => {
           if (!options().enabled || !editorView.editable || e.button !== 0) return;
           const labelWrap = (e.target as Element | null)?.closest(GUTTER_SEL) as HTMLElement | null;
@@ -752,36 +964,11 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
             e.stopPropagation();
             return;
           }
-          const liBlock = labelWrap.closest(".milkdown-list-item-block.pocket-active-prefix-li") as HTMLElement | null;
-          if (!liBlock) return;
           e.preventDefault();
           e.stopPropagation();
-
-          const tbPos = Number(liBlock.dataset.pocketTb);
-          const prefix = liBlock.dataset.pocketPrefix ?? "- ";
-          if (!Number.isFinite(tbPos)) return;
-
           justOpenedGutter = true;
           window.addEventListener("mouseup", clearJustOpened, { once: true });
-          labelWrap.classList.add("is-editing");
-          const wrap = document.createElement("span");
-          wrap.className = "pocket-syntax-wrap is-block-prefix is-gutter-prefix";
-          wrap.dataset.text = prefix || " ";
-          labelWrap.appendChild(wrap);
-          mountTokenInput(wrap, editorView, prefix, {
-            label: "列表前缀",
-            onCommit: (val, refocus) => commitBlockPrefixEdit(editorView, tbPos, val, refocus),
-            onExitForward: () => {
-              const nextPos = Math.min(tbPos + 1, editorView.state.doc.content.size);
-              editorView.dispatch(editorView.state.tr.setSelection(TextSelection.near(editorView.state.doc.resolve(nextPos))).setMeta("pocket-selection", true));
-              editorView.focus();
-            },
-            onDone: () => {
-              justOpenedGutter = false;
-              wrap.remove();
-              labelWrap.classList.remove("is-editing");
-            },
-          });
+          openGutterInput(labelWrap, "select");
         };
         const onGutterMouseDown = (e: MouseEvent) => {
           if (!options().enabled || !editorView.editable || e.button !== 0) return;
@@ -829,6 +1016,8 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
               if (options().enabled && upgradeEditedPara(view, targetPos)) return;
             }
 
+            if (syncRawInlineState(view)) return;
+
             if (!options().enabled || pointerDown || !view.hasFocus() || view.composing) return;
             if (view.dom.querySelector(".pocket-html-editing")) return;
 
@@ -851,6 +1040,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
             }
           },
           destroy() {
+            viewDestroyed = true;
             if (composeRefreshTimer) {
               window.clearTimeout(composeRefreshTimer);
               composeRefreshTimer = 0;
@@ -865,6 +1055,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
             editorView.dom.removeEventListener("mousedown", onGutterMouseDown, true);
             editorView.dom.removeEventListener("click", onGutterClick, true);
             window.removeEventListener("mouseup", clearJustOpened);
+            openGutterFn = null;
             boundView = null;
             cachedDecos = null;
             cachedState = null;
@@ -882,8 +1073,60 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
         },
         handleKeyDown(view, event) {
           if (!options().enabled || event.isComposing) return false;
+          const sel = view.state.selection;
+          const rawType = getRawMarkType(view.state);
+          const activeRaw = rawType ? findActiveRawSpan(view.state.doc, rawType) : null;
+
+          // 1) 在展开态行内原始语法边缘按 Esc 撤销/收起，或到达段落首尾时顺滑退出展开态
+          if (activeRaw && sel instanceof TextSelection) {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              collapseRawInline(view, { revertToInitial: true, suppressAfter: true });
+              return true;
+            }
+            if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+              collapseRawInline(view, { suppressAfter: true });
+              return false;
+            }
+            if (sel.empty && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+              if (event.key === "ArrowRight" && sel.from === activeRaw.to && activeRaw.to === activeRaw.blockEnd) {
+                event.preventDefault();
+                collapseRawInline(view, { clearStoredMarks: true, forceCaretAt: "end", suppressAfter: true });
+                return true;
+              }
+              if (event.key === "ArrowLeft" && sel.from === activeRaw.from && activeRaw.from === activeRaw.blockStart) {
+                event.preventDefault();
+                collapseRawInline(view, { clearStoredMarks: true, forceCaretAt: "start", suppressAfter: true });
+                return true;
+              }
+            }
+          }
+
+          // 2) 标题 / 引用 / 列表行首按 ArrowLeft 无缝滑入块前缀编辑（手不离键盘）
+          if (event.key === "ArrowLeft" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            if (sel instanceof TextSelection && sel.empty && sel.$from.parentOffset === 0) {
+              const parent = sel.$from.parent;
+              if (parent.type.name === "heading" || (parent.type.name === "paragraph" && ancestorOf(sel.$from, "blockquote"))) {
+                const prefixWrap = view.dom.querySelector<HTMLElement>(".pocket-syntax-wrap.is-block-prefix.is-passive");
+                if (prefixWrap) {
+                  event.preventDefault();
+                  prefixWrap.dispatchEvent(new CustomEvent("pocket-edit-token", { detail: { caret: "end" } }));
+                  return true;
+                }
+              }
+              if (parent.type.name === "paragraph" && ancestorOf(sel.$from, "list_item")) {
+                const labelWrap = view.dom.querySelector<HTMLElement>(GUTTER_SEL);
+                if (labelWrap && openGutterFn) {
+                  event.preventDefault();
+                  openGutterFn(labelWrap, "end");
+                  return true;
+                }
+              }
+            }
+          }
+
+          // 3) 独立 HTML 片段回车自动升级渲染
           if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
-            const sel = view.state.selection;
             if (sel instanceof TextSelection && sel.empty && sel.$from.parent.type.name === "paragraph" && sel.$from.parentOffset === sel.$from.parent.content.size) {
               const plain = paragraphPlainTextIfUnmarked(sel.$from.parent);
               const snippet = plain ? matchStandaloneHtmlSnippet(plain) : null;
@@ -902,8 +1145,9 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
               }
             }
           }
+
+          // 4) 标题行首 Backspace 逐级降级（### -> ## -> # -> 正文）
           if (event.key === "Backspace" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
-            const sel = view.state.selection;
             if (sel instanceof TextSelection && sel.empty && sel.$from.parent.type.name === "heading" && sel.$from.parentOffset === 0) {
               event.preventDefault();
               const level = Number(sel.$from.parent.attrs.level || 1);
@@ -924,15 +1168,10 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
               window.clearTimeout(composeRefreshTimer);
               composeRefreshTimer = 0;
             }
-            if (pointerRefreshTimer) {
-              window.clearTimeout(pointerRefreshTimer);
-              pointerRefreshTimer = 0;
-            }
             return false;
           },
           compositionend(view) {
             if (composeRefreshTimer) window.clearTimeout(composeRefreshTimer);
-            // 延后到 ProseMirror endComposition(20ms) 之后再兜底刷新，避免抢先触发 selectionToDOM 覆盖刚提交的光标。
             composeRefreshTimer = window.setTimeout(() => {
               composeRefreshTimer = 0;
               if (!view.isDestroyed && !view.composing && options().enabled && dirtyDuringCompose) {
@@ -943,9 +1182,11 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
             return false;
           },
           mousedown(_view, event) {
-            if (!options().enabled || (event.target as Element | null)?.closest(".pocket-syntax-wrap, .label-wrapper, .pocket-html-editing") || (event as MouseEvent).button === 2) {
+            const target = event.target as Element | null;
+            if (!options().enabled || target?.closest(".pocket-syntax-wrap, .label-wrapper, .pocket-html-editing") || (event as MouseEvent).button === 2) {
               return false;
             }
+            lastClickInMark = !!target?.closest("strong, b, em, i, del, s, code, mark, u, sup, sub, kbd, a[href], .pocket-raw-inline");
             pointerDown = true;
             if (pointerRefreshTimer) {
               window.clearTimeout(pointerRefreshTimer);
@@ -955,11 +1196,12 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
               "mouseup",
               () => {
                 pointerDown = false;
-                // 等浏览器原生点击选区与 ProseMirror 焦点定时器(20ms)落定后再兜底刷新，避免抢先用旧 selection 覆盖 DOM 光标。
                 pointerRefreshTimer = window.setTimeout(() => {
                   pointerRefreshTimer = 0;
-                  if (boundView && !boundView.isDestroyed && !pointerDown && options().enabled && !cachedDecos) {
-                    boundView.dispatch(boundView.state.tr.setMeta(liveKey, true));
+                  if (boundView && !boundView.isDestroyed && !pointerDown && options().enabled) {
+                    if (!syncRawInlineState(boundView) && !cachedDecos) {
+                      boundView.dispatch(boundView.state.tr.setMeta(liveKey, true));
+                    }
                   }
                 }, 35);
               },
@@ -972,14 +1214,25 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
             return false;
           },
           blur(view, event) {
+            if (viewDestroyed || view.isDestroyed || !view.dom.isConnected) return false;
             const next = event.relatedTarget as Node | null;
             if (next && view.dom.contains(next)) return false;
-            if (options().enabled && editedParaPos !== null) {
-              const targetPos = editedParaPos;
-              editedParaPos = null;
-              upgradeEditedPara(view, targetPos);
+            if (document.querySelector(".fx-editor-menu")) return false;
+            try {
+              if (options().enabled) {
+                collapseRawInline(view);
+                if (editedParaPos !== null) {
+                  const targetPos = editedParaPos;
+                  editedParaPos = null;
+                  upgradeEditedPara(view, targetPos);
+                }
+              }
+              if (!viewDestroyed && !view.isDestroyed && view.dom.isConnected) {
+                view.dispatch(view.state.tr.setMeta(liveKey, false));
+              }
+            } catch {
+              /* 编辑器正在卸载时（如切换源码模式）Milkdown 上下文可能已清理，忽略此期间的失焦刷新 */
             }
-            view.dispatch(view.state.tr.setMeta(liveKey, false));
             return false;
           },
         },
@@ -1109,6 +1362,7 @@ export const listSelectionGuardPlugin = $prose(() => {
         !tr.getMeta("uiEvent") &&
         !tr.getMeta("composition") &&
         !tr.getMeta("pocket-selection") &&
+        !tr.getMeta("pocket-raw-sync") &&
         !tr.scrolledIntoView
       ) {
         const now = performance.now();
@@ -1130,7 +1384,7 @@ export const listSelectionGuardPlugin = $prose(() => {
     appendTransaction(transactions, _oldState, newState) {
       if (boundView?.composing) return null;
       if (performance.now() - lastManualSelAt < 200) return null;
-      if (transactions.some((tr) => tr.getMeta("history$") || tr.getMeta("pointer"))) return null;
+      if (transactions.some((tr) => tr.getMeta("history$") || tr.getMeta("pointer") || tr.getMeta("pocket-raw-sync"))) return null;
       const sel = newState.selection;
       if (!(sel instanceof TextSelection) || sel.empty || !sel.$from.sameParent(sel.$to)) return null;
       const len = sel.to - sel.from;

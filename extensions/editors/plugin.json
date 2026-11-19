@@ -42,5 +42,5 @@
       "matches": [{ "type": "text", "min": 1, "label": "放到对比的左边" }]
     }
   ],
-  "permissions": { "dirs": ["notes", "scratches"], "runner": true, "files": true }
+  "permissions": { "dirs": ["notes", "scratches"], "runner": true, "files": true, "fetch": ["*", "localhost", "127.0.0.1"] }
 }

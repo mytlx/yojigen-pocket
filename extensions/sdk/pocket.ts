@@ -78,6 +78,8 @@ export interface Pocket {
     read(root: string, path: string): Promise<string>;
     write(root: string, path: string, content: string): Promise<void>;
     createFile(root: string, dir: string, name: string, content?: string): Promise<string>;
+    writeBinary?(root: string, dir: string, name: string, base64: string): Promise<string>;
+    assetUrl?(root: string, path: string): Promise<string>;
     createFolder(root: string, dir: string, name: string): Promise<string>;
     rename(root: string, path: string, name: string): Promise<string>;
     move(root: string, path: string, dir: string): Promise<string>;
@@ -89,7 +91,16 @@ export interface Pocket {
     pick(exts?: string[]): Promise<{ name: string; path: string; text?: string; base64?: string } | null>;
     saveAs(name: string, content: string): Promise<string>;
   };
-  fetch(url: string, options?: { method?: string; headers?: Record<string, string>; body?: string }): Promise<FetchResult>;
+  fetch(
+    url: string,
+    options?: {
+      method?: string;
+      headers?: Record<string, string>;
+      body?: string;
+      bodyBase64?: string;
+      multipart?: { field: string; filename: string; mime?: string; base64: string; fields?: Record<string, string> };
+    },
+  ): Promise<FetchResult>;
   runner: {
     languages(): Promise<Language[]>;
     format(lang: string, code: string): Promise<string>;
@@ -110,9 +121,10 @@ export interface Pocket {
   backend: { call<T = unknown>(method: string, ...params: unknown[]): Promise<T>; on(fn: (msg: { event: string; data: unknown }) => void): () => void };
   copyText(text: string): Promise<void>;
   readClipboard(): Promise<string>;
+  readClipboardImage?(): Promise<string>;
   openExternal(url: string): Promise<void>;
   notify(title: string, body?: string): Promise<void>;
   hide(): Promise<void>;
 }
 
-export const pocket = (window as unknown as { pocket: Pocket }).pocket;
+export const pocket = (typeof window !== "undefined" ? (window as unknown as { pocket: Pocket }).pocket : undefined) as Pocket;

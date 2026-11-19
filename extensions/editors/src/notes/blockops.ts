@@ -8,8 +8,20 @@ import { formatTime } from "./timefmt";
 /** 块菜单里的操作：把一个块转换成别的类型、复制、上下移动、删除。pos 是块在文档里的起始位置。 */
 
 export type BlockKind = "text" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "bullet" | "ordered" | "task" | "quote" | "code";
-export type FormatKind = "bold" | "italic" | "strike" | "code" | "mark" | "underline" | "link" | "clear";
-export type InsertKind = "time" | "divider" | "code" | "table" | "math";
+export type FormatKind = "bold" | "italic" | "strike" | "code" | "mark" | "underline" | "link" | "math" | "clear";
+export type InsertKind =
+  | "time"
+  | "image"
+  | "footnote"
+  | "linkref"
+  | "divider"
+  | "table"
+  | "code"
+  | "math"
+  | "toc"
+  | "frontmatter"
+  | "paraAbove"
+  | "paraBelow";
 
 /** 这个块现在是什么（菜单里给当前类型打勾）。认不出来的返回空串。 */
 export function kindOf(view: EditorView, pos: number): BlockKind | "" {
@@ -160,6 +172,7 @@ const FORMAT_WRAP: Record<Exclude<FormatKind, "clear">, [string, string, string]
   mark: ["==", "==", "重点"],
   underline: ["<u>", "</u>", "文字"],
   link: ["[", "](https://)", "链接文字"],
+  math: ["$", "$", "x^2"],
 };
 
 /** 源码 / 整块源码共用的行内格式包裹或清理，返回需要替换的范围与新选区。 */
@@ -176,7 +189,7 @@ export function applySourceFormat(
     const cleaned = slice
       .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
       .replace(/<\/?(?:u|mark|sup|sub|kbd|strong|em|b|i|s|del)>/gi, "")
-      .replace(/(\*\*|~~|==|`|\*)([^\n]+?)\1/g, "$2");
+      .replace(/(\*\*|~~|==|`|\*|\$)([^\n]+?)\1/g, "$2");
     return { from: start, to: end, insert: cleaned, anchor: start, head: start + cleaned.length };
   }
   const [open, close, placeholder] = FORMAT_WRAP[kind];
@@ -241,11 +254,56 @@ export function applySourceParagraph(
   return { from: blockFrom, to: blockTo, insert, anchor: blockFrom + insert.length, head: blockFrom + insert.length };
 }
 
-export function buildSourceInsert(kind: InsertKind, timeFormat: string, atEmptyLine = false): { insert: string; cursorOffset: number } {
+/** 扫描文档中已有的数字脚注 [^1]、[^2]…，返回下一个不重复编号。 */
+export function nextFootnoteIndex(docText: string): number {
+  let max = 0;
+  for (const m of docText.matchAll(/\[\^(\d+)\]/g)) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max + 1;
+}
+
+/** 扫描文档中已有的链接引用定义 [ref]:，返回不冲突的引用 ID。 */
+export function nextLinkRefId(docText: string): string {
+  const used = new Set<string>();
+  for (const m of docText.matchAll(/^\[([^\]]+)\]:/gm)) {
+    used.add(m[1]!.toLowerCase());
+  }
+  if (!used.has("ref")) return "ref";
+  for (let i = 2; i < 999; i++) {
+    const id = `ref${i}`;
+    if (!used.has(id)) return id;
+  }
+  return `ref${Date.now()}`;
+}
+
+export interface SourceInsertResult {
+  insert: string;
+  cursorOffset: number;
+  selectLen?: number;
+  appendDoc?: string;
+}
+
+export function buildSourceInsert(kind: InsertKind, timeFormat: string, atEmptyLine = false, docText = ""): SourceInsertResult {
   switch (kind) {
     case "time": {
       const s = formatTime(new Date(), timeFormat);
       return { insert: s, cursorOffset: s.length };
+    }
+    case "image": {
+      const s = "![图片描述](https://)";
+      return { insert: s, cursorOffset: 8, selectLen: 8 };
+    }
+    case "footnote": {
+      const n = nextFootnoteIndex(docText);
+      const ref = `[^${n}]`;
+      return { insert: ref, cursorOffset: ref.length, appendDoc: `[^${n}]: 脚注内容` };
+    }
+    case "linkref": {
+      const id = nextLinkRefId(docText);
+      const s = `[链接文本][${id}]`;
+      return { insert: s, cursorOffset: 1, selectLen: 4, appendDoc: `[${id}]: https://` };
     }
     case "divider": {
       const s = atEmptyLine ? "---\n" : "\n---\n";
@@ -263,5 +321,11 @@ export function buildSourceInsert(kind: InsertKind, timeFormat: string, atEmptyL
       const s = atEmptyLine ? "$$\n\n$$" : "\n$$\n\n$$";
       return { insert: s, cursorOffset: atEmptyLine ? 3 : 4 };
     }
+    case "toc": {
+      const s = atEmptyLine ? "[TOC]\n" : "\n[TOC]\n";
+      return { insert: s, cursorOffset: s.length };
+    }
+    default:
+      return { insert: "", cursorOffset: 0 };
   }
 }

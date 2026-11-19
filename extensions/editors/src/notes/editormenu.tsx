@@ -1,15 +1,20 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import {
+  ArrowDownToLine,
+  ArrowUpToLine,
   Bold,
+  Bookmark,
   Check,
   ChevronRight,
+  ClipboardCopy,
   ClipboardPaste,
   Clock,
   Code,
   Copy,
   Eraser,
   ExternalLink,
+  FileCode2,
   Heading1,
   Heading2,
   Heading3,
@@ -17,11 +22,14 @@ import {
   Heading5,
   Heading6,
   Highlighter,
+  Image,
   Italic,
   Link,
+  Link2,
   List,
   ListChecks,
   ListOrdered,
+  ListTree,
   Minus,
   Pilcrow,
   Plus,
@@ -31,14 +39,14 @@ import {
   Strikethrough,
   Table,
   TextSelect,
-  Type,
   Underline,
 } from "lucide-preact";
 import type { BlockKind, FormatKind, InsertKind } from "./blockops";
+import type { NoteShortcuts } from "./shortcuts";
 import { formatTime } from "./timefmt";
 
 export type { FormatKind, InsertKind };
-type SubMenuId = "format" | "paragraph" | "insert";
+type SubMenuId = "copyPasteAs" | "paragraph" | "insert";
 
 export interface EditorMenuTarget {
   x: number;
@@ -79,7 +87,7 @@ const PARA_ITEMS: { kind: BlockKind; label: string; icon: typeof Pilcrow }[] = [
   { kind: "task", label: "待办", icon: ListChecks },
 ];
 
-const FORMAT_ITEMS: { kind: FormatKind; label: string; icon: typeof Bold }[] = [
+const QUICK_FORMAT_ICONS: { kind: Exclude<FormatKind, "clear">; label: string; icon: typeof Bold }[] = [
   { kind: "bold", label: "加粗", icon: Bold },
   { kind: "italic", label: "斜体", icon: Italic },
   { kind: "strike", label: "删除线", icon: Strikethrough },
@@ -87,7 +95,7 @@ const FORMAT_ITEMS: { kind: FormatKind; label: string; icon: typeof Bold }[] = [
   { kind: "mark", label: "高亮", icon: Highlighter },
   { kind: "underline", label: "下划线", icon: Underline },
   { kind: "link", label: "链接", icon: Link },
-  { kind: "clear", label: "清除格式", icon: Eraser },
+  { kind: "math", label: "行内公式", icon: Sigma },
 ];
 
 function MenuItem(props: { icon: ComponentChildren; label: string; hint?: string; disabled?: boolean; current?: boolean; onEnter?: () => void; onClick: () => void }) {
@@ -108,18 +116,19 @@ function MenuItem(props: { icon: ComponentChildren; label: string; hint?: string
   );
 }
 
-/** 编辑器右键菜单（参考 Typora 结构）：剪贴板、格式/段落/插入子菜单，支持插入当前时间与格式。 */
+/** 类 Typora 编辑器右键菜单：剪贴板、一级 2×4 格式快捷图标 + 单列清除格式、段落与丰富插入子菜单。 */
 export function EditorContextMenu(props: {
   menu: EditorMenuTarget;
   platform: string;
   timeFormat: string;
+  shortcuts?: NoteShortcuts;
   actions: EditorMenuActions;
   onClose: () => void;
 }) {
   const { menu, actions, onClose } = props;
   const box = useRef<HTMLDivElement>(null);
   const subRef = useRef<HTMLDivElement>(null);
-  const triggerRefs = useRef<Record<SubMenuId, HTMLDivElement | null>>({ format: null, paragraph: null, insert: null });
+  const triggerRefs = useRef<Record<SubMenuId, HTMLDivElement | null>>({ copyPasteAs: null, paragraph: null, insert: null });
   const [place, setPlace] = useState({ left: menu.x, top: menu.y });
   const [openSub, setOpenSub] = useState<SubMenuId | null>(null);
   const [subPlace, setSubPlace] = useState({ left: 0, top: 0 });
@@ -128,6 +137,8 @@ export function EditorContextMenu(props: {
   const mod = props.platform === "darwin" ? "⌘" : "Ctrl+";
   const pastePlainHint = props.platform === "darwin" ? "⇧⌘V" : "Ctrl+Shift+V";
   const timePreview = formatTime(new Date(), props.timeFormat);
+  const showCopyPasteSub =
+    (menu.canCopyMarkdown && !!actions.onCopyMarkdown) || (!menu.readonly && !!actions.onPastePlain);
 
   useLayoutEffect(() => {
     setOpenSub(null);
@@ -209,15 +220,26 @@ export function EditorContextMenu(props: {
         style={{ left: `${subPlace.left}px`, top: `${subPlace.top}px` }}
         onMouseEnter={() => window.clearTimeout(closeSubTimer.current)}
       >
-        {id === "format" &&
-          FORMAT_ITEMS.map(({ kind, label, icon: Icon }) => (
-            <MenuItem
-              key={kind}
-              icon={<Icon size={14} />}
-              label={label}
-              onClick={run(() => actions.onFormat?.(kind))}
-            />
-          ))}
+        {id === "copyPasteAs" && (
+          <>
+            {menu.canCopyMarkdown && actions.onCopyMarkdown && (
+              <MenuItem
+                icon={<Copy size={14} />}
+                label="复制为 Markdown"
+                disabled={!menu.hasSelection}
+                onClick={run(actions.onCopyMarkdown)}
+              />
+            )}
+            {!menu.readonly && actions.onPastePlain && (
+              <MenuItem
+                icon={<ClipboardPaste size={14} />}
+                label="粘贴为纯文本"
+                hint={pastePlainHint}
+                onClick={run(actions.onPastePlain)}
+              />
+            )}
+          </>
+        )}
         {id === "paragraph" &&
           PARA_ITEMS.map(({ kind, label, icon: Icon }) => (
             <MenuItem
@@ -237,10 +259,28 @@ export function EditorContextMenu(props: {
               onClick={run(() => actions.onInsert?.("time"))}
             />
             <div class="fx-menu-sep" />
-            <MenuItem icon={<Minus size={14} />} label="分割线" onClick={run(() => actions.onInsert?.("divider"))} />
-            <MenuItem icon={<Code size={14} />} label="代码块" onClick={run(() => actions.onInsert?.("code"))} />
+            <MenuItem icon={<Image size={14} />} label="图像" onClick={run(() => actions.onInsert?.("image"))} />
+            <MenuItem icon={<Bookmark size={14} />} label="脚注" onClick={run(() => actions.onInsert?.("footnote"))} />
+            <MenuItem icon={<Link2 size={14} />} label="链接引用" onClick={run(() => actions.onInsert?.("linkref"))} />
+            <MenuItem icon={<Minus size={14} />} label="水平分割线" onClick={run(() => actions.onInsert?.("divider"))} />
             <MenuItem icon={<Table size={14} />} label="表格" onClick={run(() => actions.onInsert?.("table"))} />
+            <MenuItem icon={<Code size={14} />} label="代码块" onClick={run(() => actions.onInsert?.("code"))} />
             <MenuItem icon={<Sigma size={14} />} label="公式块" onClick={run(() => actions.onInsert?.("math"))} />
+            <MenuItem icon={<ListTree size={14} />} label="内容目录" onClick={run(() => actions.onInsert?.("toc"))} />
+            <MenuItem icon={<FileCode2 size={14} />} label="YAML Front Matter" onClick={run(() => actions.onInsert?.("frontmatter"))} />
+            <div class="fx-menu-sep" />
+            <MenuItem
+              icon={<ArrowUpToLine size={14} />}
+              label="段落（上方）"
+              hint={props.shortcuts?.above}
+              onClick={run(() => actions.onInsert?.("paraAbove"))}
+            />
+            <MenuItem
+              icon={<ArrowDownToLine size={14} />}
+              label="段落（下方）"
+              hint={props.shortcuts?.below}
+              onClick={run(() => actions.onInsert?.("paraBelow"))}
+            />
           </>
         )}
       </div>
@@ -269,36 +309,58 @@ export function EditorContextMenu(props: {
         <MenuItem icon={<Scissors size={14} />} label="剪切" hint={`${mod}X`} disabled={!menu.hasSelection} onEnter={enterItem} onClick={run(actions.onCut)} />
       )}
       <MenuItem icon={<Copy size={14} />} label="复制" hint={`${mod}C`} disabled={!menu.hasSelection} onEnter={enterItem} onClick={run(actions.onCopy)} />
-      {menu.canCopyMarkdown && actions.onCopyMarkdown && (
-        <MenuItem icon={<Copy size={14} />} label="复制为 Markdown" disabled={!menu.hasSelection} onEnter={enterItem} onClick={run(actions.onCopyMarkdown)} />
-      )}
       {!menu.readonly && actions.onPaste && (
         <MenuItem icon={<ClipboardPaste size={14} />} label="粘贴" hint={`${mod}V`} onEnter={enterItem} onClick={run(actions.onPaste)} />
       )}
-      {!menu.readonly && actions.onPastePlain && (
-        <MenuItem icon={<ClipboardPaste size={14} />} label="粘贴为纯文本" hint={pastePlainHint} onEnter={enterItem} onClick={run(actions.onPastePlain)} />
+      {showCopyPasteSub && (
+        <div
+          class="fx-menu-sub-wrap"
+          ref={(el) => {
+            triggerRefs.current.copyPasteAs = el;
+          }}
+          onMouseEnter={() => enterSub("copyPasteAs")}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            aria-haspopup="menu"
+            aria-expanded={openSub === "copyPasteAs"}
+            class={`fx-menu-item fx-menu-sub-trigger${openSub === "copyPasteAs" ? " is-active" : ""}`}
+            onClick={() => setOpenSub((s) => (s === "copyPasteAs" ? null : "copyPasteAs"))}
+          >
+            <ClipboardCopy size={14} />
+            <span>复制 / 粘贴为…</span>
+            <ChevronRight size={13} class="fx-menu-arrow" />
+          </button>
+          {renderSubMenu("copyPasteAs")}
+        </div>
       )}
       <MenuItem icon={<TextSelect size={14} />} label="全选" hint={`${mod}A`} onEnter={enterItem} onClick={run(actions.onSelectAll)} />
 
       {!menu.readonly && (
         <>
-          <div class="fx-menu-sep" />
           {actions.onFormat && (
-            <div
-              class="fx-menu-sub-wrap"
-              ref={(el) => {
-                triggerRefs.current.format = el;
-              }}
-              onMouseEnter={() => enterSub("format")}
-            >
-              <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openSub === "format"} class={`fx-menu-item fx-menu-sub-trigger${openSub === "format" ? " is-active" : ""}`} onClick={() => setOpenSub((s) => (s === "format" ? null : "format"))}>
-                <Type size={14} />
-                <span>格式</span>
-                <ChevronRight size={13} class="fx-menu-arrow" />
-              </button>
-              {renderSubMenu("format")}
-            </div>
+            <>
+              <div class="fx-menu-sep" />
+              <div class="fx-menu-icon-grid" role="group" aria-label="快捷格式" onMouseEnter={enterItem}>
+                {QUICK_FORMAT_ICONS.map(({ kind, label, icon: Icon }) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    role="menuitem"
+                    class="fx-menu-icon-btn"
+                    title={label}
+                    aria-label={label}
+                    onClick={run(() => actions.onFormat?.(kind))}
+                  >
+                    <Icon size={14} />
+                  </button>
+                ))}
+              </div>
+              <MenuItem icon={<Eraser size={14} />} label="清除格式" onEnter={enterItem} onClick={run(() => actions.onFormat?.("clear"))} />
+            </>
           )}
+          <div class="fx-menu-sep" />
           {actions.onParagraph && (
             <div
               class="fx-menu-sub-wrap"
@@ -331,7 +393,14 @@ export function EditorContextMenu(props: {
               }}
               onMouseEnter={() => enterSub("insert")}
             >
-              <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openSub === "insert"} class={`fx-menu-item fx-menu-sub-trigger${openSub === "insert" ? " is-active" : ""}`} onClick={() => setOpenSub((s) => (s === "insert" ? null : "insert"))}>
+              <button
+                type="button"
+                role="menuitem"
+                aria-haspopup="menu"
+                aria-expanded={openSub === "insert"}
+                class={`fx-menu-item fx-menu-sub-trigger${openSub === "insert" ? " is-active" : ""}`}
+                onClick={() => setOpenSub((s) => (s === "insert" ? null : "insert"))}
+              >
                 <Plus size={14} />
                 <span>插入</span>
                 <ChevronRight size={13} class="fx-menu-arrow" />
