@@ -1072,6 +1072,8 @@ export const DevTools = {
   hashFile: bind<[], FileHash | null>("DevTools.HashFile", () => []),
   /** HashPath 计算指定文件的哈希（拖进窗口的文件）。 */
   hashPath: bind<[string], FileHash | null>("DevTools.HashPath", (path: string) => [path]),
+  /** SaveText 让用户选择开发工具结果的保存位置。 */
+  saveText: bind<[string, string], boolean>("DevTools.SaveText", (name: string, content: string) => [name, content]),
 } as const;
 
 /** Catalog 是「道具库」窗口的服务。 */
