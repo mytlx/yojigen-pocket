@@ -1,7 +1,7 @@
 {
   "id": "editors",
   "name": "写作与代码",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "api": 1,
   "description": "Markdown 笔记、代码草稿、文本对比。三个工具共用一套编辑器",
   "icon": "svg:notebook",

@@ -671,7 +671,7 @@ def open_tool(keyword, ready, timeout=10):
     typed(''); typed(keyword); press('Enter'); wait(0.8)
     return wait_for('!!window.__pluginEval', 5) and ewait_for(ready, timeout)
 
-edzip=os.path.join(EXT,'editors-1.0.1.zip')
+edzip=os.path.join(EXT,'editors-1.1.0.zip')
 info=js('mygo.call("Extensions.Install",%s)' % json.dumps(edzip)) if os.path.exists(edzip) else {}
 check('安装“写作与代码”扩展包（三个工具）', (info or {}).get('tools')==['Markdown 笔记','代码草稿','文本对比'], info or edzip)
 show(); typed('diff'); wait(0.4); r=rows(); check('主程序里已经没有这三个工具，装了扩展才有', r[:1]==['文本对比'], r[:3])
