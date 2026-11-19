@@ -175,14 +175,19 @@ jobs:
               --changelog-file "$changelog_file"
           done
           if [ -f .ext-release/extensions.json ]; then
+            bun tools/extension-registry.ts notes \
+              --registry .ext-release/extensions.json \
+              --repo "$GITHUB_REPOSITORY" \
+              --out .ext-release/extensions-notes.md
             if gh release view extensions >/dev/null 2>&1; then
               gh release upload extensions .ext-release/extensions.json --clobber
+              gh release edit extensions --notes-file .ext-release/extensions-notes.md
             else
               gh release create extensions .ext-release/extensions.json \
                 --target "$GITHUB_SHA" \
                 --prerelease \
                 --latest=false \
                 --title "官方扩展在线索引" \
-                --notes "供 Yojigen Pocket 客户端在线读取官方扩展目录、版本号与更新日志（extensions.json）。如需安装扩展，请下载各扩展或主程序 Release 中的 zip 包。"
+                --notes-file .ext-release/extensions-notes.md
             fi
           fi

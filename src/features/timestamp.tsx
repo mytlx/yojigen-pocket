@@ -1,12 +1,9 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Pause, Play } from "lucide-preact";
 import { Btn, CopyBtn, useFocus } from "./ui";
+import { formatDateTime } from "../shared/time";
 import type { FeatureProps } from "./types";
 
-const pad = (n: number, w = 2) => String(n).padStart(w, "0");
-function local(d: Date) {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
 function relative(d: Date) {
   const s = Math.round((d.getTime() - Date.now()) / 1000);
   const abs = Math.abs(s);
@@ -51,7 +48,7 @@ export function TimestampTool({ input, ctx }: FeatureProps) {
   const parsed = useMemo(() => parseTime(text), [text]);
   const rows = parsed
     ? [
-        ["本地时间", local(parsed.date)],
+        ["本地时间", formatDateTime(parsed.date)],
         ["UTC", parsed.date.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC")],
         ["ISO 8601", parsed.date.toISOString()],
         ["秒", String(Math.floor(parsed.date.getTime() / 1000))],
