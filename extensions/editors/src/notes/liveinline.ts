@@ -1,4 +1,4 @@
-import { lift, setBlockType } from "@milkdown/kit/prose/commands";
+import { lift, setBlockType, wrapIn } from "@milkdown/kit/prose/commands";
 import type { Fragment, Mark, Node as PMNode, ResolvedPos, Slice } from "@milkdown/kit/prose/model";
 import { liftListItem, wrapInList } from "@milkdown/kit/prose/schema-list";
 import { NodeSelection, Plugin, PluginKey, TextSelection, type Transaction } from "@milkdown/kit/prose/state";
@@ -94,6 +94,28 @@ function ancestorOf($pos: ResolvedPos, name: string): { depth: number; pos: numb
   return null;
 }
 
+export type ParsedBlockPrefix =
+  | { kind: "paragraph" }
+  | { kind: "heading"; level: number }
+  | { kind: "blockquote" }
+  | { kind: "bullet" }
+  | { kind: "ordered" }
+  | { kind: "task"; checked: boolean };
+
+/** 解析块前缀输入（# / > / - / 1. / - [ ] / - [x]），用于实时渲染标识符编辑与跨类型互转。 */
+export function parseBlockPrefix(raw: string): ParsedBlockPrefix | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return { kind: "paragraph" };
+  const heading = /^(#{1,6})$/.exec(trimmed);
+  if (heading) return { kind: "heading", level: heading[1]!.length };
+  if (trimmed === ">") return { kind: "blockquote" };
+  if (/^-\s*\[\s*\]$/.test(trimmed)) return { kind: "task", checked: false };
+  if (/^-\s*\[[xX]\]$/.test(trimmed)) return { kind: "task", checked: true };
+  if (/^[-*+]$/.test(trimmed)) return { kind: "bullet" };
+  if (/^\d+\.?$/.test(trimmed)) return { kind: "ordered" };
+  return null;
+}
+
 function mountTokenInput(
   wrap: HTMLElement,
   view: EditorView,
@@ -102,6 +124,7 @@ function mountTokenInput(
     label: string;
     onCommit: (next: string, returnFocus: boolean) => void;
     onLiveInput?: (next: string) => void;
+    onCancel?: () => void;
     onExitForward?: () => void;
     onDone: (finalText: string) => void;
   },
@@ -117,11 +140,11 @@ function mountTokenInput(
   input.setAttribute("aria-label", opts.label);
 
   let closed = false;
-  const close = () => {
+  const close = (finalText: string) => {
     if (closed) return;
     closed = true;
     view.dom.classList.remove("pocket-hide-vcursor");
-    opts.onDone(input.value);
+    opts.onDone(finalText);
   };
 
   input.addEventListener("focus", () => {
@@ -135,15 +158,22 @@ function mountTokenInput(
   input.addEventListener("keydown", (e) => {
     e.stopPropagation();
     if (e.isComposing) return;
-    if (e.key === "Enter" || e.key === "Escape") {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      close(text);
+      if (opts.onCancel) opts.onCancel();
+      else view.focus();
+    } else if (e.key === "Enter") {
       e.preventDefault();
       const val = input.value;
-      close();
+      close(val);
       opts.onCommit(val, true);
     } else if (e.key === "ArrowRight" && input.selectionStart === input.value.length && input.selectionEnd === input.value.length) {
       if (opts.onExitForward) {
         e.preventDefault();
-        close();
+        const val = input.value;
+        close(val);
+        opts.onCommit(val, false);
         opts.onExitForward();
       }
     }
@@ -151,7 +181,7 @@ function mountTokenInput(
   input.addEventListener("blur", () => {
     if (closed) return;
     const val = input.value;
-    close();
+    close(val);
     opts.onCommit(val, false);
     requestAnimationFrame(() => {
       if (!view.isDestroyed && !view.dom.contains(document.activeElement)) {
@@ -162,10 +192,13 @@ function mountTokenInput(
 
   wrap.replaceChildren(input);
   if (wrap.classList.contains("is-block-prefix")) syncPlaceholderHostOffset(view, wrap);
+  input.focus();
+  input.select();
   requestAnimationFrame(() => {
-    if (!input.isConnected) return;
-    input.focus();
-    input.select();
+    if (!closed && input.isConnected && document.activeElement !== input) {
+      input.focus();
+      input.select();
+    }
   });
 }
 
@@ -197,12 +230,14 @@ function makeTokenWidget(
     label: string;
     onCommit: (next: string, returnFocus: boolean) => void;
     onLiveInput?: (next: string) => void;
+    onCancel?: () => void;
     onExitForward?: () => void;
   },
 ): HTMLElement {
   const wrap = document.createElement("span");
   wrap.className = `pocket-syntax-wrap is-passive${opts.className ? ` ${opts.className}` : ""}`;
   wrap.dataset.text = text || " ";
+  wrap.title = "点击修改语法标记";
 
   const labelEl = document.createElement("span");
   labelEl.className = "pocket-syntax-text";
@@ -211,10 +246,11 @@ function makeTokenWidget(
 
   let editing = false;
   wrap.addEventListener("mousedown", (e) => {
-    if (editing || !view.editable) return;
+    e.stopPropagation();
+    if (!view.editable) return;
+    if (editing) return;
     editing = true;
     e.preventDefault();
-    e.stopPropagation();
     mountTokenInput(wrap, view, text, {
       ...opts,
       onDone: (val) => {
@@ -230,34 +266,118 @@ function makeTokenWidget(
   return wrap;
 }
 
-function commitListPrefixEdit(v: EditorView, liPos: number, tbPos: number, isOrdered: boolean, val: string, refocus: boolean) {
-  const curLi = v.state.doc.nodeAt(liPos);
-  if (!curLi || curLi.type.name !== "list_item") return;
-  const trimmed = val.trim();
-  if (!trimmed) {
-    v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
-    liftListItem(v.state.schema.nodes.list_item!)(v.state, v.dispatch);
-  } else if (/^-\s*\[\s*\]$/.test(trimmed)) {
-    v.dispatch(v.state.tr.setNodeMarkup(liPos, undefined, { ...curLi.attrs, checked: false }));
-  } else if (/^-\s*\[[xX]\]$/.test(trimmed)) {
-    v.dispatch(v.state.tr.setNodeMarkup(liPos, undefined, { ...curLi.attrs, checked: true }));
-  } else if (/^[-*+]$/.test(trimmed)) {
-    if (isOrdered) {
-      v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
-      liftListItem(v.state.schema.nodes.list_item!)(v.state, v.dispatch);
-      wrapInList(v.state.schema.nodes.bullet_list!)(v.state, v.dispatch);
-    } else if (curLi.attrs.checked != null) {
-      v.dispatch(v.state.tr.setNodeMarkup(liPos, undefined, { ...curLi.attrs, checked: null }));
-    }
-  } else if (/^\d+\.?$/.test(trimmed) && !isOrdered) {
-    v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
-    liftListItem(v.state.schema.nodes.list_item!)(v.state, v.dispatch);
-    wrapInList(v.state.schema.nodes.ordered_list!)(v.state, v.dispatch);
-  }
-  if (refocus) {
-    const nextPos = Math.min(tbPos + 1, v.state.doc.content.size);
-    v.dispatch(v.state.tr.setSelection(TextSelection.near(v.state.doc.resolve(nextPos))).setMeta("pocket-selection", true));
+function commitBlockPrefixEdit(v: EditorView, tbPos: number, val: string, refocus: boolean) {
+  const curTb = v.state.doc.nodeAt(tbPos);
+  if (!curTb || !curTb.isTextblock) return;
+  const refocusAt = (pos: number) => {
+    if (!refocus) return;
+    const clamped = Math.max(0, Math.min(pos, v.state.doc.content.size));
+    v.dispatch(v.state.tr.setSelection(TextSelection.near(v.state.doc.resolve(clamped))).setMeta("pocket-selection", true));
     v.focus();
+  };
+
+  const parsed = parseBlockPrefix(val);
+  if (!parsed) {
+    refocusAt(tbPos + 1);
+    return;
+  }
+
+  const schema = v.state.schema;
+  const $inside = v.state.doc.resolve(tbPos + 1);
+  const liAnc = ancestorOf($inside, "list_item");
+  const bqAnc = ancestorOf($inside, "blockquote");
+  const inDirectListItem = !!(liAnc && tbPos === liAnc.pos + 1);
+  const inDirectQuote = !!(bqAnc && bqAnc.depth === $inside.depth - 1);
+
+  if (curTb.type.name === "heading" && parsed.kind === "heading") {
+    if (Number(curTb.attrs.level) !== parsed.level) {
+      v.dispatch(v.state.tr.setNodeMarkup(tbPos, undefined, { ...curTb.attrs, level: parsed.level }));
+    }
+    refocusAt(tbPos + 1);
+    return;
+  }
+  if (inDirectListItem && liAnc) {
+    const parentList = $inside.node(liAnc.depth - 1);
+    const isOrdered = parentList?.type.name === "ordered_list";
+    if (parsed.kind === "task" && !isOrdered) {
+      if (liAnc.node.attrs.checked !== parsed.checked) {
+        v.dispatch(v.state.tr.setNodeMarkup(liAnc.pos, undefined, { ...liAnc.node.attrs, checked: parsed.checked }));
+      }
+      refocusAt(tbPos + 1);
+      return;
+    }
+    if (parsed.kind === "bullet" && !isOrdered) {
+      if (liAnc.node.attrs.checked != null) {
+        v.dispatch(v.state.tr.setNodeMarkup(liAnc.pos, undefined, { ...liAnc.node.attrs, checked: null }));
+      }
+      refocusAt(tbPos + 1);
+      return;
+    }
+    if (parsed.kind === "ordered" && isOrdered) {
+      refocusAt(tbPos + 1);
+      return;
+    }
+  }
+  if (inDirectQuote && parsed.kind === "blockquote") {
+    refocusAt(tbPos + 1);
+    return;
+  }
+
+  v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
+  if (inDirectListItem && schema.nodes.list_item) {
+    liftListItem(schema.nodes.list_item)(v.state, v.dispatch);
+  } else if (inDirectQuote) {
+    lift(v.state, v.dispatch);
+  }
+
+  const ensurePara = () => {
+    const parent = v.state.selection.$from.parent;
+    if (parent.type.name !== "paragraph" && schema.nodes.paragraph) {
+      setBlockType(schema.nodes.paragraph)(v.state, v.dispatch);
+    }
+  };
+
+  switch (parsed.kind) {
+    case "paragraph":
+      ensurePara();
+      break;
+    case "heading":
+      if (schema.nodes.heading) {
+        setBlockType(schema.nodes.heading, { level: parsed.level })(v.state, v.dispatch);
+      }
+      break;
+    case "blockquote":
+      ensurePara();
+      if (schema.nodes.blockquote) {
+        wrapIn(schema.nodes.blockquote)(v.state, v.dispatch);
+      }
+      break;
+    case "bullet":
+      ensurePara();
+      if (schema.nodes.bullet_list) {
+        wrapInList(schema.nodes.bullet_list)(v.state, v.dispatch);
+      }
+      break;
+    case "ordered":
+      ensurePara();
+      if (schema.nodes.ordered_list) {
+        wrapInList(schema.nodes.ordered_list)(v.state, v.dispatch);
+      }
+      break;
+    case "task":
+      ensurePara();
+      if (schema.nodes.bullet_list) {
+        wrapInList(schema.nodes.bullet_list)(v.state, v.dispatch);
+        const curLi = ancestorOf(v.state.selection.$from, "list_item");
+        if (curLi) {
+          v.dispatch(v.state.tr.setNodeMarkup(curLi.pos, undefined, { ...curLi.node.attrs, checked: parsed.checked }));
+        }
+      }
+      break;
+  }
+
+  if (refocus) {
+    refocusAt(v.state.selection.$from.start());
   }
 }
 
@@ -350,6 +470,7 @@ function singleHtmlNodePos(state: EditorView["state"]): number {
 export function liveInlinePlugin(options: () => { enabled: boolean }) {
   return $prose(() => {
     let pointerDown = false;
+    let pointerRefreshTimer = 0;
     let dismissedHtmlPos: number | null = null;
     let lastAutoHtmlPos: number | null = null;
     let editedParaPos: number | null = null;
@@ -435,6 +556,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
                     const tr = v.state.tr.removeMark(span.from, span.to, curMark).addMark(span.from, span.to, curMark.create({ ...span.mark.attrs, href: trimmed }));
                     v.dispatch(tr);
                   },
+                  onCancel: () => updateHref(spec.href ?? "", true),
                   onCommit: (val, refocus) => updateHref(val, refocus),
                 });
                 container.append(mid, urlInput, end);
@@ -509,33 +631,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
                 makeTokenWidget(v, hashes, {
                   className: "is-block-prefix is-heading",
                   label: "标题级别前缀",
-                  onLiveInput: (val) => {
-                    const m = /^(#{1,6})\s*$/.exec(val);
-                    if (!m) return;
-                    const nextLevel = m[1]!.length;
-                    const cur = v.state.doc.nodeAt(tbPos);
-                    if (cur?.type.name === "heading" && Number(cur.attrs.level) !== nextLevel) {
-                      v.dispatch(v.state.tr.setNodeMarkup(tbPos, undefined, { ...cur.attrs, level: nextLevel }));
-                    }
-                  },
-                  onCommit: (val, refocus) => {
-                    const cur = v.state.doc.nodeAt(tbPos);
-                    if (!cur) return;
-                    const m = /^(#{1,6})\s*$/.exec(val);
-                    if (m) {
-                      const nextLevel = m[1]!.length;
-                      if (Number(cur.attrs.level) !== nextLevel) {
-                        v.dispatch(v.state.tr.setNodeMarkup(tbPos, undefined, { ...cur.attrs, level: nextLevel }));
-                      }
-                    } else if (!val.trim()) {
-                      v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
-                      setBlockType(v.state.schema.nodes.paragraph!)(v.state, v.dispatch);
-                    }
-                    if (refocus) {
-                      v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
-                      v.focus();
-                    }
-                  },
+                  onCommit: (val, refocus) => commitBlockPrefixEdit(v, tbPos, val, refocus),
                   onExitForward: () => {
                     v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
                     v.focus();
@@ -579,17 +675,7 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
                 makeTokenWidget(v, "> ", {
                   className: "is-block-prefix is-quote",
                   label: "引用前缀",
-                  onCommit: (val, refocus) => {
-                    if (!val.trim()) {
-                      v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
-                      lift(v.state, v.dispatch);
-                    }
-                    if (refocus) {
-                      const nextPos = Math.min(tbPos + 1, v.state.doc.content.size);
-                      v.dispatch(v.state.tr.setSelection(TextSelection.near(v.state.doc.resolve(nextPos))).setMeta("pocket-selection", true));
-                      v.focus();
-                    }
-                  },
+                  onCommit: (val, refocus) => commitBlockPrefixEdit(v, tbPos, val, refocus),
                   onExitForward: () => {
                     v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, tbPos + 1)).setMeta("pocket-selection", true));
                     v.focus();
@@ -653,21 +739,30 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
           const detail = (e as CustomEvent<{ pos?: number }>).detail;
           dismissedHtmlPos = typeof detail?.pos === "number" ? detail.pos : null;
         };
+        const GUTTER_SEL = ".milkdown-list-item-block.pocket-active-prefix-li > .list-item > .label-wrapper";
+        let justOpenedGutter = false;
+        const clearJustOpened = () => {
+          justOpenedGutter = false;
+        };
         const onGutterPointerDown = (e: PointerEvent) => {
           if (!options().enabled || !editorView.editable || e.button !== 0) return;
-          const labelWrap = (e.target as Element | null)?.closest(".milkdown-list-item-block.pocket-active-prefix-li > .list-item > .label-wrapper") as HTMLElement | null;
-          if (!labelWrap || labelWrap.classList.contains("is-editing")) return;
+          const labelWrap = (e.target as Element | null)?.closest(GUTTER_SEL) as HTMLElement | null;
+          if (!labelWrap) return;
+          if (labelWrap.classList.contains("is-editing")) {
+            e.stopPropagation();
+            return;
+          }
           const liBlock = labelWrap.closest(".milkdown-list-item-block.pocket-active-prefix-li") as HTMLElement | null;
           if (!liBlock) return;
           e.preventDefault();
           e.stopPropagation();
 
-          const liPos = Number(liBlock.dataset.pocketLi);
           const tbPos = Number(liBlock.dataset.pocketTb);
           const prefix = liBlock.dataset.pocketPrefix ?? "- ";
-          const isOrdered = liBlock.dataset.pocketOrdered === "1";
-          if (!Number.isFinite(liPos) || !Number.isFinite(tbPos)) return;
+          if (!Number.isFinite(tbPos)) return;
 
+          justOpenedGutter = true;
+          window.addEventListener("mouseup", clearJustOpened, { once: true });
           labelWrap.classList.add("is-editing");
           const wrap = document.createElement("span");
           wrap.className = "pocket-syntax-wrap is-block-prefix is-gutter-prefix";
@@ -675,17 +770,36 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
           labelWrap.appendChild(wrap);
           mountTokenInput(wrap, editorView, prefix, {
             label: "列表前缀",
-            onCommit: (val, refocus) => commitListPrefixEdit(editorView, liPos, tbPos, isOrdered, val, refocus),
+            onCommit: (val, refocus) => commitBlockPrefixEdit(editorView, tbPos, val, refocus),
             onExitForward: () => {
               const nextPos = Math.min(tbPos + 1, editorView.state.doc.content.size);
               editorView.dispatch(editorView.state.tr.setSelection(TextSelection.near(editorView.state.doc.resolve(nextPos))).setMeta("pocket-selection", true));
               editorView.focus();
             },
             onDone: () => {
+              justOpenedGutter = false;
               wrap.remove();
               labelWrap.classList.remove("is-editing");
             },
           });
+        };
+        const onGutterMouseDown = (e: MouseEvent) => {
+          if (!options().enabled || !editorView.editable || e.button !== 0) return;
+          const labelWrap = (e.target as Element | null)?.closest(GUTTER_SEL);
+          if (!labelWrap) return;
+          e.stopPropagation();
+          if (justOpenedGutter || !(e.target as Element).closest(".pocket-syntax-input")) {
+            justOpenedGutter = false;
+            e.preventDefault();
+          }
+        };
+        const onGutterClick = (e: MouseEvent) => {
+          const labelWrap = (e.target as Element | null)?.closest(`${GUTTER_SEL}.is-editing`);
+          if (!labelWrap) return;
+          e.stopPropagation();
+          if (!(e.target as Element).closest(".pocket-syntax-input")) {
+            e.preventDefault();
+          }
         };
         const syncPlaceholderOffset = (view: EditorView) => {
           if (view.isDestroyed) return;
@@ -698,6 +812,8 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
         };
         editorView.dom.addEventListener("pocket-html-dismiss", onDismiss);
         editorView.dom.addEventListener("pointerdown", onGutterPointerDown, true);
+        editorView.dom.addEventListener("mousedown", onGutterMouseDown, true);
+        editorView.dom.addEventListener("click", onGutterClick, true);
         syncPlaceholderOffset(editorView);
         return {
           update(view, prevState) {
@@ -739,9 +855,16 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
               window.clearTimeout(composeRefreshTimer);
               composeRefreshTimer = 0;
             }
+            if (pointerRefreshTimer) {
+              window.clearTimeout(pointerRefreshTimer);
+              pointerRefreshTimer = 0;
+            }
             syncPlaceholderHostOffset(editorView, null);
             editorView.dom.removeEventListener("pocket-html-dismiss", onDismiss);
             editorView.dom.removeEventListener("pointerdown", onGutterPointerDown, true);
+            editorView.dom.removeEventListener("mousedown", onGutterMouseDown, true);
+            editorView.dom.removeEventListener("click", onGutterClick, true);
+            window.removeEventListener("mouseup", clearJustOpened);
             boundView = null;
             cachedDecos = null;
             cachedState = null;
@@ -779,6 +902,20 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
               }
             }
           }
+          if (event.key === "Backspace" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            const sel = view.state.selection;
+            if (sel instanceof TextSelection && sel.empty && sel.$from.parent.type.name === "heading" && sel.$from.parentOffset === 0) {
+              event.preventDefault();
+              const level = Number(sel.$from.parent.attrs.level || 1);
+              const hPos = sel.$from.before();
+              if (level > 1) {
+                view.dispatch(view.state.tr.setNodeMarkup(hPos, undefined, { ...sel.$from.parent.attrs, level: level - 1 }));
+              } else if (view.state.schema.nodes.paragraph) {
+                setBlockType(view.state.schema.nodes.paragraph)(view.state, view.dispatch);
+              }
+              return true;
+            }
+          }
           return false;
         },
         handleDOMEvents: {
@@ -786,6 +923,10 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
             if (composeRefreshTimer) {
               window.clearTimeout(composeRefreshTimer);
               composeRefreshTimer = 0;
+            }
+            if (pointerRefreshTimer) {
+              window.clearTimeout(pointerRefreshTimer);
+              pointerRefreshTimer = 0;
             }
             return false;
           },
@@ -801,20 +942,33 @@ export function liveInlinePlugin(options: () => { enabled: boolean }) {
             }, 32);
             return false;
           },
-          mousedown() {
+          mousedown(_view, event) {
+            if (!options().enabled || (event.target as Element | null)?.closest(".pocket-syntax-wrap, .label-wrapper, .pocket-html-editing") || (event as MouseEvent).button === 2) {
+              return false;
+            }
             pointerDown = true;
+            if (pointerRefreshTimer) {
+              window.clearTimeout(pointerRefreshTimer);
+              pointerRefreshTimer = 0;
+            }
             window.addEventListener(
               "mouseup",
               () => {
                 pointerDown = false;
-                if (boundView) boundView.dispatch(boundView.state.tr.setMeta(liveKey, true));
+                // 等浏览器原生点击选区与 ProseMirror 焦点定时器(20ms)落定后再兜底刷新，避免抢先用旧 selection 覆盖 DOM 光标。
+                pointerRefreshTimer = window.setTimeout(() => {
+                  pointerRefreshTimer = 0;
+                  if (boundView && !boundView.isDestroyed && !pointerDown && options().enabled && !cachedDecos) {
+                    boundView.dispatch(boundView.state.tr.setMeta(liveKey, true));
+                  }
+                }, 35);
               },
-              { once: true },
+              { capture: true, once: true },
             );
             return false;
           },
           focus(view) {
-            if (options().enabled) view.dispatch(view.state.tr.setMeta(liveKey, true));
+            if (options().enabled && !pointerDown) view.dispatch(view.state.tr.setMeta(liveKey, true));
             return false;
           },
           blur(view, event) {

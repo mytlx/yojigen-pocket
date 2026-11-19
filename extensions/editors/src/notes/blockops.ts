@@ -3,10 +3,13 @@ import type { Node as PMNode } from "@milkdown/kit/prose/model";
 import { liftListItem, wrapInList } from "@milkdown/kit/prose/schema-list";
 import { TextSelection } from "@milkdown/kit/prose/state";
 import type { EditorView } from "@milkdown/kit/prose/view";
+import { formatTime } from "./timefmt";
 
 /** 块菜单里的操作：把一个块转换成别的类型、复制、上下移动、删除。pos 是块在文档里的起始位置。 */
 
-export type BlockKind = "text" | "h1" | "h2" | "h3" | "h4" | "bullet" | "ordered" | "task" | "quote" | "code";
+export type BlockKind = "text" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "bullet" | "ordered" | "task" | "quote" | "code";
+export type FormatKind = "bold" | "italic" | "strike" | "code" | "mark" | "underline" | "link" | "clear";
+export type InsertKind = "time" | "divider" | "code" | "table" | "math";
 
 /** 这个块现在是什么（菜单里给当前类型打勾）。认不出来的返回空串。 */
 export function kindOf(view: EditorView, pos: number): BlockKind | "" {
@@ -16,7 +19,7 @@ export function kindOf(view: EditorView, pos: number): BlockKind | "" {
     case "paragraph":
       return "text";
     case "heading":
-      return (["h1", "h2", "h3", "h4"] as const)[(node.attrs.level as number) - 1] ?? "";
+      return (["h1", "h2", "h3", "h4", "h5", "h6"] as const)[(node.attrs.level as number) - 1] ?? "";
     case "blockquote":
       return "quote";
     case "code_block":
@@ -71,6 +74,8 @@ export function turnInto(view: EditorView, pos: number, kind: BlockKind) {
     case "h2":
     case "h3":
     case "h4":
+    case "h5":
+    case "h6":
       run(setBlockType(n.heading!, { level: Number(kind[1]) }));
       break;
     case "code":
@@ -145,4 +150,118 @@ export function moveBlock(view: EditorView, pos: number, dir: -1 | 1): boolean {
 export function canMove(view: EditorView, pos: number, dir: -1 | 1): boolean {
   const $pos = view.state.doc.resolve(pos);
   return dir < 0 ? $pos.index() > 0 : $pos.index() < $pos.parent.childCount - 1;
+}
+
+const FORMAT_WRAP: Record<Exclude<FormatKind, "clear">, [string, string, string]> = {
+  bold: ["**", "**", "文字"],
+  italic: ["*", "*", "文字"],
+  strike: ["~~", "~~", "文字"],
+  code: ["`", "`", "code"],
+  mark: ["==", "==", "重点"],
+  underline: ["<u>", "</u>", "文字"],
+  link: ["[", "](https://)", "链接文字"],
+};
+
+/** 源码 / 整块源码共用的行内格式包裹或清理，返回需要替换的范围与新选区。 */
+export function applySourceFormat(
+  doc: string,
+  from: number,
+  to: number,
+  kind: FormatKind,
+): { from: number; to: number; insert: string; anchor: number; head: number } {
+  const start = Math.max(0, Math.min(from, to));
+  const end = Math.min(doc.length, Math.max(from, to));
+  const slice = doc.slice(start, end);
+  if (kind === "clear") {
+    const cleaned = slice
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/<\/?(?:u|mark|sup|sub|kbd|strong|em|b|i|s|del)>/gi, "")
+      .replace(/(\*\*|~~|==|`|\*)([^\n]+?)\1/g, "$2");
+    return { from: start, to: end, insert: cleaned, anchor: start, head: start + cleaned.length };
+  }
+  const [open, close, placeholder] = FORMAT_WRAP[kind];
+  const body = slice || placeholder;
+  const insert = `${open}${body}${close}`;
+  return {
+    from: start,
+    to: end,
+    insert,
+    anchor: start + open.length,
+    head: start + open.length + body.length,
+  };
+}
+
+const LINE_PREFIX_STRIP_RE = /^([ \t]*)(?:#{1,6}\s+|>\s*|-\s*\[[xX\s]\]\s+|[-*+]\s+|\d+\.\s+|```[^\n]*$)/;
+
+/** 源码 / 整块源码共用的按行切换段落/标题/列表/引用前缀。 */
+export function applySourceParagraph(
+  doc: string,
+  from: number,
+  to: number,
+  kind: BlockKind,
+): { from: number; to: number; insert: string; anchor: number; head: number } {
+  const start = Math.max(0, Math.min(from, to));
+  const end = Math.min(doc.length, Math.max(from, to));
+  const blockFrom = start === 0 ? 0 : doc.lastIndexOf("\n", start - 1) + 1;
+  const nlAfter = doc.indexOf("\n", end);
+  const blockTo = nlAfter < 0 ? doc.length : nlAfter;
+  if (kind === "code") {
+    const inner = doc.slice(blockFrom, blockTo);
+    const insert = `\`\`\`\n${inner}\n\`\`\``;
+    return { from: blockFrom, to: blockTo, insert, anchor: blockFrom + 4, head: blockFrom + 4 + inner.length };
+  }
+  const lines = doc.slice(blockFrom, blockTo).split("\n");
+  const next = lines.map((line, i) => {
+    const stripped = line.replace(LINE_PREFIX_STRIP_RE, "$1");
+    const indent = /^[ \t]*/.exec(stripped)?.[0] ?? "";
+    const rest = stripped.slice(indent.length);
+    switch (kind) {
+      case "text":
+        return stripped;
+      case "h1":
+      case "h2":
+      case "h3":
+      case "h4":
+      case "h5":
+      case "h6":
+        return `${indent}${"#".repeat(Number(kind[1]))} ${rest}`;
+      case "quote":
+        return `${indent}> ${rest}`;
+      case "bullet":
+        return `${indent}- ${rest}`;
+      case "ordered":
+        return `${indent}${i + 1}. ${rest}`;
+      case "task":
+        return `${indent}- [ ] ${rest}`;
+      default:
+        return line;
+    }
+  });
+  const insert = next.join("\n");
+  return { from: blockFrom, to: blockTo, insert, anchor: blockFrom + insert.length, head: blockFrom + insert.length };
+}
+
+export function buildSourceInsert(kind: InsertKind, timeFormat: string, atEmptyLine = false): { insert: string; cursorOffset: number } {
+  switch (kind) {
+    case "time": {
+      const s = formatTime(new Date(), timeFormat);
+      return { insert: s, cursorOffset: s.length };
+    }
+    case "divider": {
+      const s = atEmptyLine ? "---\n" : "\n---\n";
+      return { insert: s, cursorOffset: s.length };
+    }
+    case "code": {
+      const s = atEmptyLine ? "```\n\n```" : "\n```\n\n```";
+      return { insert: s, cursorOffset: atEmptyLine ? 4 : 5 };
+    }
+    case "table": {
+      const s = `${atEmptyLine ? "" : "\n"}| 列一 | 列二 |\n| --- | --- |\n|  |  |\n`;
+      return { insert: s, cursorOffset: s.length };
+    }
+    case "math": {
+      const s = atEmptyLine ? "$$\n\n$$" : "\n$$\n\n$$";
+      return { insert: s, cursorOffset: atEmptyLine ? 3 : 4 };
+    }
+  }
 }

@@ -56,6 +56,12 @@ export interface FsChange {
 /** 用系统浏览器（或对应的应用）打开一个地址。 */
 export const openExternal = (url: string) => pocket.openExternal(url);
 
+/** 静默剪贴板读写（供编辑器右键菜单使用，不弹宿主 Toast）。 */
+export const editorClipboard = {
+  write: (text: string) => pocket.copyText(text),
+  read: () => pocket.readClipboard(),
+};
+
 const NOTES = "notes";
 
 /** 笔记：用户目录 notes 里的 .md 文件。 */

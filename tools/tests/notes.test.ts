@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { splitFrontmatter, joinFrontmatter } from "../../extensions/editors/src/notes/frontmatter";
 import { applyBlankLinesToAst } from "../../extensions/editors/src/notes/blanklines";
-import { matchStandaloneHtmlSnippet } from "../../extensions/editors/src/notes/liveinline";
+import { matchStandaloneHtmlSnippet, parseBlockPrefix } from "../../extensions/editors/src/notes/liveinline";
+import { applySourceFormat, applySourceParagraph, buildSourceInsert } from "../../extensions/editors/src/notes/blockops";
+import { DEFAULT_TIME_FORMAT, formatTime } from "../../extensions/editors/src/notes/timefmt";
+import { filterSlashItems, matchBlockSlash } from "../../extensions/editors/src/notes/slash";
 import { outlineOf, outlineTree } from "../../extensions/editors/src/notes/outline";
 import { defaultShortcuts, insertLine, lineAction, shortcutOf } from "../../extensions/editors/src/notes/shortcuts";
 import {
@@ -212,4 +215,60 @@ describe("notes sidebar multi-select, delete normalization, and resizable widths
 test("outline labels display inline Markdown as text and keep the source offset", () => {
   const source = "intro\n\n## **bold** [link](https://example.org) ~~old~~ `code` &amp; <i>text</i>";
   expect(outlineOf(source)).toEqual([{ level: 2, text: "bold link old code & text", from: 7 }]);
+});
+
+describe("notes v2: timefmt, slash menu, block prefix & source helpers", () => {
+  test("formatTime supports default seconds precision, custom tokens, and blank fallback", () => {
+    const dt = new Date(2026, 2, 5, 9, 4, 7);
+    expect(DEFAULT_TIME_FORMAT).toBe("YYYY-MM-DD HH:mm:ss");
+    expect(formatTime(dt)).toBe("2026-03-05 09:04:07");
+    expect(formatTime(dt, "   ")).toBe("2026-03-05 09:04:07");
+    expect(formatTime(dt, "YY/M/D H:m:s ddd dddd")).toBe("26/3/5 9:4:7 周四 星期四");
+  });
+
+  test("matchBlockSlash and filterSlashItems trigger only at line start", () => {
+    expect(matchBlockSlash("/", 1)).toEqual({ from: 0, query: "" });
+    expect(matchBlockSlash("第一行\n/时间", 7)).toEqual({ from: 4, query: "时间" });
+    expect(matchBlockSlash("https://example.com", 19)).toBeNull();
+    expect(matchBlockSlash("foo/bar", 7)).toBeNull();
+    expect(matchBlockSlash("/a b", 4)).toBeNull();
+
+    expect(filterSlashItems("时间").some((i) => i.id === "time")).toBe(true);
+    expect(filterSlashItems("time").some((i) => i.id === "time")).toBe(true);
+    expect(filterSlashItems("shijian").some((i) => i.id === "time")).toBe(true);
+  });
+
+  test("parseBlockPrefix recognizes headings, quote, lists, tasks, paragraph, and rejects invalid", () => {
+    expect(parseBlockPrefix("#")).toEqual({ kind: "heading", level: 1 });
+    expect(parseBlockPrefix("###### ")).toEqual({ kind: "heading", level: 6 });
+    expect(parseBlockPrefix("#######")).toBeNull();
+    expect(parseBlockPrefix("> ")).toEqual({ kind: "blockquote" });
+    expect(parseBlockPrefix("-")).toEqual({ kind: "bullet" });
+    expect(parseBlockPrefix("*")).toEqual({ kind: "bullet" });
+    expect(parseBlockPrefix("1.")).toEqual({ kind: "ordered" });
+    expect(parseBlockPrefix("- [ ]")).toEqual({ kind: "task", checked: false });
+    expect(parseBlockPrefix("- [x]")).toEqual({ kind: "task", checked: true });
+    expect(parseBlockPrefix("  ")).toEqual({ kind: "paragraph" });
+    expect(parseBlockPrefix("abc")).toBeNull();
+  });
+
+  test("source context menu helpers format, convert paragraphs, and build inserts", () => {
+    const bold = applySourceFormat("hello world", 6, 11, "bold");
+    expect(bold.insert).toBe("**world**");
+    expect(bold.anchor).toBe(8);
+    expect(bold.head).toBe(13);
+
+    const cleared = applySourceFormat("**world** <u>hi</u> [a](https://x)", 0, 34, "clear");
+    expect(cleared.insert).toBe("world hi a");
+
+    const h2 = applySourceParagraph("- item", 2, 2, "h2");
+    expect("".concat(h2.insert)).toBe("## item");
+    const quote = applySourceParagraph("## item", 3, 3, "quote");
+    expect(quote.insert).toBe("> item");
+    const para = applySourceParagraph("> item", 2, 2, "text");
+    expect(para.insert).toBe("item");
+
+    const insertedTime = buildSourceInsert("time", DEFAULT_TIME_FORMAT, true);
+    expect(insertedTime.insert).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  });
 });

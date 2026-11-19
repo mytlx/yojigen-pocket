@@ -410,7 +410,7 @@ export const pocketHtmlNodeView = $view(htmlSchema.node, (ctx) => {
 
       if (BR_ONLY_RE.test(val)) {
         dom.className = "pocket-html-br";
-        dom.title = "换行 <br />（点击编辑）";
+        if (view.editable) dom.title = "换行 <br />（点击编辑）";
         dom.appendChild(document.createElement("br"));
         return;
       }
@@ -435,7 +435,7 @@ export const pocketHtmlNodeView = $view(htmlSchema.node, (ctx) => {
         const firstTag = parsed.body.firstElementChild?.tagName.toLowerCase() ?? "";
         const isBlock = BLOCK_HTML_TAGS.has(firstTag);
         dom.className = isBlock ? "pocket-html-live is-block" : "pocket-html-live";
-        dom.title = "HTML 内容（点击编辑源码）";
+        if (view.editable) dom.title = "HTML 内容（点击编辑源码）";
         if (parsed.body.childNodes.length === 0) {
           dom.textContent = val;
         } else {
@@ -448,7 +448,7 @@ export const pocketHtmlNodeView = $view(htmlSchema.node, (ctx) => {
     };
 
     const openEditor = () => {
-      if (editing) return;
+      if (editing || !view.editable) return;
       editing = true;
       dom.replaceChildren();
       dom.className = "pocket-html-editing";
@@ -498,6 +498,7 @@ export const pocketHtmlNodeView = $view(htmlSchema.node, (ctx) => {
 
     dom.addEventListener("pocket-open-html-edit", () => openEditor());
     dom.addEventListener("click", (e) => {
+      if (!view.editable) return;
       const target = e.target as Element | null;
       if (target?.closest("summary, a")) return;
       if (ctx.get(pocketHtmlLiveCtx.key)()) {
@@ -507,6 +508,7 @@ export const pocketHtmlNodeView = $view(htmlSchema.node, (ctx) => {
       }
     });
     dom.addEventListener("dblclick", (e) => {
+      if (!view.editable) return;
       e.preventDefault();
       e.stopPropagation();
       openEditor();

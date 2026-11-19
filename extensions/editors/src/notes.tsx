@@ -28,24 +28,27 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   Pencil,
+  Pilcrow,
   Plus,
   Quote,
   RotateCcw,
   Search,
-  Sparkles,
   SpellCheck,
   SquareArrowOutUpRight,
   Table,
   Trash2,
   X,
 } from "lucide-preact";
-import { Notes, openExternal, type FeatureProps, type FsChange, type Node } from "./host";
+import { editorClipboard, Notes, openExternal, type FeatureProps, type FsChange, type Node } from "./host";
 import { CodeEditor, linkOpener } from "./code/editor";
 import { Btn, Empty, Seg } from "../../../src/features/ui";
+import { applySourceFormat, applySourceParagraph, buildSourceInsert, type BlockKind } from "./notes/blockops";
+import { EditorContextMenu, type EditorMenuActions, type EditorMenuTarget } from "./notes/editormenu";
 import { frontSummary, joinFrontmatter, splitFrontmatter } from "./notes/frontmatter";
 import { defaultShortcuts, noteLineKeys, shortcutOf, type NoteShortcuts } from "./notes/shortcuts";
 import { outlineOf, outlineTree, type OutlineNode } from "./notes/outline";
-import { RichEditor } from "./notes/rich";
+import { RichEditor, type RichViewMode } from "./notes/rich";
+import { DEFAULT_TIME_FORMAT, TIME_FORMAT_PRESETS, formatTime } from "./notes/timefmt";
 import {
   DEFAULT_OUTLINE_W,
   DEFAULT_SIDEBAR_W,
@@ -95,7 +98,7 @@ function useAnimatedPanel(open: boolean, animate: boolean) {
   return { mounted, shown };
 }
 
-type Mode = "rich" | "source";
+type ViewMode = "read" | "live" | "block" | "source";
 
 const stem = (name: string) => name.replace(/\.md$/i, "");
 const dirOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
@@ -116,10 +119,14 @@ function count(text: string) {
   return { total, chars: Array.from(text.replace(/\s/g, "")).length, lines: text ? text.split("\n").length : 0, minutes: Math.max(1, Math.round(total / 400)) };
 }
 
-function stamp() {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+function sourceLineKind(lineText: string): BlockKind {
+  const h = /^(#{1,6})\s/.exec(lineText);
+  if (h) return `h${h[1]!.length}` as BlockKind;
+  if (/^>\s?/.test(lineText)) return "quote";
+  if (/^\s*-\s\[[\sxX]\]\s/.test(lineText)) return "task";
+  if (/^\s*\d+\.\s/.test(lineText)) return "ordered";
+  if (/^\s*[-*+]\s/.test(lineText)) return "bullet";
+  return "text";
 }
 
 /** 代码块的配色方案。具体颜色在 notes.css 里，这里只是名字。 */
@@ -141,6 +148,8 @@ interface Prefs {
   sidebarWidth: number;
   outlineWidth: number;
   revealSource: boolean;
+  strictLineBreaks: boolean;
+  timeFormat: string;
   shortcuts: NoteShortcuts;
 }
 const defaultPrefs: Prefs = {
@@ -150,7 +159,9 @@ const defaultPrefs: Prefs = {
   outline: false,
   sidebarWidth: DEFAULT_SIDEBAR_W,
   outlineWidth: DEFAULT_OUTLINE_W,
-  revealSource: true,
+  revealSource: false,
+  strictLineBreaks: false,
+  timeFormat: DEFAULT_TIME_FORMAT,
   shortcuts: defaultShortcuts,
 };
 
@@ -167,8 +178,8 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [path, setPath] = useState("");
   const [content, setContent] = useState("");
-  const [nonce, setNonce] = useState(0); // 换一篇、或源码模式改过内容后，让所见即所得编辑器重建
-  const [mode, setMode] = useState<Mode>("rich");
+  const [nonce, setNonce] = useState(0); // 换一篇、或源码模式/换行设置改过后，让所见即所得编辑器重建
+  const [mode, setMode] = useState<ViewMode>("live");
   const [title, setTitle] = useState("");
   const [saved, setSaved] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -189,7 +200,9 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const [prefs, setPrefs] = useState<Prefs>(defaultPrefs);
   const [menuOpen, setMenuOpen] = useState(false);
   const [shortcutOpen, setShortcutOpen] = useState(false);
+  const [timeFormatOpen, setTimeFormatOpen] = useState(false);
   const [htmlPreview, setHtmlPreview] = useState(false);
+  const [sourceMenu, setSourceMenu] = useState<EditorMenuTarget | null>(null);
   const [resizing, setResizing] = useState<"sidebar" | "outline" | null>(null);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -239,7 +252,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       if (state.current.path === s.path && state.current.content === s.content) {
         state.current = { ...state.current, dirty: false };
         setDirty(false);
-        setSaved(stamp().slice(11));
+        setSaved(formatTime(new Date(), "HH:mm"));
       }
     }, fail);
   }, []);
@@ -248,6 +261,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     await flush();
     try {
       const text = await Notes.read(p);
+      setSourceMenu(null);
       setPath(p);
       setSelected([p]);
       setAnchorPath(p);
@@ -338,16 +352,22 @@ export function NotesTool({ input, ctx }: FeatureProps) {
 
   useEffect(() => {
     void Promise.all([Notes.tree(), Notes.getMode(), Notes.getPrefs<Partial<Prefs>>(), Notes.getLast()]).then(([t, savedMode, savedPrefs, last]) => {
-      if (savedMode === "source" || savedMode === "rich") setMode(savedMode);
+      if (savedMode === "read" || savedMode === "live" || savedMode === "block" || savedMode === "source") {
+        setMode(savedMode);
+      } else if (savedMode === "rich") {
+        setMode(savedPrefs?.revealSource ? "block" : "live");
+      }
       if (savedPrefs && typeof savedPrefs === "object") {
-      setPrefs((p) => ({
-        ...p,
-        ...savedPrefs,
-        sidebarWidth: savedPrefs.sidebarWidth ?? DEFAULT_SIDEBAR_W,
-        outlineWidth: savedPrefs.outlineWidth ?? DEFAULT_OUTLINE_W,
-        shortcuts: { ...defaultShortcuts, ...savedPrefs.shortcuts },
-      }));
-    }
+        setPrefs((p) => ({
+          ...p,
+          ...savedPrefs,
+          sidebarWidth: savedPrefs.sidebarWidth ?? DEFAULT_SIDEBAR_W,
+          outlineWidth: savedPrefs.outlineWidth ?? DEFAULT_OUTLINE_W,
+          strictLineBreaks: savedPrefs.strictLineBreaks ?? false,
+          timeFormat: savedPrefs.timeFormat || DEFAULT_TIME_FORMAT,
+          shortcuts: { ...defaultShortcuts, ...savedPrefs.shortcuts },
+        }));
+      }
       const list = t ?? [];
       setTree(list);
       setLoaded(true);
@@ -426,10 +446,38 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     timer.current = setTimeout(() => void flush(), 600);
   };
 
-  const switchMode = (m: Mode) => {
-    setMode(m);
-    if (m === "rich") setNonce((n) => n + 1); // 带着源码模式里改过的内容重建
-    Notes.setMode(m);
+  const switchMode = (next: ViewMode) => {
+    const prev = state.current.mode;
+    setHtmlPreview(false);
+    setSourceMenu(null);
+    if (prev !== "source" && next === "source") {
+      richScroll.current = body.current?.querySelector(".fx-notes-rich")?.scrollTop ?? 0;
+    }
+    setMode(next);
+    if (prev === "source" && next !== "source") {
+      setNonce((n) => n + 1); // 带着源码模式里改过的内容重建
+    }
+    if (next === "live" || next === "block") {
+      updatePrefs({ revealSource: next === "block" });
+    }
+    Notes.setMode(next);
+  };
+  const toggleStrictLineBreaks = () => {
+    if (state.current.mode !== "source") {
+      richScroll.current = body.current?.querySelector(".fx-notes-rich")?.scrollTop ?? 0;
+      setNonce((n) => n + 1);
+    }
+    updatePrefs({ strictLineBreaks: !prefs.strictLineBreaks });
+  };
+  const toggleHtmlPreview = () => {
+    setMenuOpen(false);
+    setSourceMenu(null);
+    if (!htmlPreview && state.current.mode === "source") {
+      setMode("read");
+      setNonce((n) => n + 1);
+      Notes.setMode("read");
+    }
+    setHtmlPreview((v) => !v);
   };
 
   const applyPath = (from: string, to: string) => {
@@ -578,6 +626,101 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       edit(content + (content.endsWith("\n") || !content ? "" : "\n") + text);
       setNonce((n) => n + 1);
     }
+  };
+  const pasteToSource = async () => {
+    const v = view.current;
+    if (!v) return;
+    const clip = await editorClipboard.read();
+    if (!clip) return;
+    const { from, to } = v.state.selection.main;
+    v.dispatch({ changes: { from, to, insert: clip }, selection: { anchor: from + clip.length } });
+    v.focus();
+  };
+  const openSourceContextMenu = (e: MouseEvent) => {
+    if (mode !== "source") return;
+    const v = view.current;
+    if (!v) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const sel = v.state.selection.main;
+    const clickPos = v.posAtCoords({ x: e.clientX, y: e.clientY });
+    const line = v.state.doc.lineAt(clickPos ?? sel.head);
+    let linkHref: string | undefined;
+    if (clickPos != null) {
+      const col = clickPos - line.from;
+      const urlRe = /https?:\/\/[^\s<>()[\]"'`]+/g;
+      let m: RegExpExecArray | null;
+      while ((m = urlRe.exec(line.text))) {
+        if (col >= m.index && col <= m.index + m[0].length) {
+          linkHref = m[0];
+          break;
+        }
+      }
+    }
+    setSourceMenu({
+      x: e.clientX,
+      y: e.clientY,
+      readonly: false,
+      hasSelection: sel.from !== sel.to,
+      canCopyMarkdown: false,
+      linkHref,
+      currentBlockKind: sourceLineKind(line.text),
+      canConvertBlock: true,
+    });
+  };
+  const sourceMenuActions: EditorMenuActions = {
+    onOpenLink: (href) => openLink(href),
+    onCopyLink: (href) => void ctx.copy(href, "已复制链接"),
+    onCut: () => {
+      const v = view.current;
+      if (!v) return;
+      const { from, to } = v.state.selection.main;
+      if (from === to) return;
+      void editorClipboard.write(v.state.sliceDoc(from, to));
+      v.dispatch({ changes: { from, to, insert: "" }, selection: { anchor: from } });
+      v.focus();
+    },
+    onCopy: () => {
+      const v = view.current;
+      if (!v) return;
+      const { from, to } = v.state.selection.main;
+      if (from !== to) void editorClipboard.write(v.state.sliceDoc(from, to));
+      v.focus();
+    },
+    onPaste: () => void pasteToSource(),
+    onPastePlain: () => void pasteToSource(),
+    onSelectAll: () => {
+      const v = view.current;
+      if (!v) return;
+      v.dispatch({ selection: { anchor: 0, head: v.state.doc.length } });
+      v.focus();
+    },
+    onFormat: (kind) => {
+      const v = view.current;
+      if (!v) return;
+      const { from, to } = v.state.selection.main;
+      const res = applySourceFormat(v.state.doc.toString(), from, to, kind);
+      v.dispatch({ changes: { from: res.from, to: res.to, insert: res.insert }, selection: { anchor: res.anchor, head: res.head } });
+      v.focus();
+    },
+    onParagraph: (kind) => {
+      const v = view.current;
+      if (!v) return;
+      const { from, to } = v.state.selection.main;
+      const res = applySourceParagraph(v.state.doc.toString(), from, to, kind);
+      v.dispatch({ changes: { from: res.from, to: res.to, insert: res.insert }, selection: { anchor: res.anchor, head: res.head } });
+      v.focus();
+    },
+    onInsert: (kind) => {
+      const v = view.current;
+      if (!v) return;
+      const { from, to } = v.state.selection.main;
+      const line = v.state.doc.lineAt(from);
+      const emptyLine = v.state.sliceDoc(line.from, from).trim() === "";
+      const { insert: snippet, cursorOffset } = buildSourceInsert(kind, prefs.timeFormat, emptyLine);
+      v.dispatch({ changes: { from, to, insert: snippet }, selection: { anchor: from + cursorOffset } });
+      v.focus();
+    },
   };
 
   /** Ctrl / ⌘ + 点击链接：网址用系统浏览器打开；指向另一篇笔记的相对路径就在这里打开那一篇。 */
@@ -1145,15 +1288,11 @@ export function NotesTool({ input, ctx }: FeatureProps) {
               }}
             />
             <div class="fx-notes-head-tools">
-              <Btn small ghost icon title="自定义笔记快捷键" onClick={() => setShortcutOpen(!shortcutOpen)}><Keyboard size={15} /></Btn>
-              <Btn small ghost icon title="插入当前时间" onClick={() => insert(stamp())}>
-                <Clock size={14} />
-              </Btn>
               <Btn small ghost icon title="复制全文（Markdown）" onClick={() => void ctx.copy(content)}>
                 <Copy size={14} />
               </Btn>
               <div class="fx-notes-more">
-                <Btn small ghost icon title="更多：用其他应用打开、另存为、设置" onClick={() => setMenuOpen((o) => !o)}>
+                <Btn small ghost icon title="更多：打开方式、另存为、排版与设置" onClick={() => setMenuOpen((o) => !o)}>
                   <MoreHorizontal size={14} />
                 </Btn>
                 {menuOpen && (
@@ -1179,18 +1318,47 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                       <RotateCcw size={14} />
                       <span>恢复默认栏宽</span>
                     </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      class="fx-menu-item"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setTimeFormatOpen(false);
+                        setShortcutOpen((o) => !o);
+                      }}
+                    >
+                      <Keyboard size={14} />
+                      <span>自定义快捷键…</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      class="fx-menu-item"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setShortcutOpen(false);
+                        setTimeFormatOpen((o) => !o);
+                      }}
+                    >
+                      <Clock size={14} />
+                      <span>时间格式…</span>
+                    </button>
                     <div class="fx-menu-sep" />
+                    <button type="button" role="menuitemcheckbox" aria-checked={prefs.strictLineBreaks} class="fx-menu-item" onClick={toggleStrictLineBreaks}>
+                      <Pilcrow size={14} />
+                      <span>严格换行</span>
+                      {prefs.strictLineBreaks && <Check size={12} class="fx-menu-check" />}
+                    </button>
                     <button type="button" role="menuitemcheckbox" aria-checked={prefs.spell} class="fx-menu-item" onClick={() => updatePrefs({ spell: !prefs.spell })}>
                       <SpellCheck size={14} />
                       <span>拼写检查</span>
                       {prefs.spell && <Check size={12} class="fx-menu-check" />}
                     </button>
-                    <div class="fx-menu-label">阅读编辑模式</div>
-                    <button type="button" role="menuitemradio" aria-checked={!prefs.revealSource} class="fx-menu-item" onClick={() => updatePrefs({ revealSource: false })}>
-                      <Sparkles size={14} /><span>实时渲染（Typora 行内与前缀）</span>{!prefs.revealSource && <Check size={12} class="fx-menu-check" />}
-                    </button>
-                    <button type="button" role="menuitemradio" aria-checked={prefs.revealSource} class="fx-menu-item" onClick={() => updatePrefs({ revealSource: true })}>
-                      <Code size={14} /><span>整块源码（段落 / 列表 / 引用）</span>{prefs.revealSource && <Check size={12} class="fx-menu-check" />}
+                    <button type="button" role="menuitemcheckbox" aria-checked={htmlPreview} class="fx-menu-item" onClick={toggleHtmlPreview}>
+                      <Eye size={14} />
+                      <span>HTML 沙箱预览</span>
+                      {htmlPreview && <Check size={12} class="fx-menu-check" />}
                     </button>
                     <div class="fx-menu-sep" />
                     <div class="fx-menu-label">
@@ -1206,8 +1374,16 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                   </div>
                 )}
               </div>
-              {mode === "rich" && <Btn small ghost icon title="HTML/CSS 预览" on={htmlPreview} onClick={() => setHtmlPreview(!htmlPreview)}><Eye size={15} /></Btn>}
-              <Seg value={mode} options={[{ value: "rich", label: "阅读" }, { value: "source", label: "源码" }]} onChange={switchMode} />
+              <Seg
+                value={mode}
+                options={[
+                  { value: "read", label: "阅读" },
+                  { value: "live", label: "实时" },
+                  { value: "block", label: "整块" },
+                  { value: "source", label: "源码" },
+                ]}
+                onChange={switchMode}
+              />
               {!prefs.outline && (
                 <Btn small ghost icon title="大纲" onClick={() => updatePrefs({ outline: true })}>
                   <ListTree size={15} />
@@ -1232,6 +1408,35 @@ export function NotesTool({ input, ctx }: FeatureProps) {
             <Btn small onClick={() => updatePrefs({ shortcuts: defaultShortcuts })}>恢复默认</Btn>
             <Btn small onClick={() => setShortcutOpen(false)}>完成</Btn>
           </div>}
+          {timeFormatOpen && (
+            <div class="pocket-note-shortcuts pocket-time-format" role="region" aria-label="时间格式设置">
+              <label>
+                <span>时间格式</span>
+                <input
+                  value={prefs.timeFormat}
+                  placeholder={DEFAULT_TIME_FORMAT}
+                  aria-label="时间格式模板"
+                  title="支持 YYYY YY MM M DD D HH H mm m ss s ddd dddd"
+                  onInput={(e) => updatePrefs({ timeFormat: (e.target as HTMLInputElement).value })}
+                />
+              </label>
+              <span class="pocket-time-preview">示例：{formatTime(new Date(), prefs.timeFormat)}</span>
+              <div class="pocket-time-presets">
+                {TIME_FORMAT_PRESETS.map((preset) => (
+                  <Btn
+                    key={preset}
+                    small
+                    primary={(prefs.timeFormat || DEFAULT_TIME_FORMAT) === preset}
+                    onClick={() => updatePrefs({ timeFormat: preset })}
+                  >
+                    {preset}
+                  </Btn>
+                ))}
+              </div>
+              <Btn small onClick={() => updatePrefs({ timeFormat: DEFAULT_TIME_FORMAT })}>恢复默认</Btn>
+              <Btn small onClick={() => setTimeFormatOpen(false)}>完成</Btn>
+            </div>
+          )}
           {mode === "source" && (
             <div class="fx-notes-bar">
               <Btn small ghost icon title="标题" onClick={() => prefixLines("## ")}><Heading size={14} /></Btn>
@@ -1245,7 +1450,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
               <Btn small ghost icon title="表格" onClick={() => insert("| 列一 | 列二 |\n| --- | --- |\n|  |  |\n")}><Table size={14} /></Btn>
             </div>
           )}
-          {mode === "rich" && split.front !== null && (
+          {mode !== "source" && split.front !== null && (
             <div class={`fx-notes-front${frontOpen ? " is-open" : ""}`}>
               <button type="button" class="fx-notes-front-head" title="文档开头 --- 之间的属性（frontmatter）" onClick={() => setFrontOpen((o) => !o)}>
                 {frontOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -1255,6 +1460,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
               {frontOpen && (
                 <textarea
                   class="fx-notes-front-text"
+                  readOnly={mode === "read"}
                   spellcheck={false}
                   rows={Math.min(10, Math.max(2, split.front.split("\n").length))}
                   value={split.front}
@@ -1263,22 +1469,36 @@ export function NotesTool({ input, ctx }: FeatureProps) {
               )}
             </div>
           )}
-          <div class="fx-out fx-notes-body" ref={body} data-code-theme={prefs.codeTheme}>
-            {mode === "rich" ? (
+          <div class="fx-out fx-notes-body" ref={body} data-code-theme={prefs.codeTheme} onContextMenu={openSourceContextMenu}>
+            {mode !== "source" ? (
               <RichEditor
                 key={`${path}#${nonce}`}
                 value={split.body}
-                revealSource={prefs.revealSource}
+                viewMode={mode as RichViewMode}
+                strictLineBreaks={prefs.strictLineBreaks}
+                timeFormat={prefs.timeFormat}
+                platform={ctx.platform}
                 shortcuts={prefs.shortcuts}
                 htmlPreview={htmlPreview}
                 onChange={(md) => edit(joinFrontmatter(front.current.front, md, front.current))}
                 spellcheck={prefs.spell}
                 onOpenLink={openLink}
+                onCopy={ctx.copy}
                 onToast={ctx.toast}
+                onExitHtmlPreview={() => setHtmlPreview(false)}
                 scrollTop={richScroll.current}
               />
             ) : (
               <CodeEditor key={path} value={content} lang="markdown" wrap onChange={edit} onReady={(v) => (view.current = v)} onCursor={setCursor} autoFocus extensions={sourceExtensions} />
+            )}
+            {mode === "source" && sourceMenu && (
+              <EditorContextMenu
+                menu={sourceMenu}
+                platform={ctx.platform}
+                timeFormat={prefs.timeFormat}
+                actions={sourceMenuActions}
+                onClose={() => setSourceMenu(null)}
+              />
             )}
           </div>
           <div class="fx-meta fx-notes-status">

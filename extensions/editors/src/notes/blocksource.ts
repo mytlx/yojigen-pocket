@@ -1,4 +1,5 @@
 import { parserCtx, serializerCtx } from "@milkdown/kit/core";
+import { createTable } from "@milkdown/kit/preset/gfm";
 import { redo, undo } from "@milkdown/kit/prose/history";
 import { joinBackward, lift } from "@milkdown/kit/prose/commands";
 import type { Node as PMNode, ResolvedPos } from "@milkdown/kit/prose/model";
@@ -7,6 +8,8 @@ import { type EditorState, Plugin, PluginKey, Selection, TextSelection } from "@
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { $prose } from "@milkdown/kit/utils";
 import { insertLine, lineAction, type NoteShortcuts } from "./shortcuts";
+import { filterSlashItems, matchBlockSlash, type SlashCommandItem } from "./slash";
+import { formatTime } from "./timefmt";
 
 interface Editing {
   from: number;
@@ -74,19 +77,41 @@ function sourceCursor(node: PMNode, offset: number, source: string): number {
   return Math.min(source.length, cursor);
 }
 
-/** 测量多行文本框当前光标是否处于视觉首行或末行（兼容自动折行）。 */
-function caretEdge(area: HTMLTextAreaElement): { firstLine: boolean; lastLine: boolean; colOffset: number } {
+interface CaretMetrics {
+  firstLine: boolean;
+  lastLine: boolean;
+  colOffset: number;
+  left: number;
+  top: number;
+  bottom: number;
+}
+
+/** 测量多行文本框当前光标行位置与视口坐标（兼容自动折行），供方向键切块与斜线菜单定位复用。 */
+function measureTextareaCaret(area: HTMLTextAreaElement): CaretMetrics {
   const sel = area.selectionStart;
   const val = area.value;
-  if (!val) return { firstLine: true, lastLine: true, colOffset: 0 };
-
+  const areaRect = area.getBoundingClientRect();
   const cs = getComputedStyle(area);
+  const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5 || 20;
+  if (!val) {
+    const padLeft = parseFloat(cs.paddingLeft) || 0;
+    const padTop = parseFloat(cs.paddingTop) || 0;
+    return {
+      firstLine: true,
+      lastLine: true,
+      colOffset: 0,
+      left: areaRect.left + padLeft,
+      top: areaRect.top + padTop,
+      bottom: areaRect.top + padTop + lh,
+    };
+  }
+
   const mirror = document.createElement("div");
   mirror.style.position = "fixed";
   mirror.style.visibility = "hidden";
   mirror.style.pointerEvents = "none";
-  mirror.style.left = "-9999px";
-  mirror.style.top = "0";
+  mirror.style.left = `${areaRect.left - area.scrollLeft}px`;
+  mirror.style.top = `${areaRect.top - area.scrollTop}px`;
   mirror.style.width = `${area.clientWidth}px`;
   mirror.style.boxSizing = "border-box";
   mirror.style.paddingLeft = cs.paddingLeft;
@@ -110,15 +135,18 @@ function caretEdge(area: HTMLTextAreaElement): { firstLine: boolean; lastLine: b
   mirror.append(startMark, document.createTextNode(val.slice(0, sel)), caretMark, document.createTextNode(val.slice(sel)), endMark);
   document.body.appendChild(mirror);
   try {
-    const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5 || 20;
     const firstTop = startMark.offsetTop;
     const caretTop = caretMark.offsetTop;
     const lastTop = endMark.offsetTop;
     const lineStart = val.lastIndexOf("\n", sel - 1) + 1;
+    const cr = caretMark.getBoundingClientRect();
     return {
       firstLine: caretTop - firstTop < lh * 0.5,
       lastLine: lastTop - caretTop < lh * 0.5,
       colOffset: sel - lineStart,
+      left: cr.left,
+      top: cr.top,
+      bottom: cr.top + lh,
     };
   } finally {
     mirror.remove();
@@ -132,10 +160,11 @@ function adjacentSelection(doc: PMNode, from: number, to: number, dir: -1 | 1): 
 }
 
 /** 光标所在块实时展示紧凑的 Markdown 源码（类 Typora）；离开或按 Esc 恢复渲染。 */
-export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: NoteShortcuts }) {
+export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: NoteShortcuts; timeFormat: string }) {
   return $prose((ctx) => {
     let dismissedFrom: number | null = null;
     let pointerDown = false;
+    let closeActiveSlash: (() => void) | null = null;
 
     const serializeBlock = (state: EditorState, node: PMNode): string =>
       ctx.get(serializerCtx)(state.schema.topNodeType.create(null, node)).replace(/\n$/, "");
@@ -159,7 +188,13 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
       const cur = key.getState(view.state);
       if (cur && cur.from === target.from && cur.to === target.to && (!force || cur.cursor === cursor)) return true;
       dismissedFrom = null;
-      view.dispatch(view.state.tr.setMeta(key, { from: target.from, to: target.to, source, cursor, id: ++sequence }));
+      const tr = view.state.tr;
+      if (force) {
+        const clamped = clampPos(view.state.doc, pos);
+        tr.setSelection(TextSelection.near(view.state.doc.resolve(clamped)));
+      }
+      tr.setMeta(key, { from: target.from, to: target.to, source, cursor, id: ++sequence });
+      view.dispatch(tr);
       return true;
     };
 
@@ -177,9 +212,11 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
       view: () => ({
         update(view) {
           view.dom.classList.toggle("pocket-hide-vcursor-block", !!key.getState(view.state));
+          if (!key.getState(view.state)) closeActiveSlash?.();
           const area = view.dom.querySelector<HTMLTextAreaElement>(".pocket-block-source");
           const areaHasFocus = area !== null && document.activeElement === area;
           if (!options().enabled) {
+            closeActiveSlash?.();
             if (key.getState(view.state)) view.dispatch(view.state.tr.setMeta(key, null));
             return;
           }
@@ -196,12 +233,16 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
             activateAtSelection(view, selection.$from.pos);
           }
         },
+        destroy() {
+          closeActiveSlash?.();
+        },
       }),
       props: {
         handleDOMEvents: {
           mousedown() {
+            if (!options().enabled) return false;
             pointerDown = true;
-            window.addEventListener("mouseup", () => { pointerDown = false; }, { once: true });
+            window.addEventListener("mouseup", () => { pointerDown = false; }, { capture: true, once: true });
             return false;
           },
           focus(view) {
@@ -213,6 +254,7 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
             return false;
           },
           blur(view, event) {
+            if (document.querySelector(".fx-editor-menu")) return false;
             const next = event.relatedTarget as Node | null;
             if (next && view.dom.contains(next)) return false;
             if (key.getState(view.state)) view.dispatch(view.state.tr.setMeta(key, null));
@@ -437,12 +479,223 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
                   return false;
                 };
 
-                area.addEventListener("input", () => void syncContent(area.value));
+                let composing = false;
+                let slashEl: HTMLDivElement | null = null;
+                let slashItems: SlashCommandItem[] = [];
+                let slashIdx = 0;
+                let slashFrom = 0;
+
+                const closeSlash = () => {
+                  if (slashEl) {
+                    slashEl.remove();
+                    slashEl = null;
+                  }
+                  slashItems = [];
+                  slashIdx = 0;
+                  if (closeActiveSlash === closeSlash) closeActiveSlash = null;
+                };
+                closeActiveSlash = closeSlash;
+
+                const slashHintText = (item: SlashCommandItem) => {
+                  if (item.id === "time") return "时间";
+                  if (item.markdown !== undefined) return item.markdown.trim() || "¶";
+                  return "/";
+                };
+
+                const runSlashItem = (item: SlashCommandItem) => {
+                  const current = key.getState(view.state);
+                  const end = area.selectionEnd;
+                  const from = Math.max(0, Math.min(slashFrom, end));
+                  closeSlash();
+
+                  if (item.id === "time") {
+                    const stamp = formatTime(new Date(), options().timeFormat);
+                    area.setRangeText(stamp, from, end, "end");
+                    syncContent(area.value);
+                    area.focus();
+                    return;
+                  }
+                  if (item.id === "divider") {
+                    const remaining = area.value.slice(0, from) + area.value.slice(end);
+                    const schema = view.state.schema;
+                    if (!remaining.trim() && current && current.id === active.id && schema.nodes.hr && schema.nodes.paragraph) {
+                      const tr = view.state.tr.replaceWith(current.from, current.to, [schema.nodes.hr.create(), schema.nodes.paragraph.create()]);
+                      tr.setSelection(TextSelection.create(tr.doc, current.from + 2));
+                      tr.setMeta(key, null);
+                      view.dispatch(tr.scrollIntoView());
+                      view.focus();
+                      return;
+                    }
+                  }
+                  if (item.markdown !== undefined) {
+                    area.setRangeText(item.markdown, from, end, "end");
+                    syncContent(area.value);
+                    if (area.isConnected) area.focus();
+                    return;
+                  }
+                  if (item.richKind) {
+                    const remaining = area.value.slice(0, from) + area.value.slice(end);
+                    const schema = view.state.schema;
+                    if (!remaining.trim() && current && current.id === active.id) {
+                      const tr = view.state.tr;
+                      let insertedPos = current.from + 1;
+                      if (item.richKind === "table") {
+                        const tbl = createTable(ctx, 3, 3);
+                        tr.replaceWith(current.from, current.to, tbl);
+                        insertedPos = current.from + 3;
+                      } else if (schema.nodes.code_block) {
+                        const attrs = item.richKind === "math" ? { language: "LaTeX" } : undefined;
+                        tr.replaceWith(current.from, current.to, schema.nodes.code_block.create(attrs));
+                        insertedPos = current.from + 1;
+                      }
+                      tr.setSelection(Selection.near(tr.doc.resolve(clampPos(tr.doc, insertedPos))));
+                      tr.setMeta(key, null);
+                      view.dispatch(tr.scrollIntoView());
+                      view.focus();
+                      return;
+                    }
+                    const snippet =
+                      item.richKind === "code"
+                        ? "```\n\n```"
+                        : item.richKind === "math"
+                          ? "$$\n\n$$"
+                          : "| 列一 | 列二 |\n| --- | --- |\n|  |  |";
+                    area.setRangeText(snippet, from, end, "end");
+                    if (item.richKind !== "table") {
+                      const inner = from + (item.richKind === "code" ? 4 : 3);
+                      area.setSelectionRange(inner, inner);
+                    }
+                    syncContent(area.value);
+                    area.focus();
+                  }
+                };
+
+                const renderSlash = () => {
+                  if (!slashEl) return;
+                  slashEl.replaceChildren();
+                  let lastGroup = "";
+                  slashItems.forEach((item, idx) => {
+                    if (item.groupLabel !== lastGroup) {
+                      lastGroup = item.groupLabel;
+                      const grp = document.createElement("div");
+                      grp.className = "fx-menu-label";
+                      grp.textContent = item.groupLabel;
+                      slashEl!.appendChild(grp);
+                    }
+                    const btn = document.createElement("button");
+                    btn.type = "button";
+                    btn.className = `fx-menu-item${idx === slashIdx ? " is-active" : ""}`;
+                    const label = document.createElement("span");
+                    label.textContent = item.label;
+                    const hint = document.createElement("kbd");
+                    hint.className = "fx-menu-kbd";
+                    hint.textContent = slashHintText(item);
+                    btn.append(label, hint);
+                    btn.addEventListener("mouseenter", () => {
+                      if (slashIdx === idx) return;
+                      slashIdx = idx;
+                      slashEl?.querySelectorAll(".fx-menu-item").forEach((el, i) => el.classList.toggle("is-active", i === slashIdx));
+                    });
+                    btn.addEventListener("mousedown", (ev) => {
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      runSlashItem(item);
+                    });
+                    slashEl!.appendChild(btn);
+                  });
+                  const activeBtn = slashEl.querySelector<HTMLElement>(".fx-menu-item.is-active");
+                  activeBtn?.scrollIntoView({ block: "nearest" });
+                };
+
+                const updateSlash = () => {
+                  if (composing || document.activeElement !== area || area.selectionStart !== area.selectionEnd) {
+                    closeSlash();
+                    return;
+                  }
+                  const m = matchBlockSlash(area.value, area.selectionStart);
+                  if (!m) {
+                    closeSlash();
+                    return;
+                  }
+                  const filtered = filterSlashItems(m.query);
+                  if (filtered.length === 0) {
+                    closeSlash();
+                    return;
+                  }
+                  slashFrom = m.from;
+                  slashItems = filtered;
+                  if (slashIdx >= filtered.length) slashIdx = 0;
+
+                  if (!slashEl) {
+                    slashEl = document.createElement("div");
+                    slashEl.className = "fx-menu pocket-block-slash";
+                    slashEl.setAttribute("role", "listbox");
+                    document.body.appendChild(slashEl);
+                  }
+                  renderSlash();
+
+                  const coords = measureTextareaCaret(area);
+                  const rect = slashEl.getBoundingClientRect();
+                  const left = Math.max(6, Math.min(coords.left, window.innerWidth - rect.width - 6));
+                  const spaceBelow = window.innerHeight - coords.bottom - 8;
+                  const top =
+                    spaceBelow < rect.height && coords.top - rect.height - 6 > 6
+                      ? coords.top - rect.height - 4
+                      : Math.min(coords.bottom + 4, window.innerHeight - rect.height - 6);
+                  slashEl.style.left = `${left}px`;
+                  slashEl.style.top = `${Math.max(6, top)}px`;
+                };
+
+                area.addEventListener("compositionstart", () => {
+                  composing = true;
+                  closeSlash();
+                });
+                area.addEventListener("compositionend", () => {
+                  composing = false;
+                  requestAnimationFrame(updateSlash);
+                });
+                area.addEventListener("input", () => {
+                  syncContent(area.value);
+                  updateSlash();
+                });
+                area.addEventListener("click", updateSlash);
+                area.addEventListener("keyup", (e) => {
+                  if (["ArrowLeft", "ArrowRight", "Home", "End", "Backspace", "Delete"].includes(e.key)) {
+                    updateSlash();
+                  }
+                });
                 area.addEventListener("keydown", (e) => {
                   e.stopPropagation();
+                  if (slashEl && slashItems.length > 0 && !e.isComposing) {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      slashIdx = (slashIdx + 1) % slashItems.length;
+                      renderSlash();
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      slashIdx = (slashIdx - 1 + slashItems.length) % slashItems.length;
+                      renderSlash();
+                      return;
+                    }
+                    if ((e.key === "Enter" || e.key === "Tab") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                      e.preventDefault();
+                      const chosen = slashItems[slashIdx];
+                      if (chosen) runSlashItem(chosen);
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      closeSlash();
+                      return;
+                    }
+                  }
+
                   const direction = lineAction(e, options().shortcuts);
                   if (direction) {
                     e.preventDefault();
+                    closeSlash();
                     const edit = insertLine(area.value, area.selectionStart, direction);
                     area.setRangeText(edit.insert, edit.from, edit.from, "end");
                     area.setSelectionRange(edit.anchor, edit.anchor);
@@ -451,6 +704,7 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
                   }
                   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.isComposing) {
                     e.preventDefault();
+                    closeSlash();
                     dismissedFrom = active.from;
                     (e.shiftKey ? redo : undo)(view.state, view.dispatch);
                     view.focus();
@@ -458,6 +712,7 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
                   }
                   if (e.key === "Escape" && !e.isComposing) {
                     e.preventDefault();
+                    closeSlash();
                     dismissedFrom = active.from;
                     area.blur();
                     view.focus();
@@ -493,17 +748,20 @@ export function blockSourcePlugin(options: () => { enabled: boolean; shortcuts: 
                     return;
                   }
                   if (e.key === "ArrowUp" && area.selectionStart === area.selectionEnd) {
-                    const edge = caretEdge(area);
+                    const edge = measureTextareaCaret(area);
                     if (edge.firstLine && moveToAdjacent(-1, edge.colOffset)) e.preventDefault();
                     return;
                   }
                   if (e.key === "ArrowDown" && area.selectionStart === area.selectionEnd) {
-                    const edge = caretEdge(area);
+                    const edge = measureTextareaCaret(area);
                     if (edge.lastLine && moveToAdjacent(1, edge.colOffset)) e.preventDefault();
                   }
                 });
 
-                area.addEventListener("blur", () => {
+                area.addEventListener("blur", (e) => {
+                  closeSlash();
+                  if (document.querySelector(".fx-editor-menu")) return;
+                  if ((e.relatedTarget as Element | null)?.closest?.(".fx-editor-menu")) return;
                   if (key.getState(view.state)?.id === active.id) view.dispatch(view.state.tr.setMeta(key, null));
                 });
 

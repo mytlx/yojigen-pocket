@@ -1267,7 +1267,26 @@
   font-weight: 600;
   line-height: 1.5;
 }
-.pocket-html-preview { border: 0; width: 100%; height: 100%; flex: 1; background: var(--card); }
+.pocket-html-preview-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+.pocket-html-preview-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--well);
+  color: var(--text-2);
+  font-size: 12px;
+}
+.pocket-html-preview { border: 0; width: 100%; flex: 1; min-height: 0; background: var(--card); }
 .fx-notes-head { flex-wrap: wrap; }
 .fx-notes-head-tools {
   display: inline-flex;
@@ -1359,4 +1378,84 @@
 .fx-confirm-actions .ui-btn.is-primary.is-danger:hover:not(:disabled) {
   background: var(--danger);
   filter: brightness(1.08);
+}
+
+/* 右键时抑制 Milkdown 选区浮动 Toolbar，避免与自定义右键菜单重叠。 */
+.fx-notes-rich.pocket-hide-toolbar .milkdown-toolbar {
+  display: none !important;
+}
+
+/* 纯阅读态：隐藏块拖拽手柄并展示浏览光标。 */
+.fx-notes-rich.is-readonly .milkdown-block-handle {
+  display: none !important;
+}
+.fx-notes-rich.is-readonly .ProseMirror {
+  cursor: default;
+}
+.fx-notes-rich.is-readonly .ProseMirror a[href] {
+  cursor: pointer;
+}
+
+/* 实时渲染态 Markdown 语法前缀/标记悬停可编辑提示。 */
+.fx-notes-rich .milkdown .ProseMirror .pocket-syntax-wrap.is-passive:hover {
+  background: rgba(var(--accent-rgb), 0.19);
+  box-shadow: inset 0 -1px 0 rgba(var(--accent-rgb), 0.45);
+}
+.fx-notes-rich .milkdown .ProseMirror .milkdown-list-item-block.pocket-active-prefix-li > .list-item > .label-wrapper:hover:not(.is-editing)::after {
+  background: rgba(var(--accent-rgb), 0.22);
+}
+
+/* 类 Typora 自定义编辑器右键菜单与级联子菜单。 */
+.fx-editor-menu {
+  position: fixed;
+  z-index: 90;
+  min-width: 204px;
+  overflow: visible;
+}
+.fx-menu-sub-wrap {
+  position: relative;
+}
+.fx-menu-sub-trigger.is-active {
+  background: var(--hover);
+}
+.fx-menu-arrow {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+}
+.fx-submenu {
+  position: fixed;
+  z-index: 95;
+  min-width: 186px;
+  max-height: min(360px, calc(100vh - 16px));
+  overflow-y: auto;
+}
+
+/* 整块源码模式 `/` 斜线命令菜单。 */
+.pocket-block-slash {
+  position: fixed;
+  z-index: 88;
+  min-width: 210px;
+  max-height: min(300px, calc(100vh - 16px));
+  overflow-y: auto;
+}
+.pocket-block-slash .fx-menu-item.is-active {
+  background: var(--hover);
+  color: var(--accent);
+}
+
+/* 时间格式设置面板。 */
+.pocket-note-shortcuts.pocket-time-format {
+  align-items: center;
+}
+.pocket-time-preview {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-2);
+}
+.pocket-time-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  flex-basis: 100%;
 }

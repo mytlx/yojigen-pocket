@@ -683,7 +683,7 @@ cm_type(0, '# 周会记录\n\n- 讨论 hello world 计划\n- [ ] 写文档\n'); 
 body=open(note,encoding='utf-8').read() if os.path.exists(note) else ''
 check('源码模式里写的内容自动保存到文件', '# 周会记录' in body and '- [ ] 写文档' in body, body[:80])
 st=etext_of('.fx-notes-status'); check('底部有字数统计和保存状态', '字' in st and '行' in st and ('已保存' in st or '自动保存' in st), st)
-eclick_text('.fx-notes-head .ui-seg button, .fx-notes-head .ui-seg *', '阅读'); wait(0.4)
+eclick_text('.fx-notes-head .ui-seg button, .fx-notes-head .ui-seg *', '实时'); wait(0.4)
 check('切回阅读模式，内容渲染成标题和待办', ewait_for('(()=>{const p=document.querySelector(".fx-notes-rich .ProseMirror");return !!p&&!!p.querySelector("h1")&&p.innerText.includes("周会记录")})()', 8), etext_of('.fx-notes-rich')[:100])
 shot('feature-notes')
 efill('.fx-notes-title', '周会记录'); ejs('document.querySelector(".fx-notes-title").dispatchEvent(new FocusEvent("blur"));1'); wait(0.9)
