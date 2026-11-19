@@ -3,13 +3,15 @@ import { splitFrontmatter, joinFrontmatter } from "../../extensions/editors/src/
 import { applyBlankLinesToAst } from "../../extensions/editors/src/notes/blanklines";
 import { matchStandaloneHtmlSnippet, parseBlockPrefix } from "../../extensions/editors/src/notes/liveinline";
 import { applySourceFormat, applySourceParagraph, buildSourceInsert, nextFootnoteIndex, nextLinkRefId } from "../../extensions/editors/src/notes/blockops";
-import { DEFAULT_HIGHLIGHT_COLOR, normalizeHighlightColor, pushHighlightHistory, resolveHighlightVars } from "../../extensions/editors/src/notes/highlights";
+import { DEFAULT_HIGHLIGHT_COLOR, DEFAULT_HIGHLIGHT_OPACITY, normalizeHighlightColor, normalizeHighlightOpacity, pushHighlightHistory, resolveHighlightVars } from "../../extensions/editors/src/notes/highlights";
+import { isImageFile, isMarkdownFile } from "../../extensions/editors/src/host";
+import { formatResizedImgHtml, parseResizedImgHtml } from "../../extensions/editors/src/notes/imagewidget";
 import { expandReplacement, findTextRanges } from "../../extensions/editors/src/notes/findreplace";
 import { buildImageFilename, extractUrlByPath, resolveImageDir, resolveNoteRelativePath, sanitizeImageName } from "../../extensions/editors/src/notes/images";
 import { anchorToSourceOffset, pickBestBlockIndex, sourceOffsetToAnchor } from "../../extensions/editors/src/notes/syncpos";
 import { DEFAULT_TIME_FORMAT, formatTime } from "../../extensions/editors/src/notes/timefmt";
 import { filterSlashItems, matchBlockSlash } from "../../extensions/editors/src/notes/slash";
-import { outlineOf, outlineTree, richOutlineOf } from "../../extensions/editors/src/notes/outline";
+import { formatOutlineItemCopy, formatOutlineTreeCopy, outlineOf, outlineTree, richOutlineOf } from "../../extensions/editors/src/notes/outline";
 import { applySourceIndent, defaultShortcuts, findShortcutConflicts, insertLine, lineAction, matchShortcutAction, shortcutOf } from "../../extensions/editors/src/notes/shortcuts";
 import {
   DEFAULT_OUTLINE_W,
@@ -438,5 +440,68 @@ describe("notes v4: find/replace, custom highlight history, Typora shortcuts, pa
     expect(extractUrlByPath({ data: { url: "https://cdn.a.com/1.png" } }, "data.url")).toBe("https://cdn.a.com/1.png");
     expect(extractUrlByPath({ result: ["https://cdn.a.com/2.png"] }, "result[0]")).toBe("https://cdn.a.com/2.png");
     expect(extractUrlByPath({ nested: { link: "https://cdn.a.com/3.png" } }, "")).toBe("https://cdn.a.com/3.png");
+  });
+});
+
+describe("notes v5: highlight opacity, resized img Scheme A, outline copy & non-md file helpers", () => {
+  test("highlight opacity normalization and custom RGBA calculation", () => {
+    expect(normalizeHighlightOpacity(undefined)).toBe(DEFAULT_HIGHLIGHT_OPACITY);
+    expect(normalizeHighlightOpacity(5)).toBe(10);
+    expect(normalizeHighlightOpacity(140)).toBe(100);
+    expect(normalizeHighlightOpacity(40)).toBe(40);
+
+    const custom = resolveHighlightVars("yellow", 30);
+    expect(custom.swatch).toBe("#fde047");
+    expect(custom.light).toBe("rgba(253, 224, 71, 0.3)");
+    expect(custom.dark).toBe("rgba(253, 224, 71, 0.19)");
+
+    const hexOpacity = resolveHighlightVars("#00e5ff", 80);
+    expect(hexOpacity.light).toBe("rgba(0, 229, 255, 0.8)");
+    expect(hexOpacity.dark).toBe("rgba(0, 229, 255, 0.5)");
+  });
+
+  test("parseResizedImgHtml & formatResizedImgHtml round-trip Scheme A cleanly and ignore custom HTML", () => {
+    const html = formatResizedImgHtml({ src: "./img/arch.png", alt: 'demo "A"', width: 480 });
+    expect(html).toBe('<img src="./img/arch.png" alt="demo &quot;A&quot;" width="480" />');
+
+    const parsed = parseResizedImgHtml(html);
+    expect(parsed).toEqual({ src: "./img/arch.png", alt: 'demo "A"', title: "", width: 480 });
+
+    const fromStyle = parseResizedImgHtml('<img src="./img/b.png" alt="b" style="width: 320px; height: auto">');
+    expect(fromStyle).toEqual({ src: "./img/b.png", alt: "b", title: "", width: 320 });
+
+    // 含 class / onclick / 无 width 的 HTML <img> 保持交由通用 HTML 渲染器处理，不误接管
+    expect(parseResizedImgHtml('<img src="./a.png" class="hero" width="400" />')).toBeNull();
+    expect(parseResizedImgHtml('<img src="./a.png" alt="no-width" />')).toBeNull();
+  });
+
+  test("outline copy helpers format single item, subtree, and full outline without body text", () => {
+    const md = [
+      "# 一级章节",
+      "正文内容不应出现",
+      "## **二级** A",
+      "更多正文",
+      "### 三级 A1",
+      "## 二级 B",
+      "# 顶层二",
+    ].join("\n");
+    const tree = outlineTree(richOutlineOf(md));
+    expect(tree.length).toBe(2);
+
+    const first = tree[0]!;
+    const secondA = first.children[0]!;
+    expect(formatOutlineItemCopy(secondA, false)).toBe("二级 A");
+    expect(formatOutlineItemCopy(secondA, true)).toBe("二级 A\n  三级 A1");
+    expect(formatOutlineItemCopy(first, true)).toBe("一级章节\n  二级 A\n    三级 A1\n  二级 B");
+    expect(formatOutlineTreeCopy(tree)).toBe("一级章节\n  二级 A\n    三级 A1\n  二级 B\n顶层二");
+  });
+
+  test("isMarkdownFile and isImageFile classify files accurately", () => {
+    expect(isMarkdownFile("note.md")).toBe(true);
+    expect(isMarkdownFile("README.MD")).toBe(true);
+    expect(isMarkdownFile("photo.png")).toBe(false);
+    expect(isImageFile("photo.png")).toBe(true);
+    expect(isImageFile("pic.WEBP")).toBe(true);
+    expect(isImageFile("doc.pdf")).toBe(false);
   });
 });

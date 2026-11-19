@@ -39,6 +39,13 @@ import type { HighlightColorId } from "./highlights";
 import { previewDocument } from "./html-preview";
 import { configurePocketHtml, pocketHtmlPlugins } from "./htmlrender";
 import { blobToBase64, resolveNoteRelativePath, type PendingImageInput } from "./images";
+import {
+  ImageLightbox,
+  configurePocketImageSchema,
+  createPocketImageView,
+  remarkPocketImage,
+  type LightboxImageInfo,
+} from "./imagewidget";
 import { listSelectionGuardPlugin, liveInlinePlugin } from "./liveinline";
 import { insertLine, matchShortcutAction, noteLineKeys, type NoteShortcuts } from "./shortcuts";
 import { insertRichFootnote, richSlashPlugin } from "./slashmenu";
@@ -65,6 +72,7 @@ export interface RichProps {
   viewMode: RichViewMode;
   strictLineBreaks: boolean;
   highlightColor: HighlightColorId;
+  highlightOpacity: number;
   editorMaxWidth: number;
   timeFormat: string;
   platform: string;
@@ -187,6 +195,7 @@ export function RichEditor(props: RichProps) {
   const ctxMenuOpenRef = useRef(false);
   ctxMenuOpenRef.current = !!ctxMenu;
   const [hideToolbar, setHideToolbar] = useState(false);
+  const [lightboxImg, setLightboxImg] = useState<LightboxImageInfo | null>(null);
   const resolvedImgMap = useRef<Map<string, string>>(new Map());
 
   // 向父组件暴露当前光标 / 视口锚点采集与查找替换能力。
@@ -393,7 +402,7 @@ export function RichEditor(props: RichProps) {
           const resolveAll = (view: PMView) => {
             if (view.isDestroyed) return;
             const notePath = latest.current.notePath;
-            view.dom.querySelectorAll<HTMLImageElement>("img").forEach((img) => {
+            view.dom.querySelectorAll<HTMLImageElement>("img:not(.pocket-img-el)").forEach((img) => {
               const orig = img.dataset.pocketOrigSrc ?? img.getAttribute("src") ?? "";
               if (!orig) return;
               const rel = resolveNoteRelativePath(notePath, orig);
@@ -441,10 +450,19 @@ export function RichEditor(props: RichProps) {
               };
             });
             marks.configurePocketMarks(ctx);
+            configurePocketImageSchema(ctx);
             configureBlankLines(ctx);
             configurePocketHtml(ctx, { isLive: () => latest.current.viewMode === "live" });
           })
           .use(marks.pocketMarks)
+          .use(remarkPocketImage)
+          .use(
+            createPocketImageView({
+              getNotePath: () => latest.current.notePath,
+              resolvedImgMap: resolvedImgMap.current,
+              onOpenLightbox: (info) => setLightboxImg(info),
+            }),
+          )
           .use(pocketHtmlPlugins)
           .use(remarkBlankLines)
           .use(blankLinesPlugin)
@@ -639,12 +657,19 @@ export function RichEditor(props: RichProps) {
         }),
       );
     }
-  }, [props.htmlPreview, props.strictLineBreaks, props.highlightColor, props.editorMaxWidth]);
+  }, [props.htmlPreview, props.strictLineBreaks, props.highlightColor, props.highlightOpacity, props.editorMaxWidth]);
 
   useEffect(() => {
     crepeRef.current?.setReadonly(props.viewMode === "read");
     const view = pm.current;
-    if (view) view.dispatch(view.state.tr.setMeta("pocket-mode-switch", props.viewMode));
+    if (view) {
+      view.dispatch(view.state.tr.setMeta("pocket-mode-switch", props.viewMode));
+      const readonly = props.viewMode === "read";
+      view.dom.querySelectorAll(".pocket-img-wrap").forEach((el) => {
+        el.classList.toggle("is-readonly", readonly);
+        if (readonly) el.classList.remove("is-selected");
+      });
+    }
     if (props.viewMode === "read") setHideToolbar(false);
   }, [props.viewMode]);
 
@@ -883,9 +908,24 @@ export function RichEditor(props: RichProps) {
         v.focus();
       }
     };
+    const onDblClick = (e: MouseEvent) => {
+      const target = e.target as Element | null;
+      const img = target?.closest?.(".ProseMirror img:not(.ProseMirror-separator):not(.pocket-img-el)") as HTMLImageElement | null;
+      if (!img) return;
+      const src = img.currentSrc || img.getAttribute("src") || "";
+      if (!src) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setLightboxImg({
+        src,
+        origSrc: img.dataset.pocketOrigSrc ?? img.getAttribute("src") ?? src,
+        alt: img.getAttribute("alt") ?? "",
+      });
+    };
     root.addEventListener("pointerup", onPointerUp, true);
     root.addEventListener("click", onClick, true);
     root.addEventListener("auxclick", onClick, true);
+    root.addEventListener("dblclick", onDblClick, true);
     root.addEventListener("contextmenu", onContextMenu, true);
     root.addEventListener("paste", onPaste, true);
     root.addEventListener("drop", onDrop, true);
@@ -895,6 +935,7 @@ export function RichEditor(props: RichProps) {
       root.removeEventListener("pointerup", onPointerUp, true);
       root.removeEventListener("click", onClick, true);
       root.removeEventListener("auxclick", onClick, true);
+      root.removeEventListener("dblclick", onDblClick, true);
       root.removeEventListener("contextmenu", onContextMenu, true);
       root.removeEventListener("paste", onPaste, true);
       root.removeEventListener("drop", onDrop, true);
@@ -1184,6 +1225,7 @@ export function RichEditor(props: RichProps) {
           onClose={() => setCtxMenu(null)}
         />
       )}
+      {lightboxImg && <ImageLightbox image={lightboxImg} onClose={() => setLightboxImg(null)} />}
     </>
   );
 }

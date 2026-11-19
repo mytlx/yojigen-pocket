@@ -662,7 +662,7 @@
   text-align: left;
   cursor: pointer;
 }
-.fx-menu-item > span:not(.fx-code-swatch):not(.pocket-slash-icon) {
+.fx-menu-item > span:not(.fx-code-swatch):not(.pocket-slash-icon):not(.fx-width-menu-val) {
   flex: 1;
   min-width: 0;
   white-space: nowrap;
@@ -1345,24 +1345,72 @@
   font-size: 12px;
 }
 .pocket-html-preview { border: 0; width: 100%; flex: 1; min-height: 0; background: var(--card); }
-.fx-notes-head { flex-wrap: wrap; }
+.fx-notes-head {
+  flex-wrap: wrap;
+  row-gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  container-type: inline-size;
+}
 .fx-notes-head-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 6px;
+  margin-left: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+.fx-notes-tool-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.fx-notes-mode-group {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: auto;
+  flex: none;
+  max-width: 100%;
+}
+.fx-notes-mode-group .ui-seg {
+  max-width: 100%;
 }
 .fx-notes-title {
-  flex: 0 1 260px;
-  min-width: 96px;
-  max-width: min(280px, 42%);
+  flex: 1 1 140px;
+  min-width: 72px;
+  max-width: min(260px, 100%);
   overflow: hidden;
   text-overflow: ellipsis;
 }
+@container (max-width: 440px) {
+  .fx-notes-head .fx-notes-title {
+    flex-basis: 110px;
+    max-width: 100%;
+  }
+  .fx-notes-head .ui-seg button {
+    padding: 2px 7px;
+    font-size: 11.5px;
+  }
+}
 
-/* 文件栏右键菜单 */
-.fx-side-menu {
+/* 文件栏非 Markdown 文件（图片/附件等）次要视觉区分 */
+.fx-side-item.is-non-md {
+  color: var(--text-2);
+}
+.fx-side-item.is-non-md > svg {
+  opacity: 0.78;
+}
+
+/* 文件栏与大纲右键菜单 */
+.fx-side-menu,
+.fx-outline-menu {
   position: fixed;
+  min-width: 172px;
+}
+.fx-side-menu {
   min-width: 196px;
 }
 .fx-menu-kbd {
@@ -2127,28 +2175,34 @@
   border-color: var(--danger);
 }
 
-/* 编辑区查找与替换浮动条（VS Code / Typora 风格） */
+/* 编辑区查找与替换浮动条（3 列严格对齐网格） */
 .fx-find-bar {
   position: absolute;
   top: 8px;
-  right: 16px;
+  right: 14px;
   z-index: 42;
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 6px 7px;
+  display: grid;
+  grid-template-columns: 236px 152px;
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 6px;
+  padding: 7px 8px;
   border-radius: 10px;
   border: 0.5px solid var(--note-float-line, var(--line-strong));
   background: var(--note-float, var(--card-solid));
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  max-width: calc(100% - 24px);
+}
+.fx-find-bar.can-replace {
+  grid-template-columns: 24px 236px 152px;
 }
 .fx-find-bar.is-error .fx-find-input-wrap {
   border-color: var(--danger);
 }
 .fx-find-expand {
-  flex: none;
-  width: 22px;
-  height: 26px;
+  width: 24px;
+  height: 28px;
+  padding: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -2162,74 +2216,156 @@
   background: var(--hover);
   color: var(--text);
 }
-.fx-find-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.fx-find-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.fx-find-spacer {
+  display: block;
+  width: 24px;
+  height: 28px;
 }
 .fx-find-input-wrap {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  height: 26px;
-  padding: 0 4px 0 8px;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 4px 0 9px;
   border-radius: 6px;
-  border: 0.5px solid var(--line-strong);
+  border: 1px solid var(--line-strong);
   background: var(--well);
+  box-sizing: border-box;
+  gap: 4px;
 }
 .fx-find-input-wrap:focus-within {
   border-color: var(--accent);
+  box-shadow: 0 0 0 1.5px rgba(var(--accent-rgb), 0.18);
 }
 .fx-find-input {
-  width: 170px;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
   border: 0;
   background: transparent;
   color: var(--text);
   font: inherit;
   font-size: 12.5px;
+  line-height: 1;
   outline: none;
 }
 .fx-find-flags {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 2px;
 }
 .fx-find-flag {
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 0;
+  min-width: 22px;
+  height: 21px;
+  padding: 0 4px;
+  border: 1px solid transparent;
   border-radius: 4px;
   background: transparent;
   color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+}
+.fx-find-flag.is-word > span {
+  display: inline-block;
+  padding: 0 1px 1px;
+  border-bottom: 1.5px solid currentColor;
+  line-height: 1;
 }
 .fx-find-flag:hover {
   background: var(--hover);
   color: var(--text);
 }
 .fx-find-flag.is-on {
-  background: rgba(var(--accent-rgb), 0.18);
+  background: var(--sel, rgba(var(--accent-rgb), 0.16));
+  border-color: var(--sel-rim, rgba(var(--accent-rgb), 0.36));
   color: var(--accent);
 }
+.fx-find-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  width: 100%;
+  height: 28px;
+}
 .fx-find-count {
-  min-width: 48px;
-  padding: 0 4px;
+  flex: 1;
+  min-width: 52px;
+  padding-right: 4px;
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
-  text-align: center;
+  text-align: right;
   white-space: nowrap;
+}
+.fx-find-count.is-idle {
+  color: var(--text-3);
 }
 .fx-find-count.is-empty {
   color: var(--danger);
+}
+.fx-find-icon-btn {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.fx-find-icon-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.fx-find-icon-btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.fx-replace-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  width: 100%;
+  height: 28px;
+}
+.fx-find-text-btn {
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  background: var(--well);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.fx-find-text-btn:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.fx-find-text-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .fx-notes-rich .milkdown .ProseMirror .pocket-find-match {
   background: rgba(250, 204, 21, 0.36);
@@ -2240,43 +2376,395 @@
   box-shadow: 0 0 0 1px rgba(249, 115, 22, 0.75);
 }
 
-/* 大纲顶部搜索框与命中高亮 */
-.pocket-outline-search-row {
-  padding: 0 8px 6px;
-}
+/* 大纲命中高亮与选中行样式（搜索框直接沿用 .fx-side-search-row 对称上下留白） */
 .pocket-outline-label.is-hit {
   color: var(--accent);
   font-weight: 600;
 }
+.pocket-outline-row.is-selected {
+  background: var(--sel, rgba(var(--accent-rgb), 0.14));
+  border-radius: 6px;
+}
+.pocket-outline-label.is-selected {
+  color: var(--accent);
+  font-weight: 500;
+}
 
-/* 编辑区脚标文字宽度滑块（类 Obsidian 插件） */
+/* 精致纤细滑块（供底部宽度滑块与设置页透明度滑块共用） */
+.fx-thin-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  margin: 0;
+}
+.fx-thin-range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+.fx-thin-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  margin-top: -3.5px;
+  border-radius: 999px;
+  background: var(--accent);
+  border: 1.5px solid var(--card-solid, #fff);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.24);
+  transition: transform 0.12s ease;
+}
+.fx-thin-range:hover::-webkit-slider-thumb,
+.fx-thin-range:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.18);
+}
+.fx-thin-range:focus-visible {
+  outline: none;
+}
+
+/* 荧光笔透明度调节行 */
+.fx-opacity-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+.fx-opacity-label {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.fx-opacity-row .fx-thin-range {
+  flex: 1;
+  max-width: 240px;
+  height: 16px;
+}
+.fx-opacity-val {
+  min-width: 38px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  text-align: right;
+}
+
+/* 编辑区脚标：窄窗防裁切 + 纤细带刻度宽度滑块 + 向上预设弹出菜单 */
+.fx-notes-status {
+  align-items: center;
+  overflow: visible;
+  gap: 8px;
+  min-width: 0;
+  container-type: inline-size;
+}
+.fx-notes-stat-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fx-notes-saved {
+  flex: none;
+}
 .fx-status-width {
+  flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-right: 10px;
+  gap: 8px;
+  margin-right: 4px;
+}
+.fx-width-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
 }
 .fx-status-width-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   border: 0;
-  padding: 1px 5px;
-  border-radius: 4px;
+  padding: 2px 6px;
+  border-radius: 5px;
   background: transparent;
-  color: var(--text-3);
+  color: var(--text-2);
   font: inherit;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
-.fx-status-width-btn:hover {
+.fx-status-width-btn:hover,
+.fx-status-width-btn.is-open {
   background: var(--hover);
   color: var(--text);
 }
-.fx-status-width input[type="range"] {
-  width: 78px;
+.fx-width-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 46;
+  min-width: 186px;
+}
+.fx-width-menu .fx-menu-item {
+  gap: 10px;
+}
+.fx-width-menu-val {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.fx-status-slider-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 96px;
+  height: 18px;
+}
+.fx-status-slider-wrap .fx-thin-range {
+  position: relative;
+  z-index: 2;
+  width: 100%;
   height: 14px;
-  margin: 0;
-  accent-color: var(--accent);
+}
+.fx-slider-ticks {
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 0;
+  height: 4px;
+  pointer-events: none;
+}
+.fx-slider-tick {
+  position: absolute;
+  bottom: 0;
+  width: 1.5px;
+  height: 4px;
+  border-radius: 1px;
+  background: var(--text-3);
+  opacity: 0.65;
+  transform: translateX(-50%);
+}
+.fx-slider-tick.is-active {
+  background: var(--accent);
+  opacity: 0.95;
+  height: 5px;
+}
+@container (max-width: 420px) {
+  .fx-status-slider-wrap {
+    display: none;
+  }
+}
+
+/* 图片 NodeView：单击选中框、拖拽边缘调大小手柄、实时像素标牌、1:1 重置按钮 */
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+  border-radius: 6px;
+  vertical-align: middle;
+  user-select: none;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap > img.pocket-img-el {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 5px;
+  cursor: zoom-in;
+  transition: box-shadow 0.12s ease;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap.is-selected > img.pocket-img-el,
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap.is-resizing > img.pocket-img-el {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-handle {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, background-color 0.12s ease;
+  z-index: 4;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap.is-selected:not(.is-readonly) .pocket-img-handle,
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap.is-resizing:not(.is-readonly) .pocket-img-handle,
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap:not(.is-readonly):hover .pocket-img-handle {
+  opacity: 1;
+  pointer-events: auto;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-handle.is-left,
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-handle.is-right {
+  top: 50%;
+  width: 6px;
+  height: 32px;
+  max-height: 55%;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.85);
+  border: 1.5px solid var(--card-solid, #fff);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+  cursor: ew-resize;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-handle.is-left {
+  left: -3px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-handle.is-right {
+  right: -3px;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-handle.is-corner {
+  right: -4px;
+  bottom: -4px;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: var(--accent);
+  border: 1.5px solid var(--card-solid, #fff);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  cursor: nwse-resize;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(15, 18, 24, 0.78);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.3;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap.is-resizing .pocket-img-badge,
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap.is-selected.has-width .pocket-img-badge {
+  opacity: 1;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-reset {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 0;
+  background: rgba(15, 18, 24, 0.76);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.3;
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, background-color 0.12s ease;
+  z-index: 5;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-wrap.is-selected.has-width:not(.is-readonly) .pocket-img-reset {
+  opacity: 1;
+  pointer-events: auto;
+}
+.fx-notes-rich .milkdown .ProseMirror .pocket-img-reset:hover {
+  background: var(--accent);
+}
+
+/* 双击图片全屏放大预览 Lightbox */
+.fx-lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: rgba(10, 12, 16, 0.84);
+  backdrop-filter: blur(4px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+.fx-lightbox-stage {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 24px 24px 72px;
+  box-sizing: border-box;
+}
+.fx-lightbox-img {
+  border-radius: 6px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  cursor: grab;
+  transition: transform 0.08s ease-out;
+  transform-origin: center center;
+}
+.fx-lightbox-img.is-fit {
+  max-width: 90vw;
+  max-height: calc(100vh - 110px);
+  object-fit: contain;
+}
+.fx-lightbox-img.is-dragging {
+  cursor: grabbing;
+  transition: none;
+}
+.fx-lightbox-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(24, 27, 34, 0.9);
+  border: 0.5px solid rgba(255, 255, 255, 0.16);
+  color: #f3f5f8;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  max-width: 92vw;
+}
+.fx-lightbox-caption {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgba(243, 245, 248, 0.82);
+  padding: 0 4px;
+}
+.fx-lightbox-sep {
+  width: 1px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.16);
+  margin: 0 4px;
+}
+.fx-lightbox-pct {
+  min-width: 42px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #f3f5f8;
+}
+.fx-lightbox-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #f3f5f8;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.fx-lightbox-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.fx-lightbox-btn.is-active {
+  background: rgba(var(--accent-rgb), 0.34);
+  color: #fff;
 }
 
 /* 插入图片手动重命名确认弹窗 */

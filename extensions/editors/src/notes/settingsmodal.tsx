@@ -1,10 +1,13 @@
 import { useEffect, useState } from "preact/hooks";
-import { Check, Clock, Image as ImageIcon, Keyboard, LayoutPanelLeft, Palette, Pipette, RotateCcw, Upload, X } from "lucide-preact";
+import { Check, Clock, Image as ImageIcon, Keyboard, Palette, Pipette, RotateCcw, Upload, X } from "lucide-preact";
 import { Btn } from "../../../../src/features/ui";
 import {
   DEFAULT_HIGHLIGHT_COLOR,
+  DEFAULT_HIGHLIGHT_OPACITY,
   HIGHLIGHT_COLORS,
   MAX_HIGHLIGHT_HISTORY,
+  MAX_HIGHLIGHT_OPACITY,
+  MIN_HIGHLIGHT_OPACITY,
   highlightSwatchHex,
   normalizeHexColor,
   resolveHighlightVars,
@@ -29,7 +32,7 @@ import {
 import { DEFAULT_OUTLINE_BOUNDS, DEFAULT_SIDEBAR_BOUNDS, type PanelBounds } from "./sidebar";
 import { DEFAULT_TIME_FORMAT, TIME_FORMAT_PRESETS, formatTime } from "./timefmt";
 
-export type SettingsTabId = "appearance" | "layout" | "images" | "time" | "shortcuts";
+export type SettingsTabId = "appearance" | "images" | "time" | "shortcuts";
 
 export interface CodeThemeOption {
   readonly id: string;
@@ -59,6 +62,7 @@ export interface NotesSettingsModalProps {
   codeTheme: string;
   codeThemes: readonly CodeThemeOption[];
   highlightColor: HighlightColorId;
+  highlightOpacity: number;
   highlightHistory: readonly string[];
   sidebarFontSize: number;
   editorFontSize: number;
@@ -71,6 +75,7 @@ export interface NotesSettingsModalProps {
   shortcuts: NoteShortcuts;
   onChangeCodeTheme: (id: string) => void;
   onChangeHighlightColor: (color: HighlightColorId, recordHistory?: boolean) => void;
+  onChangeHighlightOpacity: (opacity: number) => void;
   onChangeFontSizes: (patch: { sidebarFontSize?: number; editorFontSize?: number; outlineFontSize?: number }) => void;
   onChangeEditorMaxWidth: (width: number) => void;
   onChangeSidebarBounds: (next: PanelBounds) => void;
@@ -84,9 +89,8 @@ export interface NotesSettingsModalProps {
 }
 
 const TABS: readonly { id: SettingsTabId; label: string; icon: typeof Palette }[] = [
-  { id: "appearance", label: "外观与排版", icon: Palette },
-  { id: "layout", label: "布局与栏宽", icon: LayoutPanelLeft },
-  { id: "images", label: "图片与附件", icon: ImageIcon },
+  { id: "appearance", label: "外观", icon: Palette },
+  { id: "images", label: "图片", icon: ImageIcon },
   { id: "time", label: "时间格式", icon: Clock },
   { id: "shortcuts", label: "快捷键", icon: Keyboard },
 ];
@@ -134,7 +138,7 @@ export function NotesSettingsModal(props: NotesSettingsModalProps) {
     return () => document.removeEventListener("keydown", onKey, true);
   }, [props.onClose]);
 
-  const hiVars = resolveHighlightVars(props.highlightColor);
+  const hiVars = resolveHighlightVars(props.highlightColor, props.highlightOpacity);
   const activeHex = hiVars.swatch;
   const isCustomHexActive = !HIGHLIGHT_COLORS.some((c) => c.id === props.highlightColor);
   const conflicts = findShortcutConflicts(props.shortcuts);
@@ -254,8 +258,14 @@ export function NotesSettingsModal(props: NotesSettingsModalProps) {
                       <div class="fx-settings-sec-title">荧光笔高亮颜色</div>
                       <div class="fx-settings-sec-desc">固定常用色点 + 最近使用历史 + 自定义色盘 / 色值输入</div>
                     </div>
-                    {props.highlightColor !== DEFAULT_HIGHLIGHT_COLOR && (
-                      <Btn small onClick={() => props.onChangeHighlightColor(DEFAULT_HIGHLIGHT_COLOR, false)}>
+                    {(props.highlightColor !== DEFAULT_HIGHLIGHT_COLOR || props.highlightOpacity !== DEFAULT_HIGHLIGHT_OPACITY) && (
+                      <Btn
+                        small
+                        onClick={() => {
+                          props.onChangeHighlightColor(DEFAULT_HIGHLIGHT_COLOR, false);
+                          props.onChangeHighlightOpacity(DEFAULT_HIGHLIGHT_OPACITY);
+                        }}
+                      >
                         恢复默认
                       </Btn>
                     )}
@@ -357,6 +367,20 @@ export function NotesSettingsModal(props: NotesSettingsModalProps) {
                       <mark class="md-mark">荧光笔高亮效果</mark>
                     </div>
                   </div>
+                  <div class="fx-opacity-row">
+                    <span class="fx-opacity-label">透明度</span>
+                    <input
+                      type="range"
+                      class="fx-thin-range"
+                      min={MIN_HIGHLIGHT_OPACITY}
+                      max={MAX_HIGHLIGHT_OPACITY}
+                      step={2}
+                      aria-label="荧光笔透明度"
+                      value={props.highlightOpacity}
+                      onInput={(e) => props.onChangeHighlightOpacity(Number((e.target as HTMLInputElement).value))}
+                    />
+                    <span class="fx-opacity-val">{props.highlightOpacity}%</span>
+                  </div>
                 </section>
 
                 <section class="fx-settings-section">
@@ -440,12 +464,16 @@ export function NotesSettingsModal(props: NotesSettingsModalProps) {
                   <div class="fx-width-control-row">
                     <input
                       type="range"
+                      class="fx-thin-range"
                       min={480}
                       max={1600}
                       step={20}
                       aria-label="编辑区文字显示宽度滑块"
                       value={props.editorMaxWidth > 0 ? Math.max(480, Math.min(1600, props.editorMaxWidth)) : 1600}
-                      onInput={(e) => props.onChangeEditorMaxWidth(Number((e.target as HTMLInputElement).value))}
+                      onInput={(e) => {
+                        const v = Number((e.target as HTMLInputElement).value);
+                        props.onChangeEditorMaxWidth(v >= 1600 ? 0 : v);
+                      }}
                     />
                     <input
                       type="number"
@@ -504,11 +532,7 @@ export function NotesSettingsModal(props: NotesSettingsModalProps) {
                     })}
                   </div>
                 </section>
-              </div>
-            )}
 
-            {tab === "layout" && (
-              <div class="fx-settings-sections">
                 <section class="fx-settings-section">
                   <div class="fx-settings-sec-head">
                     <div>

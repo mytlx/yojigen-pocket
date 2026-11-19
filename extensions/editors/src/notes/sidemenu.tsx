@@ -162,7 +162,8 @@ export function SideContextMenu(props: {
 
       {menu.kind === "file" && (() => {
         const parentDir = menu.node.path.includes("/") ? menu.node.path.slice(0, menu.node.path.lastIndexOf("/")) : "";
-        return (
+        const isMd = /\.md$/i.test(menu.node.name);
+        return isMd ? (
           <>
             {menu.node.path !== props.currentPath && (
               <MenuItem icon={<FileText size={14} />} label="打开笔记" onClick={run(() => actions.onOpenNote(menu.node.path))} />
@@ -184,6 +185,23 @@ export function SideContextMenu(props: {
             <MenuItem icon={<ExternalLink size={14} />} label="用默认应用打开" onClick={run(() => actions.onOpenOutside(menu.node.path, "open"))} />
             <MenuItem icon={<SquareArrowOutUpRight size={14} />} label="用其他应用打开…" onClick={run(() => actions.onOpenOutside(menu.node.path, "openWith"))} />
             <MenuItem icon={<FolderOpen size={14} />} label="在文件夹中显示" onClick={run(() => actions.onOpenOutside(menu.node.path, "reveal"))} />
+            <div class="fx-menu-sep" />
+            <MenuItem icon={<Trash2 size={14} />} label="删除（移到废纸篓）" hint="Del" danger onClick={run(() => actions.onDelete([menu.node.path]))} />
+          </>
+        ) : (
+          <>
+            <MenuItem icon={<ExternalLink size={14} />} label="用默认应用打开" onClick={run(() => actions.onOpenOutside(menu.node.path, "open"))} />
+            <MenuItem icon={<SquareArrowOutUpRight size={14} />} label="用其他应用打开…" onClick={run(() => actions.onOpenOutside(menu.node.path, "openWith"))} />
+            <MenuItem icon={<FolderOpen size={14} />} label="在文件夹中显示" onClick={run(() => actions.onOpenOutside(menu.node.path, "reveal"))} />
+            <div class="fx-menu-sep" />
+            <MenuItem icon={<Pencil size={14} />} label="重命名" onClick={run(() => actions.onRename(menu.node.path))} />
+            {menu.node.path.includes("/") && (
+              <MenuItem icon={<FolderUp size={14} />} label="移到根目录" onClick={run(() => actions.onMoveToRoot(menu.node.path))} />
+            )}
+            <div class="fx-menu-sep" />
+            <MenuItem icon={<Copy size={14} />} label="复制文件名" onClick={run(() => actions.onCopyName(menu.node))} />
+            <MenuItem icon={<Copy size={14} />} label="复制相对路径" onClick={run(() => actions.onCopyPath(menu.node.path))} />
+            <MenuItem icon={<Copy size={14} />} label="复制完整路径" onClick={run(() => actions.onCopyFullPath(menu.node.path))} />
             <div class="fx-menu-sep" />
             <MenuItem icon={<Trash2 size={14} />} label="删除（移到废纸篓）" hint="Del" danger onClick={run(() => actions.onDelete([menu.node.path]))} />
           </>
@@ -272,6 +290,82 @@ export function DeleteConfirmModal(props: { items: PendingDeleteItem[]; busy?: b
           </span>
         </div>
       </div>
+    </div>
+  );
+}
+
+export type OutlineMenuTarget =
+  | { kind: "item"; index: number; hasChildren: boolean; x: number; y: number }
+  | { kind: "all"; hasItems: boolean; x: number; y: number };
+
+/** 大纲面板右键菜单：选中具体标题时提供复制当前/含子大纲，空白处（未选中项）提供复制全部大纲。 */
+export function OutlineContextMenu(props: {
+  menu: OutlineMenuTarget;
+  onCopyItem: (index: number, includeChildren: boolean) => void;
+  onCopyAll: () => void;
+  onClose: () => void;
+}) {
+  const { menu, onClose } = props;
+  const box = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState({ left: menu.x, top: menu.y });
+
+  useLayoutEffect(() => {
+    const r = box.current?.getBoundingClientRect();
+    if (!r) return;
+    setPlace({
+      left: Math.max(6, Math.min(menu.x, window.innerWidth - r.width - 6)),
+      top: Math.max(6, Math.min(menu.y, window.innerHeight - r.height - 6)),
+    });
+  }, [menu.x, menu.y, menu.kind]);
+
+  useEffect(() => {
+    const away = (e: MouseEvent) => {
+      if (!box.current?.contains(e.target as Node)) onClose();
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener("mousedown", away, true);
+    document.addEventListener("keydown", key, true);
+    window.addEventListener("blur", onClose);
+    return () => {
+      document.removeEventListener("mousedown", away, true);
+      document.removeEventListener("keydown", key, true);
+      window.removeEventListener("blur", onClose);
+    };
+  }, [onClose]);
+
+  const run = (fn: () => void) => () => {
+    onClose();
+    fn();
+  };
+
+  return (
+    <div
+      class="fx-menu fx-outline-menu"
+      ref={box}
+      role="menu"
+      aria-label="大纲操作菜单"
+      style={{ left: `${place.left}px`, top: `${place.top}px` }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {menu.kind === "item" ? (
+        <>
+          <MenuItem icon={<Copy size={14} />} label="复制当前标题" onClick={run(() => props.onCopyItem(menu.index, false))} />
+          <MenuItem
+            icon={<CopyPlus size={14} />}
+            label="复制当前及子大纲"
+            disabled={!menu.hasChildren}
+            onClick={run(() => props.onCopyItem(menu.index, true))}
+          />
+        </>
+      ) : (
+        <MenuItem icon={<Copy size={14} />} label="复制全部大纲" disabled={!menu.hasItems} onClick={run(props.onCopyAll)} />
+      )}
     </div>
   );
 }

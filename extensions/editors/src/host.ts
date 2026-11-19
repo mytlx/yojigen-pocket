@@ -35,13 +35,19 @@ const today = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-/** 只留文件夹和 .md 文件，并做自然数字排序。 */
-function onlyMarkdown(nodes: Node[]): Node[] {
-  return sortTreeNodes(
-    nodes
-      .filter((n) => n.isDir || n.name.toLowerCase().endsWith(".md"))
-      .map((n) => (n.isDir ? { ...n, children: onlyMarkdown(n.children ?? []) } : n)),
-  );
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif|svg|ico|bmp|heic|tiff?)$/i;
+
+export function isMarkdownFile(name: string): boolean {
+  return /\.md$/i.test(name);
+}
+
+export function isImageFile(name: string): boolean {
+  return IMAGE_EXT_RE.test(name);
+}
+
+/** 保留目录下所有文件与文件夹（含图片等附件），递归做自然数字排序。 */
+function sortAllNodes(nodes: Node[]): Node[] {
+  return sortTreeNodes(nodes.map((n) => (n.isDir ? { ...n, children: sortAllNodes(n.children ?? []) } : n)));
 }
 
 /** 别的页面（同一个扩展的另一个窗口）改了文件。 */
@@ -67,7 +73,7 @@ const NOTES = "notes";
 
 /** 笔记：用户目录 notes 里的 .md 文件。 */
 export const Notes = {
-  tree: () => pocket.fs.tree(NOTES).then(onlyMarkdown),
+  tree: () => pocket.fs.tree(NOTES).then(sortAllNodes),
   read: (path: string) => pocket.fs.read(NOTES, path),
   write: (path: string, content: string) => pocket.fs.write(NOTES, path, content),
   /** 新笔记的名字带当天的日期，重名时宿主会自动加序号。 */

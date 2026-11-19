@@ -4,7 +4,17 @@ export type HighlightPresetId = "yellow" | "green" | "pink" | "blue" | "purple" 
 export type HighlightColorId = HighlightPresetId | `#${string}`;
 
 export const DEFAULT_HIGHLIGHT_COLOR: HighlightPresetId = "yellow";
+export const DEFAULT_HIGHLIGHT_OPACITY = 58;
+export const MIN_HIGHLIGHT_OPACITY = 10;
+export const MAX_HIGHLIGHT_OPACITY = 100;
 export const MAX_HIGHLIGHT_HISTORY = 5;
+
+export function normalizeHighlightOpacity(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(MIN_HIGHLIGHT_OPACITY, Math.min(MAX_HIGHLIGHT_OPACITY, Math.round(value)));
+  }
+  return DEFAULT_HIGHLIGHT_OPACITY;
+}
 
 export interface HighlightPreset {
   id: HighlightPresetId;
@@ -61,20 +71,30 @@ export function highlightSwatchHex(color: HighlightColorId): `#${string}` {
   return normalizeHexColor(color) ?? (HIGHLIGHT_COLORS[0]!.swatch as `#${string}`);
 }
 
-/** 计算给定颜色在浅色/深色主题下对应的荧光笔半透明背景值。 */
-export function resolveHighlightVars(color: HighlightColorId): { swatch: `#${string}`; light: string; dark: string } {
+/** 计算给定颜色（及可选手动透明度 10~100）在浅色/深色主题下对应的荧光笔半透明背景值。 */
+export function resolveHighlightVars(color: HighlightColorId, opacity?: number): { swatch: `#${string}`; light: string; dark: string } {
   const preset = HIGHLIGHT_COLORS.find((c) => c.id === color);
-  if (preset) {
+  if (preset && opacity === undefined) {
     return { swatch: preset.swatch as `#${string}`, light: preset.light, dark: preset.dark };
   }
-  const hex = normalizeHexColor(color) ?? "#fde047";
+  const hex = (preset ? (preset.swatch as `#${string}`) : normalizeHexColor(color)) ?? "#fde047";
   const r = Number.parseInt(hex.slice(1, 3), 16);
   const g = Number.parseInt(hex.slice(3, 5), 16);
   const b = Number.parseInt(hex.slice(5, 7), 16);
+  if (opacity === undefined) {
+    return {
+      swatch: hex,
+      light: `rgba(${r}, ${g}, ${b}, 0.56)`,
+      dark: `rgba(${r}, ${g}, ${b}, 0.36)`,
+    };
+  }
+  const pct = normalizeHighlightOpacity(opacity);
+  const lightAlpha = Math.round(pct) / 100;
+  const darkAlpha = Math.round(Math.min(0.88, Math.max(0.14, lightAlpha * 0.62)) * 100) / 100;
   return {
     swatch: hex,
-    light: `rgba(${r}, ${g}, ${b}, 0.56)`,
-    dark: `rgba(${r}, ${g}, ${b}, 0.36)`,
+    light: `rgba(${r}, ${g}, ${b}, ${lightAlpha})`,
+    dark: `rgba(${r}, ${g}, ${b}, ${darkAlpha})`,
   };
 }
 

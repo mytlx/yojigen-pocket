@@ -212,3 +212,23 @@ export function outlineTree<T extends OutlineHeading>(headings: T[]): OutlineNod
   });
   return roots;
 }
+
+/** 将大纲节点树按层级缩进格式化为纯大纲文本（仅标题内容，不含正文）。 */
+export function formatOutlineTreeCopy<T extends OutlineHeading>(nodes: readonly OutlineNode<T>[], indent = "  "): string {
+  const lines: string[] = [];
+  const walk = (list: readonly OutlineNode<T>[], depth: number) => {
+    for (const node of list) {
+      const label = node.heading.text.trim() || "（空标题）";
+      lines.push(`${indent.repeat(depth)}${label}`);
+      if (node.children.length > 0) walk(node.children, depth + 1);
+    }
+  };
+  walk(nodes, 0);
+  return lines.join("\n");
+}
+
+/** 格式化单个大纲条目（仅自身，或连带其全部子节点，仅大纲不含正文）。 */
+export function formatOutlineItemCopy<T extends OutlineHeading>(node: OutlineNode<T>, includeChildren: boolean, indent = "  "): string {
+  if (!includeChildren) return node.heading.text.trim() || "（空标题）";
+  return formatOutlineTreeCopy([node], indent);
+}

@@ -9,12 +9,14 @@ import {
   Copy,
   ExternalLink,
   Eye,
+  File as FileIcon,
   FileOutput,
   FileText,
   Folder,
   FolderOpen,
   FolderPlus,
   Heading,
+  Image as ImageIcon,
   Italic,
   Link,
   List,
@@ -37,7 +39,7 @@ import {
   Trash2,
   X,
 } from "lucide-preact";
-import { editorClipboard, Notes, openExternal, type FeatureProps, type FsChange, type Node } from "./host";
+import { editorClipboard, isImageFile, isMarkdownFile, Notes, openExternal, type FeatureProps, type FsChange, type Node } from "./host";
 import { CodeEditor, linkOpener } from "./code/editor";
 import { Btn, Empty, Seg } from "../../../src/features/ui";
 import { applySourceFormat, applySourceParagraph, buildSourceInsert, type BlockKind } from "./notes/blockops";
@@ -56,8 +58,10 @@ import {
 import { frontSummary, joinFrontmatter, splitFrontmatter } from "./notes/frontmatter";
 import {
   DEFAULT_HIGHLIGHT_COLOR,
+  DEFAULT_HIGHLIGHT_OPACITY,
   normalizeHighlightColor,
   normalizeHighlightHistory,
+  normalizeHighlightOpacity,
   pushHighlightHistory,
   resolveHighlightVars,
   type HighlightColorId,
@@ -83,7 +87,15 @@ import {
   type NoteShortcuts,
   type ShortcutActionId,
 } from "./notes/shortcuts";
-import { outlineTree, richOutlineOf, type OutlineInline, type OutlineNode, type RichOutlineHeading } from "./notes/outline";
+import {
+  formatOutlineItemCopy,
+  formatOutlineTreeCopy,
+  outlineTree,
+  richOutlineOf,
+  type OutlineInline,
+  type OutlineNode,
+  type RichOutlineHeading,
+} from "./notes/outline";
 import { RichEditor, type RichHandle, type RichViewMode } from "./notes/rich";
 import {
   DEFAULT_EDITOR_FONT_SIZE,
@@ -111,7 +123,15 @@ import {
   visibleTreePaths,
   type PanelBounds,
 } from "./notes/sidebar";
-import { DeleteConfirmModal, SideContextMenu, type PendingDeleteItem, type SideMenuActions, type SideMenuTarget } from "./notes/sidemenu";
+import {
+  DeleteConfirmModal,
+  OutlineContextMenu,
+  SideContextMenu,
+  type OutlineMenuTarget,
+  type PendingDeleteItem,
+  type SideMenuActions,
+  type SideMenuTarget,
+} from "./notes/sidemenu";
 import "./notes/notes.css";
 
 const PANEL_ANIM_MS = 140;
@@ -189,11 +209,29 @@ const codeThemes = [
   { id: "monokai", label: "Monokai" },
 ] as const;
 
+const STATUS_WIDTH_PRESETS: readonly { label: string; desc: string; value: number }[] = [
+  { label: "紧凑", desc: "680px", value: 680 },
+  { label: "标准（默认）", desc: "820px", value: 820 },
+  { label: "宽屏", desc: "960px", value: 960 },
+  { label: "超宽", desc: "1120px", value: 1120 },
+  { label: "铺满", desc: "无限制", value: 0 },
+];
+const WIDTH_SLIDER_MIN = 480;
+const WIDTH_SLIDER_MAX = 1600;
+const WIDTH_SLIDER_TICKS: readonly { label: string; value: number; pct: number }[] = [
+  { label: "680px", value: 680, pct: ((680 - WIDTH_SLIDER_MIN) / (WIDTH_SLIDER_MAX - WIDTH_SLIDER_MIN)) * 100 },
+  { label: "820px", value: 820, pct: ((820 - WIDTH_SLIDER_MIN) / (WIDTH_SLIDER_MAX - WIDTH_SLIDER_MIN)) * 100 },
+  { label: "960px", value: 960, pct: ((960 - WIDTH_SLIDER_MIN) / (WIDTH_SLIDER_MAX - WIDTH_SLIDER_MIN)) * 100 },
+  { label: "1120px", value: 1120, pct: ((1120 - WIDTH_SLIDER_MIN) / (WIDTH_SLIDER_MAX - WIDTH_SLIDER_MIN)) * 100 },
+  { label: "铺满", value: 0, pct: 100 },
+];
+
 interface Prefs {
   /** 拼写检查（单词下面的红色波浪线）。默认关。 */
   spell: boolean;
   codeTheme: string;
   highlightColor: HighlightColorId;
+  highlightOpacity: number;
   highlightHistory: string[];
   sidebarFontSize: number;
   editorFontSize: number;
@@ -216,6 +254,7 @@ const defaultPrefs: Prefs = {
   spell: false,
   codeTheme: "auto",
   highlightColor: DEFAULT_HIGHLIGHT_COLOR,
+  highlightOpacity: DEFAULT_HIGHLIGHT_OPACITY,
   highlightHistory: [],
   sidebarFontSize: DEFAULT_SIDEBAR_FONT_SIZE,
   editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
@@ -349,6 +388,9 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   const [frontOpen, setFrontOpen] = useState(false);
   const [outlineCollapsed, setOutlineCollapsed] = useState<Record<string, boolean>>({});
   const [outlineQuery, setOutlineQuery] = useState("");
+  const [outlineSelected, setOutlineSelected] = useState<number | null>(null);
+  const [outlineMenu, setOutlineMenu] = useState<OutlineMenuTarget | null>(null);
+  const [widthMenuOpen, setWidthMenuOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [findShowReplace, setFindShowReplace] = useState(false);
   const [findQuery, setFindQuery] = useState<FindQuery>({ query: "", caseSensitive: false, wholeWord: false, regex: false });
@@ -427,6 +469,8 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       setSaved("");
       setFrontOpen(false);
       setOutlineCollapsed({});
+      setOutlineSelected(null);
+      setOutlineMenu(null);
       // 把它所在的文件夹都展开。
       setOpen((o) => {
         const next = { ...o };
@@ -526,6 +570,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
           outlineFontSize: positiveFontSize(savedPrefs.outlineFontSize, DEFAULT_OUTLINE_FONT_SIZE),
           editorMaxWidth: normalizeEditorMaxWidth(savedPrefs.editorMaxWidth),
           highlightColor: normalizeHighlightColor(savedPrefs.highlightColor),
+          highlightOpacity: normalizeHighlightOpacity(savedPrefs.highlightOpacity),
           highlightHistory: normalizeHighlightHistory(savedPrefs.highlightHistory),
           strictLineBreaks: savedPrefs.strictLineBreaks ?? false,
           timeFormat: savedPrefs.timeFormat || DEFAULT_TIME_FORMAT,
@@ -536,10 +581,10 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       const list = t ?? [];
       setTree(list);
       setLoaded(true);
-      const files = flatten(list).filter((n) => !n.isDir);
-      if (input.trim()) void importText(input, files);
+      const mdFiles = flatten(list).filter((n) => !n.isDir && isMarkdownFile(n.name));
+      if (input.trim()) void importText(input, mdFiles);
       else {
-        const first = files.find((f) => f.path === (last ?? "")) ?? [...files].sort((a, b) => b.modified - a.modified)[0];
+        const first = mdFiles.find((f) => f.path === (last ?? "")) ?? [...mdFiles].sort((a, b) => b.modified - a.modified)[0];
         if (first) void openNote(first.path);
       }
     });
@@ -561,7 +606,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       firstInput.current = false;
       return;
     }
-    if (input.trim()) void importText(input, all.filter((n) => !n.isDir));
+    if (input.trim()) void importText(input, all.filter((n) => !n.isDir && isMarkdownFile(n.name)));
   }, [input]);
 
   // 同一篇笔记可能同时开在主窗口和独立窗口里。别处改了文件，这边跟着变，不会各改各的。
@@ -779,7 +824,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     setPendingDelete(
       targets.map((p) => {
         const node = byPath.get(p);
-        return { path: p, label: node ? (node.isDir ? node.name : stem(node.name)) : p, isDir: !!node?.isDir };
+        return { path: p, label: node ? (node.isDir ? node.name : isMarkdownFile(node.name) ? stem(node.name) : node.name) : p, isDir: !!node?.isDir };
       }),
     );
   };
@@ -1015,8 +1060,10 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     }
     const want = out.join("/");
     const hit = all.find((n) => !n.isDir && (n.path === want || n.path === `${want}.md`));
-    if (hit) void openNote(hit.path);
-    else ctx.toast(`找不到笔记：${rel}`, true);
+    if (hit) {
+      if (isMarkdownFile(hit.name)) void openNote(hit.path);
+      else void Notes.open(hit.path).catch(fail);
+    } else ctx.toast(`找不到笔记：${rel}`, true);
   };
 
   const saveAs = async () => {
@@ -1043,6 +1090,25 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     document.addEventListener("mousedown", away, true);
     return () => document.removeEventListener("mousedown", away, true);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (!widthMenuOpen) return;
+    const away = (e: MouseEvent) => {
+      if (!(e.target as Element).closest?.(".fx-status-width")) setWidthMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setWidthMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", away, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", away, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [widthMenuOpen]);
 
   // 监测整体容器宽度，窗口缩窄时自动钳位左右两栏宽而不破坏已保存的偏好宽度。
   useEffect(() => {
@@ -1439,7 +1505,9 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       const el = renameRef.current;
       if (!el) return;
       el.focus();
-      el.setSelectionRange(0, el.value.length, "forward");
+      const dot = el.value.lastIndexOf(".");
+      const end = !isMarkdownFile(renaming) && dot > 0 ? dot : el.value.length;
+      el.setSelectionRange(0, end, "forward");
     };
     raf1 = requestAnimationFrame(() => {
       focusRename();
@@ -1460,8 +1528,19 @@ export function NotesTool({ input, ctx }: FeatureProps) {
 
   const stats = useMemo(() => count(derivedContent), [derivedContent]);
   const outlineNodes = useMemo(() => outlineTree(headings), [headings]);
+  const outlineNodeByIndex = useMemo(() => {
+    const map = new Map<number, OutlineNode<RichOutlineHeading>>();
+    const walk = (list: readonly OutlineNode<RichOutlineHeading>[]) => {
+      for (const n of list) {
+        map.set(n.index, n);
+        if (n.children.length > 0) walk(n.children);
+      }
+    };
+    walk(outlineNodes);
+    return map;
+  }, [outlineNodes]);
   const filteredOutline = useMemo(() => filterOutlineNodes(outlineNodes, outlineQuery), [outlineNodes, outlineQuery]);
-  const hiVars = useMemo(() => resolveHighlightVars(prefs.highlightColor), [prefs.highlightColor]);
+  const hiVars = useMemo(() => resolveHighlightVars(prefs.highlightColor, prefs.highlightOpacity), [prefs.highlightColor, prefs.highlightOpacity]);
   const rootStyle = useMemo(
     () =>
       ({
@@ -1525,7 +1604,14 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     setSelected([n.path]);
     setAnchorPath(n.path);
     if (n.isDir) setOpen((o) => ({ ...o, [n.path]: !open[n.path] }));
-    else if (n.path !== path) void openNote(n.path);
+    else if (isMarkdownFile(n.name) && n.path !== path) void openNote(n.path);
+  };
+
+  const handleItemDblClick = (n: Node, e: MouseEvent) => {
+    if (renaming === n.path || n.isDir || isMarkdownFile(n.name)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void Notes.open(n.path).catch(fail);
   };
 
   const handleItemContextMenu = (n: Node, e: MouseEvent) => {
@@ -1553,7 +1639,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     onRename: (p) => setRenaming(p),
     onDuplicate: (p) => void duplicateNote(p),
     onMoveToRoot: (p) => void move(p, ""),
-    onCopyName: (node) => void ctx.copy(node.isDir ? node.name : stem(node.name), "已复制文件名"),
+    onCopyName: (node) => void ctx.copy(node.isDir ? node.name : isMarkdownFile(node.name) ? stem(node.name) : node.name, "已复制文件名"),
     onCopyPath: (p) => void ctx.copy(p, "已复制路径"),
     onCopyFullPath: (p) => void Notes.abs(p).then((abs) => ctx.copy(abs, "已复制完整路径"), fail),
     onCopyContent: (p) => {
@@ -1569,15 +1655,18 @@ export function NotesTool({ input, ctx }: FeatureProps) {
   };
 
   const item = (n: Node, depth: number) => {
+    const isMd = !n.isDir && isMarkdownFile(n.name);
+    const isNonMd = !n.isDir && !isMd;
     const active = n.path === path;
     const picked = selectedSet.has(n.path) && (selected.length > 1 || n.isDir || !active);
     const expanded = !!open[n.path];
     const confirming = confirmDelete === n.path;
     const ctxFocused = ctxTarget === n.path;
+    const displayName = n.isDir ? n.name : isMd ? stem(n.name) : n.name;
     return (
       <div key={n.path}>
         <div
-          class={`fx-side-item${active ? " is-selected" : ""}${picked ? " is-picked" : ""}${ctxFocused ? " is-ctx-target" : ""}${confirming ? " is-confirming" : ""}${dragOver === n.path ? " is-drop" : ""}`}
+          class={`fx-side-item${isNonMd ? " is-non-md" : ""}${active ? " is-selected" : ""}${picked ? " is-picked" : ""}${ctxFocused ? " is-ctx-target" : ""}${confirming ? " is-confirming" : ""}${dragOver === n.path ? " is-drop" : ""}`}
           style={{ paddingLeft: `${8 + depth * 14}px` }}
           draggable={renaming !== n.path}
           onDragStart={(e) => e.dataTransfer?.setData("text/pocket-note", n.path)}
@@ -1596,15 +1685,16 @@ export function NotesTool({ input, ctx }: FeatureProps) {
             if (from) void move(from, n.path);
           }}
           onClick={(e) => handleItemClick(n, e as unknown as MouseEvent)}
+          onDblClick={(e) => handleItemDblClick(n, e as unknown as MouseEvent)}
           onContextMenu={(e) => handleItemContextMenu(n, e as unknown as MouseEvent)}
         >
           {n.isDir ? (expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />) : <span class="fx-side-indent" />}
-          {n.isDir ? <Folder size={13} /> : <FileText size={13} />}
+          {n.isDir ? <Folder size={13} /> : isMd ? <FileText size={13} /> : isImageFile(n.name) ? <ImageIcon size={13} /> : <FileIcon size={13} />}
           {renaming === n.path ? (
             <input
               ref={renameRef}
               class="fx-side-rename"
-              defaultValue={n.isDir ? n.name : stem(n.name)}
+              defaultValue={displayName}
               spellcheck={false}
               onClick={(e) => e.stopPropagation()}
               onBlur={(e) => void rename(n.path, (e.target as HTMLInputElement).value)}
@@ -1618,7 +1708,9 @@ export function NotesTool({ input, ctx }: FeatureProps) {
             />
           ) : (
             <>
-              <span class="fx-side-name" title={n.name}>{n.isDir ? n.name : stem(n.name)}</span>
+              <span class="fx-side-name" title={isNonMd ? `${n.name}（双击使用系统默认应用打开）` : n.name}>
+                {displayName}
+              </span>
               <span class="fx-side-tools" onClick={(e) => e.stopPropagation()}>
                 {n.isDir && (
                   <button type="button" class="fx-side-del" title="在这个文件夹里新建笔记" onClick={() => { setOpen((o) => ({ ...o, [n.path]: true })); void newNote(n.path); }}>
@@ -1801,76 +1893,80 @@ export function NotesTool({ input, ctx }: FeatureProps) {
               }}
             />
             <div class="fx-notes-head-tools">
-              <Btn small ghost icon title="查找与替换 (Ctrl+F)" onClick={() => openFindBar(false)}>
-                <Search size={14} />
-              </Btn>
-              <Btn small ghost icon title="复制全文（Markdown）" onClick={() => void ctx.copy(content)}>
-                <Copy size={14} />
-              </Btn>
-              <Btn small ghost icon title="笔记设置" onClick={() => { setMenuOpen(false); setSettingsTab("appearance"); }}>
-                <Settings size={14} />
-              </Btn>
-              <div class="fx-notes-more">
-                <Btn small ghost icon title="更多：打开方式、另存为、排版与预览" onClick={() => setMenuOpen((o) => !o)}>
-                  <MoreHorizontal size={14} />
+              <div class="fx-notes-tool-icons">
+                <Btn small ghost icon title="查找与替换 (Ctrl+F)" onClick={() => openFindBar(false)}>
+                  <Search size={14} />
                 </Btn>
-                {menuOpen && (
-                  <div class="fx-menu" role="menu">
-                    <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("open")}>
-                      <ExternalLink size={14} />
-                      <span>用默认应用打开</span>
-                    </button>
-                    <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("openWith")}>
-                      <SquareArrowOutUpRight size={14} />
-                      <span>用其他应用打开…</span>
-                    </button>
-                    <button type="button" role="menuitem" class="fx-menu-item" onClick={() => void saveAs()}>
-                      <FileOutput size={14} />
-                      <span>另存为…</span>
-                    </button>
-                    <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("reveal")}>
-                      <FolderOpen size={14} />
-                      <span>在文件夹中显示</span>
-                    </button>
-                    <div class="fx-menu-sep" />
-                    <button type="button" role="menuitem" class="fx-menu-item" disabled={!canResetWidths} onClick={resetWidths}>
-                      <RotateCcw size={14} />
-                      <span>恢复默认栏宽</span>
-                    </button>
-                    <div class="fx-menu-sep" />
-                    <button type="button" role="menuitemcheckbox" aria-checked={prefs.strictLineBreaks} class="fx-menu-item" onClick={toggleStrictLineBreaks}>
-                      <Pilcrow size={14} />
-                      <span>严格换行</span>
-                      {prefs.strictLineBreaks && <Check size={12} class="fx-menu-check" />}
-                    </button>
-                    <button type="button" role="menuitemcheckbox" aria-checked={prefs.spell} class="fx-menu-item" onClick={() => updatePrefs({ spell: !prefs.spell })}>
-                      <SpellCheck size={14} />
-                      <span>拼写检查</span>
-                      {prefs.spell && <Check size={12} class="fx-menu-check" />}
-                    </button>
-                    <button type="button" role="menuitemcheckbox" aria-checked={htmlPreview} class="fx-menu-item" onClick={toggleHtmlPreview}>
-                      <Eye size={14} />
-                      <span>HTML 沙箱预览</span>
-                      {htmlPreview && <Check size={12} class="fx-menu-check" />}
-                    </button>
-                  </div>
+                <Btn small ghost icon title="复制全文（Markdown）" onClick={() => void ctx.copy(content)}>
+                  <Copy size={14} />
+                </Btn>
+                <Btn small ghost icon title="笔记设置" onClick={() => { setMenuOpen(false); setSettingsTab("appearance"); }}>
+                  <Settings size={14} />
+                </Btn>
+                <div class="fx-notes-more">
+                  <Btn small ghost icon title="更多：打开方式、另存为、排版与预览" onClick={() => setMenuOpen((o) => !o)}>
+                    <MoreHorizontal size={14} />
+                  </Btn>
+                  {menuOpen && (
+                    <div class="fx-menu" role="menu">
+                      <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("open")}>
+                        <ExternalLink size={14} />
+                        <span>用默认应用打开</span>
+                      </button>
+                      <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("openWith")}>
+                        <SquareArrowOutUpRight size={14} />
+                        <span>用其他应用打开…</span>
+                      </button>
+                      <button type="button" role="menuitem" class="fx-menu-item" onClick={() => void saveAs()}>
+                        <FileOutput size={14} />
+                        <span>另存为…</span>
+                      </button>
+                      <button type="button" role="menuitem" class="fx-menu-item" onClick={() => openOutside("reveal")}>
+                        <FolderOpen size={14} />
+                        <span>在文件夹中显示</span>
+                      </button>
+                      <div class="fx-menu-sep" />
+                      <button type="button" role="menuitem" class="fx-menu-item" disabled={!canResetWidths} onClick={resetWidths}>
+                        <RotateCcw size={14} />
+                        <span>恢复默认栏宽</span>
+                      </button>
+                      <div class="fx-menu-sep" />
+                      <button type="button" role="menuitemcheckbox" aria-checked={prefs.strictLineBreaks} class="fx-menu-item" onClick={toggleStrictLineBreaks}>
+                        <Pilcrow size={14} />
+                        <span>严格换行</span>
+                        {prefs.strictLineBreaks && <Check size={12} class="fx-menu-check" />}
+                      </button>
+                      <button type="button" role="menuitemcheckbox" aria-checked={prefs.spell} class="fx-menu-item" onClick={() => updatePrefs({ spell: !prefs.spell })}>
+                        <SpellCheck size={14} />
+                        <span>拼写检查</span>
+                        {prefs.spell && <Check size={12} class="fx-menu-check" />}
+                      </button>
+                      <button type="button" role="menuitemcheckbox" aria-checked={htmlPreview} class="fx-menu-item" onClick={toggleHtmlPreview}>
+                        <Eye size={14} />
+                        <span>HTML 沙箱预览</span>
+                        {htmlPreview && <Check size={12} class="fx-menu-check" />}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div class="fx-notes-mode-group">
+                <Seg
+                  value={mode}
+                  options={[
+                    { value: "read", label: "阅读" },
+                    { value: "live", label: "实时" },
+                    { value: "block", label: "整块" },
+                    { value: "source", label: "源码" },
+                  ]}
+                  onChange={switchMode}
+                />
+                {!prefs.outline && (
+                  <Btn small ghost icon title="大纲" onClick={() => updatePrefs({ outline: true })}>
+                    <ListTree size={15} />
+                  </Btn>
                 )}
               </div>
-              <Seg
-                value={mode}
-                options={[
-                  { value: "read", label: "阅读" },
-                  { value: "live", label: "实时" },
-                  { value: "block", label: "整块" },
-                  { value: "source", label: "源码" },
-                ]}
-                onChange={switchMode}
-              />
-              {!prefs.outline && (
-                <Btn small ghost icon title="大纲" onClick={() => updatePrefs({ outline: true })}>
-                  <ListTree size={15} />
-                </Btn>
-              )}
             </div>
           </div>
           {mode === "source" && (
@@ -1933,6 +2029,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                 viewMode={mode as RichViewMode}
                 strictLineBreaks={prefs.strictLineBreaks}
                 highlightColor={prefs.highlightColor}
+                highlightOpacity={prefs.highlightOpacity}
                 editorMaxWidth={prefs.editorMaxWidth}
                 timeFormat={prefs.timeFormat}
                 platform={ctx.platform}
@@ -1991,30 +2088,75 @@ export function NotesTool({ input, ctx }: FeatureProps) {
             )}
           </div>
           <div class="fx-meta fx-notes-status">
-            <span>
+            <span class="fx-notes-stat-text">
               {stats.total} 字 · {stats.chars} 字符 · {stats.lines} 行 · 约 {stats.minutes} 分钟读完
               {mode === "source" ? ` · 第 ${cursor.line} 行，第 ${cursor.col} 列${cursor.selected ? `（选中 ${cursor.selected}）` : ""}` : ""}
             </span>
             <span class="fx-spacer" />
-            <div class="fx-status-width" title="拖动调整编辑区文字显示宽度（自动记住），点击数值在限宽与铺满间切换">
-              <button
-                type="button"
-                class="fx-status-width-btn"
-                onClick={() => updatePrefs({ editorMaxWidth: prefs.editorMaxWidth > 0 ? 0 : DEFAULT_EDITOR_MAX_WIDTH })}
-              >
-                {prefs.editorMaxWidth > 0 ? `宽 ${prefs.editorMaxWidth}px` : "铺满"}
-              </button>
-              <input
-                type="range"
-                min={480}
-                max={1600}
-                step={20}
-                aria-label="编辑区文字宽度"
-                value={prefs.editorMaxWidth > 0 ? Math.max(480, Math.min(1600, prefs.editorMaxWidth)) : 1600}
-                onInput={(e) => updatePrefs({ editorMaxWidth: Number((e.target as HTMLInputElement).value) })}
-              />
+            <div class="fx-status-width">
+              <div class="fx-width-picker">
+                <button
+                  type="button"
+                  class={`fx-status-width-btn${widthMenuOpen ? " is-open" : ""}`}
+                  title="点击选择默认编辑区宽度"
+                  aria-haspopup="menu"
+                  aria-expanded={widthMenuOpen}
+                  onClick={() => setWidthMenuOpen((v) => !v)}
+                >
+                  <span>{prefs.editorMaxWidth > 0 ? `宽 ${prefs.editorMaxWidth}px` : "铺满"}</span>
+                  <ChevronDown size={11} />
+                </button>
+                {widthMenuOpen && (
+                  <div class="fx-menu fx-width-menu" role="menu" aria-label="编辑区宽度预设">
+                    {STATUS_WIDTH_PRESETS.map((p) => {
+                      const active = prefs.editorMaxWidth === p.value;
+                      return (
+                        <button
+                          key={p.label}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={active}
+                          class={`fx-menu-item${active ? " is-current" : ""}`}
+                          onClick={() => {
+                            updatePrefs({ editorMaxWidth: p.value });
+                            setWidthMenuOpen(false);
+                          }}
+                        >
+                          <span>{p.label}</span>
+                          <span class="fx-width-menu-val">{p.desc}</span>
+                          {active && <Check size={12} class="fx-menu-check" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <div class="fx-status-slider-wrap" title="拖动调整编辑区文字显示宽度（自动记住）">
+                <input
+                  type="range"
+                  class="fx-thin-range"
+                  min={WIDTH_SLIDER_MIN}
+                  max={WIDTH_SLIDER_MAX}
+                  step={20}
+                  aria-label="编辑区文字宽度"
+                  value={prefs.editorMaxWidth > 0 ? Math.max(WIDTH_SLIDER_MIN, Math.min(WIDTH_SLIDER_MAX, prefs.editorMaxWidth)) : WIDTH_SLIDER_MAX}
+                  onInput={(e) => {
+                    const val = Number((e.target as HTMLInputElement).value);
+                    updatePrefs({ editorMaxWidth: val >= WIDTH_SLIDER_MAX ? 0 : val });
+                  }}
+                />
+                <div class="fx-slider-ticks" aria-hidden="true">
+                  {WIDTH_SLIDER_TICKS.map((t) => (
+                    <span
+                      key={t.label}
+                      class={`fx-slider-tick${prefs.editorMaxWidth === t.value ? " is-active" : ""}`}
+                      style={{ left: `${t.pct}%` }}
+                    />
+                  ))}
+                </div>
+              </div>
             </div>
-            <span>{dirty ? "正在保存…" : saved ? `已保存 ${saved}` : "自动保存"}</span>
+            <span class="fx-notes-saved">{dirty ? "正在保存…" : saved ? `已保存 ${saved}` : "自动保存"}</span>
           </div>
         </div>
       )}
@@ -2058,7 +2200,21 @@ export function NotesTool({ input, ctx }: FeatureProps) {
             )}
           </label>
         </div>
-        <div class="fx-side-list">
+        <div
+          class="fx-side-list"
+          onClick={(e) => {
+            if (!(e.target as Element)?.closest?.(".pocket-outline-label, .pocket-outline-toggle")) {
+              setOutlineSelected(null);
+            }
+          }}
+          onContextMenu={(e) => {
+            if ((e.target as Element)?.closest?.(".pocket-outline-row")) return;
+            e.preventDefault();
+            e.stopPropagation();
+            setOutlineSelected(null);
+            setOutlineMenu({ kind: "all", hasItems: outlineNodes.length > 0, x: e.clientX, y: e.clientY });
+          }}
+        >
           {filteredOutline.length ? (
             <div class="pocket-outline-tree">
               {(() => {
@@ -2068,10 +2224,26 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                     const nodeKey = `${node.heading.level}:${node.index}`;
                     const hasChildren = children.length > 0;
                     const collapsed = !searching && !!outlineCollapsed[nodeKey];
+                    const selectedItem = outlineSelected === node.index;
                     const toggle = () => setOutlineCollapsed((prev) => ({ ...prev, [nodeKey]: !prev[nodeKey] }));
                     return (
                       <div key={`${node.heading.from}-${node.index}`} class="pocket-outline-node">
-                        <div class="pocket-outline-row">
+                        <div
+                          class={`pocket-outline-row${selectedItem ? " is-selected" : ""}`}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setOutlineSelected(node.index);
+                            const fullNode = outlineNodeByIndex.get(node.index) ?? node;
+                            setOutlineMenu({
+                              kind: "item",
+                              index: node.index,
+                              hasChildren: fullNode.children.length > 0,
+                              x: e.clientX,
+                              y: e.clientY,
+                            });
+                          }}
+                        >
                           {hasChildren ? (
                             <span
                               role="button"
@@ -2098,8 +2270,11 @@ export function NotesTool({ input, ctx }: FeatureProps) {
                           )}
                           <button
                             type="button"
-                            class={`pocket-outline-label${matched ? " is-hit" : ""}`}
-                            onClick={() => jumpHeading(node.index)}
+                            class={`pocket-outline-label${matched ? " is-hit" : ""}${selectedItem ? " is-selected" : ""}`}
+                            onClick={() => {
+                              setOutlineSelected(node.index);
+                              jumpHeading(node.index);
+                            }}
                             title={node.heading.text}
                           >
                             {node.heading.text ? renderOutlineInlines(node.heading.inlines) : "（空标题）"}
@@ -2152,6 +2327,22 @@ export function NotesTool({ input, ctx }: FeatureProps) {
           onCancel={() => setPendingImgRename(null)}
         />
       )}
+      {outlineMenu && (
+        <OutlineContextMenu
+          menu={outlineMenu}
+          onCopyItem={(index, includeChildren) => {
+            const target = outlineNodeByIndex.get(index);
+            if (!target) return;
+            const text = formatOutlineItemCopy(target, includeChildren);
+            if (text) void ctx.copy(text, includeChildren ? "已复制大纲及子项" : "已复制标题");
+          }}
+          onCopyAll={() => {
+            const text = formatOutlineTreeCopy(outlineNodes);
+            if (text) void ctx.copy(text, "已复制全部大纲");
+          }}
+          onClose={() => setOutlineMenu(null)}
+        />
+      )}
       {settingsTab && (
         <NotesSettingsModal
           initialTab={settingsTab}
@@ -2159,6 +2350,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
           codeTheme={prefs.codeTheme}
           codeThemes={codeThemes}
           highlightColor={prefs.highlightColor}
+          highlightOpacity={prefs.highlightOpacity}
           highlightHistory={prefs.highlightHistory}
           sidebarFontSize={prefs.sidebarFontSize}
           editorFontSize={prefs.editorFontSize}
@@ -2180,6 +2372,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
               updatePrefs({ highlightColor: color });
             }
           }}
+          onChangeHighlightOpacity={(highlightOpacity) => updatePrefs({ highlightOpacity })}
           onChangeFontSizes={(patch) => updatePrefs(patch)}
           onChangeEditorMaxWidth={(editorMaxWidth) => updatePrefs({ editorMaxWidth })}
           onChangeSidebarBounds={(sb) =>
