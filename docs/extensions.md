@@ -8,6 +8,7 @@
 | 写作与代码（`editors`） | Markdown 笔记、代码草稿、文本对比 | `md` `note` `笔记`、`scratch` `code` `草稿`、`diff` `对比` |
 | 桌面宠物（`pet`） | 一只可以养的 3D 小狸猫 | `pet` `宠物` |
 | 口袋直传（`peer`，API 2） | IPv6 点对点文件传输 | `peer` `直传` `传输` |
+| 超级马力欧兄弟 3（`mario3`） | NES 游戏运行窗口（商店包不含 ROM；[从游戏源码构建本地版](mario3.md)） | `mario3` `smb3` `马力欧` |
 
 ## 安装、停用、卸载
 

@@ -1,0 +1,4 @@
+JSNES 3.0.0, by Ben Firshman and contributors.
+https://github.com/bfirsh/jsnes
+Unmodified distribution: jsnes@3.0.0/dist/jsnes.min.js (npm).
+License: Apache-2.0. See JSNES-LICENSE.txt.

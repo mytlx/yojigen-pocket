@@ -14,6 +14,7 @@ on:
         default: "editors"
         type: choice
         options:
+          - mario3
           - editors
           - peer
           - pet

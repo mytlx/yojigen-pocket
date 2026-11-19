@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>超级马力欧兄弟 3</title>
+    <script src="/__pocket.js"></script>
+    <script src="./vendor/jsnes.min.js"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="eyebrow">POCKET ARCADE　/　FC</span>
+        <h1>超级马力欧兄弟 3</h1>
+        <p>FC / NES · 单人游戏</p>
+      </header>
+      <section class="console">
+        <div class="rail">
+          <span id="status" role="status">等待载入</span
+          ><span id="saved" role="status">自动存档</span>
+        </div>
+        <div class="screen" tabindex="0" aria-label="游戏画面">
+          <canvas width="256" height="240"></canvas>
+          <div id="cover">
+            <small>POCKET ARCADE</small><strong>超级马力欧兄弟 3</strong
+            ><span id="hint">打开本地《超级马力欧兄弟 3》卡带</span>
+          </div>
+        </div>
+        <div class="toolbar">
+          <button id="open" class="primary">打开 .nes 卡带</button
+          ><button id="pause" disabled>暂停</button
+          ><button id="save" disabled>保存进度</button
+          ><button id="restart" disabled>重新开始</button
+          ><button id="exit" disabled>保存并退出</button
+          ><button id="large" aria-pressed="false">大画面</button
+          ><button id="settings">控制设置</button
+          ><button id="sound" aria-pressed="true">声音：开</button>
+        </div>
+      </section>
+      <p id="error" role="alert"></p>
+      <footer id="guide"></footer>
+      <dialog id="restartDialog" aria-labelledby="restartTitle">
+        <h2 id="restartTitle">舍弃当前进度？</h2>
+        <p>这张卡带的存档将被替换，游戏会从头开始。</p>
+        <form method="dialog">
+          <button value="cancel" autofocus>取消</button>
+          <button value="restart">舍弃进度并重新开始</button>
+        </form>
+      </dialog>
+      <dialog id="controls">
+        <h2>控制设置</h2>
+        <p>点击键位后按新键。重复键位会交换，Esc 取消。</p>
+        <div id="bindings"></div>
+        <button id="reset">恢复默认键位</button>
+        <h3>手柄</h3>
+        <p>
+          方向键或左摇杆移动，下方键跳跃，左侧或右侧键加速，Start 开始，Select
+          选择。
+        </p>
+        <p id="padInfo" role="status">
+          连接后按一下手柄按钮。若系统未识别，可使用手柄的键盘映射模式。
+        </p>
+
+        <hr />
+        <button id="close">完成</button>
+      </dialog>
+    </main>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
