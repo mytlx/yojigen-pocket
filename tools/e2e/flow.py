@@ -228,10 +228,18 @@ press('Enter'); wait(0.5); check('回车打开哈希面板', js('!!document.quer
 press('Escape'); wait(0.3)
 
 # 各开发工具
-open_feature('json'); fill('.pk-feature textarea', '{"b":1,"a":[true,null]}'); wait(0.3)
-out=js('document.querySelector(".pk-feature .fx-out-text")?.innerText||""'); check('JSON 格式化', '"a": [' in out and '\n' in out, out[:80])
-fill('.pk-feature textarea', '{"a":1,}'); wait(0.3)
-err=js('document.querySelector(".fx-out-text.is-error")?.innerText||""'); check('JSON 错误指出行列', '第 1 行' in err, err)
+def fill_json(value):
+    js('(()=>{const v=document.querySelector(".jx-work:not([hidden]) .cm-content").cmTile.root.view;v.dispatch({changes:{from:0,to:v.state.doc.length,insert:%s}});return true})()'%json.dumps(value))
+open_feature('json'); fill_json('{"b":1,"a":[true,null]}')
+check('JSON 节点树', wait_for('document.querySelectorAll(".jx-row").length===2'))
+click_text('.jx-modes button','格式化')
+check('JSON 格式化', wait_for('document.querySelector(".jx-result")?.textContent.includes(\"\\\"a\\\": [\")'))
+fill_json('{"a":1,}')
+check('JSON 错误指出行列', wait_for('document.querySelector(".jx-err")?.textContent.includes("第 1 行")'))
+click('.jx-err')
+check('JSON 错误定位', js('document.querySelector(".jx-editor .cm-content").cmTile.root.view.state.selection.main.from')==7)
+click_text('.jx-diagnostic button','移除尾逗号')
+check('JSON 修复尾逗号',wait_for('document.querySelector(".jx-result")?.textContent.includes("1") && !document.querySelector(".jx-err")'))
 shot('feature-json'); press('Escape'); wait(0.2)
 open_feature('b64'); fill('.pk-feature textarea', '你好'); wait(0.2)
 check('Base64 编码中文', js('document.querySelector(".pk-feature .fx-out-text")?.innerText')=='5L2g5aW9')
@@ -292,14 +300,14 @@ r=js('mygo.call("Library.Books").then(b=>b[0].chapter)'); check('记住阅读进
 
 # ================= 分离成独立窗口 =================
 before=len(windows())
-open_feature('json'); fill('.pk-feature textarea', '[1,2]'); wait(0.2)
+open_feature('json'); fill_json('[1,2]'); wait(0.2)
 press('d', metaKey=True); wait(1.4)
 w=window_by('feature.html'); check('⌘D 分离成独立窗口', w is not None and len(windows())==before+1)
 check('分离后主窗口收起', not visible())
 if w:
     wait(0.4)
     check('独立窗口里是 JSON 工具', (js('document.querySelector(".dt-title")?.innerText', w['id']) or '').strip()=='JSON 工具')
-    check('分离时带上已经输入的内容', js('document.querySelector(".pk-feature textarea")?.value', w['id'])=='[1,2]')
+    check('分离时带上已经输入的内容', js('document.querySelector(".jx-editor .cm-content")?.innerText', w['id'])=='[1,2]')
     check('独立窗口里功能可用', js('!!document.querySelector(".fx-page")', w['id']))
     shot('detached-json', w['id'])
     show(); typed('JSON'); r=rows()

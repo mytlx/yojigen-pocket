@@ -58,6 +58,7 @@ export function App() {
   latest.current = { text, scope };
   const latestView = useRef<ActiveView | null>(null);
   latestView.current = view;
+  const featureDetachArgs = useRef<() => Record<string, string>>();
   const featureInput = useRef<string | null>(null); // 功能页里当前输入的内容
   const viewNonce = useRef(0);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -153,7 +154,7 @@ export function App() {
     const v = latestView.current;
     if (!v || !detachable(v)) return;
     void Windows.detach({
-      feature: v.feature, input: featureInput.current ?? v.input, args: v.args, url: v.url, plugin: v.plugin,
+      feature: v.feature, input: featureInput.current ?? v.input, args: { ...v.args, ...featureDetachArgs.current?.() }, url: v.url, plugin: v.plugin,
       title: v.title ?? "", icon: v.icon, height: v.height,
     }).then(
       () => {
@@ -642,8 +643,9 @@ export function App() {
     close: closeView,
     detach: detachView,
     detachKey,
-    remember: (value) => {
+    remember: (value, detachArgs) => {
       featureInput.current = value;
+      featureDetachArgs.current = detachArgs;
     },
     openSettings: (section) => void Launcher.openSettings(section),
   };
