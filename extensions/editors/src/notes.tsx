@@ -1005,7 +1005,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       const v = view.current;
       if (!v) return;
       const { from, to } = v.state.selection.main;
-      const res = applySourceParagraph(v.state.doc.toString(), from, to, kind);
+      const res = applySourceParagraph(v.state.doc.toString(), from, to, kind, { toggle: false });
       v.dispatch({ changes: { from: res.from, to: res.to, insert: res.insert }, selection: { anchor: res.anchor, head: res.head } });
       v.focus();
     },
@@ -1018,6 +1018,12 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       if (!v) return;
       const { from, to } = v.state.selection.main;
       const docText = v.state.doc.toString();
+      if ((kind === "code" || kind === "math") && from !== to) {
+        const res = applySourceParagraph(docText, from, to, kind, { toggle: true });
+        v.dispatch({ changes: { from: res.from, to: res.to, insert: res.insert }, selection: { anchor: res.anchor, head: res.head } });
+        v.focus();
+        return;
+      }
       if (kind === "paraAbove" || kind === "paraBelow") {
         const res = insertLine(docText, from, kind === "paraAbove" ? "above" : "below");
         v.dispatch({ changes: { from: res.from, to: res.from, insert: res.insert }, selection: { anchor: res.anchor } });
@@ -1341,14 +1347,6 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       v.dispatch({ changes: { from: ch.from, to: ch.to, insert: ch.insert }, selection: { anchor: ch.anchor, head: ch.head }, scrollIntoView: true });
       return true;
     }
-    if (act === "codeBlock" || act === "mathBlock") {
-      const line = v.state.doc.lineAt(from);
-      const emptyLine = v.state.sliceDoc(line.from, from).trim() === "";
-      const res = buildSourceInsert(act === "codeBlock" ? "code" : "math", prefsRef.current.timeFormat, emptyLine, docText);
-      const anchor = from + res.cursorOffset;
-      v.dispatch({ changes: { from, to, insert: res.insert }, selection: { anchor }, scrollIntoView: true });
-      return true;
-    }
     const paraMap: Partial<Record<ShortcutActionId, BlockKind>> = {
       h1: "h1",
       h2: "h2",
@@ -1356,6 +1354,8 @@ export function NotesTool({ input, ctx }: FeatureProps) {
       h4: "h4",
       h5: "h5",
       h6: "h6",
+      codeBlock: "code",
+      mathBlock: "math",
       quote: "quote",
       orderedList: "ordered",
       bulletList: "bullet",
@@ -1363,7 +1363,7 @@ export function NotesTool({ input, ctx }: FeatureProps) {
     };
     const kind = paraMap[act];
     if (kind) {
-      const res = applySourceParagraph(docText, from, to, kind);
+      const res = applySourceParagraph(docText, from, to, kind, { toggle: true });
       v.dispatch({ changes: { from: res.from, to: res.to, insert: res.insert }, selection: { anchor: res.anchor, head: res.head }, scrollIntoView: true });
       return true;
     }

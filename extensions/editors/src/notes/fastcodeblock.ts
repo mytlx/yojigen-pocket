@@ -206,6 +206,9 @@ export const fastCodeBlockView = $view(codeBlockSchema.node, (ctx) => {
 
     const dom = document.createElement("div");
     dom.className = "milkdown-code-block pocket-code-idle";
+    dom.dataset.pocketCodeBlock = "1";
+    (dom as unknown as { __pocketGetPos?: () => number | undefined; __pocketGetCM?: () => unknown }).__pocketGetPos = getPos;
+    (dom as unknown as { __pocketGetPos?: () => number | undefined; __pocketGetCM?: () => unknown }).__pocketGetCM = () => activeInner?.cm ?? null;
 
     const cancelTeardown = () => {
       if (teardownTimer !== null) {

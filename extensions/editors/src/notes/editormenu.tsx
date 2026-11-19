@@ -73,18 +73,20 @@ export interface EditorMenuActions {
   onInsert?: (kind: InsertKind) => void;
 }
 
-const PARA_ITEMS: { kind: BlockKind; label: string; icon: typeof Pilcrow }[] = [
+const PARA_ITEMS: { kind: BlockKind; label: string; icon: typeof Pilcrow; shortcutKey?: keyof NoteShortcuts }[] = [
   { kind: "text", label: "正文", icon: Pilcrow },
-  { kind: "h1", label: "标题 1", icon: Heading1 },
-  { kind: "h2", label: "标题 2", icon: Heading2 },
-  { kind: "h3", label: "标题 3", icon: Heading3 },
-  { kind: "h4", label: "标题 4", icon: Heading4 },
-  { kind: "h5", label: "标题 5", icon: Heading5 },
-  { kind: "h6", label: "标题 6", icon: Heading6 },
-  { kind: "quote", label: "引用", icon: Quote },
-  { kind: "bullet", label: "无序列表", icon: List },
-  { kind: "ordered", label: "有序列表", icon: ListOrdered },
-  { kind: "task", label: "待办", icon: ListChecks },
+  { kind: "h1", label: "标题 1", icon: Heading1, shortcutKey: "h1" },
+  { kind: "h2", label: "标题 2", icon: Heading2, shortcutKey: "h2" },
+  { kind: "h3", label: "标题 3", icon: Heading3, shortcutKey: "h3" },
+  { kind: "h4", label: "标题 4", icon: Heading4, shortcutKey: "h4" },
+  { kind: "h5", label: "标题 5", icon: Heading5, shortcutKey: "h5" },
+  { kind: "h6", label: "标题 6", icon: Heading6, shortcutKey: "h6" },
+  { kind: "code", label: "代码块", icon: Code, shortcutKey: "codeBlock" },
+  { kind: "math", label: "公式块", icon: Sigma, shortcutKey: "mathBlock" },
+  { kind: "quote", label: "引用", icon: Quote, shortcutKey: "quote" },
+  { kind: "bullet", label: "无序列表", icon: List, shortcutKey: "bulletList" },
+  { kind: "ordered", label: "有序列表", icon: ListOrdered, shortcutKey: "orderedList" },
+  { kind: "task", label: "待办", icon: ListChecks, shortcutKey: "taskList" },
 ];
 
 const QUICK_FORMAT_ICONS: { kind: Exclude<FormatKind, "clear">; label: string; icon: typeof Bold }[] = [
@@ -241,11 +243,12 @@ export function EditorContextMenu(props: {
           </>
         )}
         {id === "paragraph" &&
-          PARA_ITEMS.map(({ kind, label, icon: Icon }) => (
+          PARA_ITEMS.map(({ kind, label, icon: Icon, shortcutKey }) => (
             <MenuItem
               key={kind}
               icon={<Icon size={14} />}
               label={label}
+              hint={shortcutKey ? props.shortcuts?.[shortcutKey] : undefined}
               current={menu.currentBlockKind === kind}
               onClick={run(() => actions.onParagraph?.(kind))}
             />

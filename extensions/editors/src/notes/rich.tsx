@@ -21,6 +21,8 @@ import {
   moveBlock,
   nextLinkRefId,
   removeBlock,
+  selectionKindOf,
+  transformSelection,
   turnInto,
   type BlockKind,
 } from "./blockops";
@@ -192,6 +194,12 @@ export function RichEditor(props: RichProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [ctxMenu, setCtxMenu] = useState<EditorMenuTarget | null>(null);
   const ctxAreaRef = useRef<HTMLTextAreaElement | null>(null);
+  const ctxCodeBlockPosRef = useRef<number | null>(null);
+  const ctxCodeCmRef = useRef<{
+    state: { selection: { main: { from: number; to: number } }; doc: { length: number }; sliceDoc(from: number, to: number): string };
+    dispatch(spec: unknown): void;
+    focus(): void;
+  } | null>(null);
   const ctxMenuOpenRef = useRef(false);
   ctxMenuOpenRef.current = !!ctxMenu;
   const [hideToolbar, setHideToolbar] = useState(false);
@@ -717,7 +725,7 @@ export function RichEditor(props: RichProps) {
     };
     const onContextMenu = (e: MouseEvent) => {
       const target = e.target as Element | null;
-      if (target?.closest(".fx-menu, .milkdown-code-block .language-picker, .milkdown-code-block .cm-editor")) return;
+      if (target?.closest(".fx-menu, .milkdown-code-block .language-picker")) return;
       const v = pm.current;
       const api = richApiRef.current;
       if (!v || !api) return;
@@ -728,6 +736,8 @@ export function RichEditor(props: RichProps) {
 
       const area = target?.closest("textarea.pocket-block-source") as HTMLTextAreaElement | null;
       ctxAreaRef.current = area;
+      ctxCodeBlockPosRef.current = null;
+      ctxCodeCmRef.current = null;
       if (area) {
         const hasSelection = area.selectionStart !== area.selectionEnd;
         const pos = findEditableBlockPos(v.state.selection.$from);
@@ -744,6 +754,32 @@ export function RichEditor(props: RichProps) {
       }
 
       const readonly = latest.current.viewMode === "read";
+      const codeEl = target?.closest('.milkdown-code-block[data-pocket-code-block="1"]') as
+        | (HTMLElement & { __pocketGetPos?: () => number | undefined; __pocketGetCM?: () => typeof ctxCodeCmRef.current })
+        | null;
+      if (codeEl) {
+        const codePos = codeEl.__pocketGetPos?.();
+        const codeNode = typeof codePos === "number" ? v.state.doc.nodeAt(codePos) : null;
+        const codeCm = codeEl.__pocketGetCM?.() ?? null;
+        if (codeNode && typeof codePos === "number") {
+          ctxCodeBlockPosRef.current = codePos;
+          ctxCodeCmRef.current = codeCm;
+          const cmSel = codeCm?.state.selection.main;
+          const domSel = window.getSelection();
+          const hasSelection = cmSel ? cmSel.from !== cmSel.to : !!(domSel && !domSel.isCollapsed && codeEl.contains(domSel.anchorNode));
+          setCtxMenu({
+            x: e.clientX,
+            y: e.clientY,
+            readonly,
+            hasSelection,
+            canCopyMarkdown: false,
+            currentBlockKind: kindOf(v, codePos),
+            canConvertBlock: true,
+          });
+          return;
+        }
+      }
+
       const link = target?.closest(".ProseMirror a[href]") as HTMLAnchorElement | null;
       const linkHref = link?.getAttribute("href") ?? undefined;
       let sel = v.state.selection;
@@ -766,8 +802,8 @@ export function RichEditor(props: RichProps) {
         hasSelection,
         canCopyMarkdown: !sel.empty,
         linkHref,
-        currentBlockKind: blockPos >= 0 ? kindOf(v, blockPos) : "",
-        canConvertBlock: blockPos >= 0 ? convertible(v, blockPos) : false,
+        currentBlockKind: selectionKindOf(v),
+        canConvertBlock: !sel.empty || (blockPos >= 0 && convertible(v, blockPos)),
       });
     };
     const onMouseDown = (e: MouseEvent) => {
@@ -836,12 +872,11 @@ export function RichEditor(props: RichProps) {
         latest.current.onOpenFind(act === "replace");
         return;
       }
-      if (latest.current.viewMode === "read" || target?.closest(".milkdown-code-block .cm-editor, .pocket-syntax-input, input, textarea")) return;
+      if (latest.current.viewMode === "read" || target?.closest(".pocket-syntax-input, input, textarea")) return;
       const v = pm.current;
       const api = richApiRef.current;
       if (!v || !api) return;
 
-      const blockPos = findEditableBlockPos(v.state.selection.$from);
       const paraMap: Partial<Record<typeof act, BlockKind>> = {
         h1: "h1",
         h2: "h2",
@@ -849,35 +884,39 @@ export function RichEditor(props: RichProps) {
         h4: "h4",
         h5: "h5",
         h6: "h6",
+        codeBlock: "code",
+        mathBlock: "math",
         quote: "quote",
         orderedList: "ordered",
         bulletList: "bullet",
         taskList: "task",
       };
       const targetKind = paraMap[act];
-      if (targetKind && blockPos >= 0) {
+      const codeEl = target?.closest('.milkdown-code-block[data-pocket-code-block="1"]') as
+        | (HTMLElement & { __pocketGetPos?: () => number | undefined })
+        | null;
+      if (targetKind) {
+        if (codeEl) {
+          const codePos = codeEl.__pocketGetPos?.();
+          const codeNode = typeof codePos === "number" ? v.state.doc.nodeAt(codePos) : null;
+          if (codeNode && typeof codePos === "number") {
+            e.preventDefault();
+            e.stopPropagation();
+            transformSelection(v, targetKind, {
+              toggle: true,
+              range: { from: codePos, to: codePos + codeNode.nodeSize },
+              selectConverted: true,
+            });
+          }
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
-        const curKind = kindOf(v, blockPos);
-        turnInto(v, blockPos, curKind === targetKind ? "text" : targetKind);
+        transformSelection(v, targetKind, { toggle: true });
         return;
       }
-      if (act === "codeBlock" || act === "mathBlock") {
-        const schema = v.state.schema;
-        if (!schema.nodes.code_block) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const { $from } = v.state.selection;
-        const replaceEmpty = $from.depth === 1 && $from.parent.type.name === "paragraph" && $from.parent.content.size === 0;
-        const from = replaceEmpty ? $from.before(1) : $from.depth >= 1 ? $from.after(1) : v.state.selection.to;
-        const to = replaceEmpty ? $from.after(1) : from;
-        const attrs = act === "mathBlock" ? { language: "LaTeX" } : undefined;
-        const tr = v.state.tr.replaceWith(from, to, schema.nodes.code_block.create(attrs));
-        tr.setSelection(api.nearSelection(tr.doc.resolve(Math.min(tr.doc.content.size, from + 1))) as PMView["state"]["selection"]);
-        v.dispatch(tr.scrollIntoView());
-        v.focus();
-        return;
-      }
+      // 代码块内部的缩进/插行交给代码块里的 CodeMirror 自己处理
+      if (codeEl) return;
       if (act === "indent" || act === "outdent") {
         const liType = v.state.schema.nodes.list_item;
         e.preventDefault();
@@ -1016,6 +1055,14 @@ export function RichEditor(props: RichProps) {
             insertRichFootnote(v, api.ctx);
             return;
           }
+          if ((kind === "code" || kind === "math") && area.selectionStart !== area.selectionEnd) {
+            const edit = applySourceParagraph(area.value, area.selectionStart, area.selectionEnd, kind, { toggle: true });
+            area.setRangeText(edit.insert, edit.from, edit.to, "end");
+            area.setSelectionRange(edit.anchor, edit.head);
+            dispatchAreaInput();
+            if (area.isConnected) area.focus();
+            return;
+          }
           const lineStart = area.value.lastIndexOf("\n", area.selectionStart - 1) + 1;
           const emptyLine = area.value.slice(lineStart, area.selectionStart).trim() === "";
           const docText = v && api ? api.serialize(v.state.doc) : area.value;
@@ -1030,6 +1077,74 @@ export function RichEditor(props: RichProps) {
             v.dispatch(v.state.tr.insert(endPos, v.state.schema.nodes.paragraph.create(null, v.state.schema.text(res.appendDoc))));
           }
           if (area.isConnected) area.focus();
+        },
+      };
+    }
+
+    const codeBlockPos = ctxCodeBlockPosRef.current;
+    const codeCm = ctxCodeCmRef.current;
+    if (codeBlockPos !== null && v && v.state.doc.nodeAt(codeBlockPos)) {
+      const codeNode = v.state.doc.nodeAt(codeBlockPos)!;
+      const codeRange = { from: codeBlockPos, to: codeBlockPos + codeNode.nodeSize };
+      return {
+        onCut: () => {
+          if (!codeCm) return;
+          const { from, to } = codeCm.state.selection.main;
+          if (from === to) return;
+          void editorClipboard.write(codeCm.state.sliceDoc(from, to));
+          codeCm.dispatch({ changes: { from, to, insert: "" }, selection: { anchor: from } });
+          codeCm.focus();
+        },
+        onCopy: () => {
+          if (codeCm) {
+            const { from, to } = codeCm.state.selection.main;
+            if (from !== to) void editorClipboard.write(codeCm.state.sliceDoc(from, to));
+            codeCm.focus();
+          } else {
+            const selTxt = window.getSelection()?.toString() || codeNode.textContent;
+            if (selTxt) void editorClipboard.write(selTxt);
+          }
+        },
+        onPaste: async () => {
+          if (!codeCm) return;
+          const clip = await editorClipboard.read();
+          if (!clip) return;
+          const { from, to } = codeCm.state.selection.main;
+          codeCm.dispatch({ changes: { from, to, insert: clip }, selection: { anchor: from + clip.length } });
+          codeCm.focus();
+        },
+        onPastePlain: async () => {
+          if (!codeCm) return;
+          const clip = await editorClipboard.read();
+          if (!clip) return;
+          const { from, to } = codeCm.state.selection.main;
+          codeCm.dispatch({ changes: { from, to, insert: clip }, selection: { anchor: from + clip.length } });
+          codeCm.focus();
+        },
+        onSelectAll: () => {
+          if (!codeCm) return;
+          codeCm.dispatch({ selection: { anchor: 0, head: codeCm.state.doc.length } });
+          codeCm.focus();
+        },
+        onParagraph: (kind) => {
+          transformSelection(v, kind, { toggle: false, range: codeRange, selectConverted: true });
+        },
+        onInsert: (kind) => {
+          if (kind === "code" || kind === "math") {
+            transformSelection(v, kind, { toggle: true, range: codeRange, selectConverted: true });
+            return;
+          }
+          if (kind === "frontmatter") {
+            latest.current.onInsertFrontmatter();
+            return;
+          }
+          if ((kind === "paraAbove" || kind === "paraBelow") && v.state.schema.nodes.paragraph && api) {
+            const at = kind === "paraAbove" ? codeRange.from : codeRange.to;
+            const tr = v.state.tr.insert(at, v.state.schema.nodes.paragraph.create());
+            tr.setSelection(api.nearSelection(tr.doc.resolve(Math.min(tr.doc.content.size, at + 1))) as PMView["state"]["selection"]);
+            v.dispatch(tr.scrollIntoView());
+            v.focus();
+          }
         },
       };
     }
@@ -1089,15 +1204,15 @@ export function RichEditor(props: RichProps) {
         return;
       }
 
+      if ((kind === "code" || kind === "math") && schema.nodes.code_block) {
+        transformSelection(v, kind, { toggle: true });
+        return;
+      }
       const nodesToInsert: PMNode[] = [];
       let caretDelta = 1;
       if (kind === "divider" && schema.nodes.hr && schema.nodes.paragraph) {
         nodesToInsert.push(schema.nodes.hr.create(), schema.nodes.paragraph.create());
         caretDelta = 2;
-      } else if (kind === "code" && schema.nodes.code_block) {
-        nodesToInsert.push(schema.nodes.code_block.create());
-      } else if (kind === "math" && schema.nodes.code_block) {
-        nodesToInsert.push(schema.nodes.code_block.create({ language: "LaTeX" }));
       } else if (kind === "table") {
         nodesToInsert.push(api.createTable(api.ctx, 3, 3));
         caretDelta = 3;
@@ -1187,8 +1302,7 @@ export function RichEditor(props: RichProps) {
       },
       onParagraph: (kind) => {
         if (!v) return;
-        const pos = findEditableBlockPos(v.state.selection.$from);
-        if (pos >= 0) turnInto(v, pos, kind);
+        transformSelection(v, kind, { toggle: false });
       },
       onInsert: insertBlockNode,
     };
@@ -1222,7 +1336,12 @@ export function RichEditor(props: RichProps) {
           timeFormat={props.timeFormat}
           shortcuts={props.shortcuts}
           actions={menuActions}
-          onClose={() => setCtxMenu(null)}
+          onClose={() => {
+            setCtxMenu(null);
+            ctxAreaRef.current = null;
+            ctxCodeBlockPosRef.current = null;
+            ctxCodeCmRef.current = null;
+          }}
         />
       )}
       {lightboxImg && <ImageLightbox image={lightboxImg} onClose={() => setLightboxImg(null)} />}

@@ -751,21 +751,6 @@ export function blockSourcePlugin(
                       syncContent(area.value);
                       return;
                     }
-                    if (act === "codeBlock" || act === "mathBlock") {
-                      e.preventDefault();
-                      closeSlash();
-                      const current = key.getState(view.state);
-                      const schema = view.state.schema;
-                      if (current && current.id === active.id && schema.nodes.code_block) {
-                        const attrs = act === "mathBlock" ? { language: "LaTeX" } : undefined;
-                        const tr = view.state.tr.replaceWith(current.from, current.to, schema.nodes.code_block.create(attrs));
-                        tr.setSelection(Selection.near(tr.doc.resolve(clampPos(tr.doc, current.from + 1))));
-                        tr.setMeta(key, null);
-                        view.dispatch(tr.scrollIntoView());
-                        view.focus();
-                      }
-                      return;
-                    }
                     const paraMap: Partial<Record<typeof act, BlockKind>> = {
                       h1: "h1",
                       h2: "h2",
@@ -773,6 +758,8 @@ export function blockSourcePlugin(
                       h4: "h4",
                       h5: "h5",
                       h6: "h6",
+                      codeBlock: "code",
+                      mathBlock: "math",
                       quote: "quote",
                       orderedList: "ordered",
                       bulletList: "bullet",
@@ -782,7 +769,7 @@ export function blockSourcePlugin(
                     if (blockKind) {
                       e.preventDefault();
                       closeSlash();
-                      const res = applySourceParagraph(area.value, area.selectionStart, area.selectionEnd, blockKind);
+                      const res = applySourceParagraph(area.value, area.selectionStart, area.selectionEnd, blockKind, { toggle: true });
                       area.setRangeText(res.insert, res.from, res.to, "end");
                       area.setSelectionRange(res.anchor, res.head);
                       syncContent(area.value);

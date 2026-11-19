@@ -505,3 +505,37 @@ describe("notes v5: highlight opacity, resized img Scheme A, outline copy & non-
     expect(isImageFile("doc.pdf")).toBe(false);
   });
 });
+
+describe("notes v6: multi-line source paragraph/fence mutual conversion & toggle", () => {
+  test("applySourceParagraph wraps/unwraps fenced code & math blocks and converts across lists/quotes", () => {
+    const src = "line 1\nline 2\nline 3";
+    // Multi-line -> bullet list (keeps full range selected)
+    const asBullet = applySourceParagraph(src, 0, src.length, "bullet", { toggle: true });
+    expect(asBullet.insert).toBe("- line 1\n- line 2\n- line 3");
+    expect(asBullet.anchor).toBe(0);
+    expect(asBullet.head).toBe(asBullet.insert.length);
+
+    // Toggle bullet list back to plain text
+    const backPlain = applySourceParagraph(asBullet.insert, asBullet.anchor, asBullet.head, "bullet", { toggle: true });
+    expect(backPlain.insert).toBe("line 1\nline 2\nline 3");
+
+    // Multi-line -> fenced code block
+    const asCode = applySourceParagraph(src, 0, src.length, "code", { toggle: true });
+    expect(asCode.insert).toBe("```\nline 1\nline 2\nline 3\n```");
+    expect(asCode.insert.slice(asCode.anchor, asCode.head)).toBe("line 1\nline 2\nline 3");
+
+    // Inside fenced code block -> toggle Ctrl+Shift+K unwraps back to plain text & selects all
+    const unwrapped = applySourceParagraph(asCode.insert, 6, 6, "code", { toggle: true });
+    expect(unwrapped.insert).toBe("line 1\nline 2\nline 3");
+    expect(unwrapped.anchor).toBe(0);
+    expect(unwrapped.head).toBe(unwrapped.insert.length);
+
+    // Inside fenced code block -> directly convert to quote
+    const codeToQuote = applySourceParagraph(asCode.insert, 6, 6, "quote", { toggle: true });
+    expect(codeToQuote.insert).toBe("> line 1\n> line 2\n> line 3");
+
+    // Inside fenced code block -> convert to math block
+    const codeToMath = applySourceParagraph(asCode.insert, 6, 6, "math", { toggle: true });
+    expect(codeToMath.insert).toBe("$$\nline 1\nline 2\nline 3\n$$");
+  });
+});
