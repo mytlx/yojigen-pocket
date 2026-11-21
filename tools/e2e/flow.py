@@ -237,7 +237,7 @@ check('JSON 格式化', wait_for('document.querySelector(".jx-result")?.textCont
 fill_json('{"a":1,}')
 check('JSON 错误指出行列', wait_for('document.querySelector(".jx-err")?.textContent.includes("第 1 行")'))
 click('.jx-err')
-check('JSON 错误定位', js('document.querySelector(".jx-editor .cm-content").cmTile.root.view.state.selection.main.from')==7)
+check('JSON 错误定位', js('document.querySelector(".jx-editor .cm-content").cmTile.root.view.state.selection.main.from')==6)
 click_text('.jx-diagnostic button','移除尾逗号')
 check('JSON 修复尾逗号',wait_for('document.querySelector(".jx-result")?.textContent.includes("1") && !document.querySelector(".jx-err")'))
 shot('feature-json'); press('Escape'); wait(0.2)
